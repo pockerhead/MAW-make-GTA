@@ -25,7 +25,7 @@ Kenney CC0 ассеты, Bevy Remote Protocol для автоматическо�
 clarifier → premise-challenge → planner → plan-review ×2 → implementer → code-review → fixer → QA
 ```
 
-Стадии делят две модели: Claude (Opus) и OpenAI Codex (gpt-5.6-sol). Ревьюер всегда работает на другой
+Стадии делят две модели: Claude (Opus) и OpenAI Codex (gpt-6-sol; первые три codex-стадии — TASK-001 premise и plan-review-1, TASK-002 premise — по ошибке оркестратора прошли на gpt-5.6-sol, это видно в их `metrics.md`). Ревьюер всегда работает на другой
 модели, чем автор, чтобы у них не совпадали слепые пятна. После каждой стадии состояние папки
 коммитится и пушится сюда, поэтому история репо и есть лог работы агентов.
 
