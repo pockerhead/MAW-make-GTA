@@ -35,6 +35,9 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
 - `docs/narrative-graph.md` — куда движется проект и почему
 - `AGENTS.md` / `CLAUDE.md` — инструкции для главной сессии
 
+Сам MAW (скиллы и агенты в `.claude/` и `.agents/`) в репо не лежит. После клона:
+`curl -fsSL https://raw.githubusercontent.com/pockerhead/maw/main/install.sh | sh`
+
 ## Статус
 
 Идёт TASK-001: исследование и диздок. Кода пока нет.

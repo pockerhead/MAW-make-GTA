@@ -13,11 +13,9 @@ maw/.reason-last-run
 .DS_Store
 *.log
 
-# Claude Code local state and private pointers
-.claude/local/
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
-.claude/*.lock
+# Agent harness dirs (MAW is reinstalled via install.sh; local pointers live here)
+.claude/
+.agents/
 
 # MAW per-task scratch and transcripts (probes, raw agent sessions)
 maw/tasks/**/scratch/
