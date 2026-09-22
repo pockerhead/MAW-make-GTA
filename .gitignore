@@ -1,0 +1,59 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# MAW runtime state
+maw/.reason-active
+maw/.reason-last-run
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Claude Code local state and private pointers
+.claude/local/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/*.lock
+
+# MAW per-task scratch and transcripts (probes, raw agent sessions)
+maw/tasks/**/scratch/
+maw/tasks/**/transcripts/
+
+# Binary / heavy assets (tuning .ron files under assets/ stay tracked)
+*.glb
+*.gltf
+*.bin
+*.fbx
+*.obj
+*.blend
+*.blend1
+*.png
+*.jpg
+*.jpeg
+*.tga
+*.dds
+*.ktx2
+*.hdr
+*.exr
+*.psd
+*.ogg
+*.wav
+*.mp3
+*.flac
+*.ttf
+*.otf
+*.zip
+*.7z
+*.tar
+*.gz
+*.rar
+*.exe
+*.dll
+*.mp4
+*.webm
+
+# Auto-ignored large files (>5 MB), appended by the orchestrator sync
