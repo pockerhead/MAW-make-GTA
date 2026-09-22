@@ -35,6 +35,10 @@
 - A new `Res<T>` / `ResMut<T>` parameter on an existing system is an API change for every test harness
   that registers that system: grep the system name across `src/` and `tests/`, each site must go
   through the plugin or `init_resource` the type.
+- Types that QA reads or mutates over the Bevy Remote Protocol (GDD D1) `#[derive(Reflect)]` with
+  `#[reflect(Component)]` / `#[reflect(Resource)]` and are registered; BRP sees nothing else.
+  `bevy_brp_extras` pulls `bevy_render`, so it is a dependency of the client binary under feature `dev`
+  only — never of the headless sim crate (`cargo tree -p gta_sim -e normal -i bevy_render` stays empty).
 - Before claiming "system X runs in state/schedule Y", check both its `run_if` and the clock of its
   schedule (`Time<Virtual>` pause freezes `FixedUpdate` entirely).
 

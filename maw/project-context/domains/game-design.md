@@ -40,6 +40,6 @@
 
 ## Pointers
 
-- `docs/design/` — design documents (empty until the first research task lands).
+- `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).
 - `docs/narrative-graph.md` — current project vector.
 - `.claude/local/donor.md` — local-only pointers to the owner's earlier thinking on third-person camera and controls (taste, not requirements).

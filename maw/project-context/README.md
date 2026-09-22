@@ -4,10 +4,11 @@ Working title "GTA-like": a single-player third-person action game in the spirit
 built on **Rust + Bevy** (the whole engine: ECS, rendering, audio, input — there is NO Godot and no
 other engine in this project). Experimental project, driven by MAW agents; the owner is the only human.
 
-Stage of the project: **pre-design.** There is no code yet and no approved design document. Game scope
-(open world or not, vehicles, combat, missions, UI/UX) is being collected into `docs/design/` by the
-first research task. Until a design doc is marked APPROVED by the owner, no gameplay feature is law —
-do not invent scope, and do not treat a mechanic as required because "GTA has it".
+Stage of the project: **design approved, building slices.** `docs/design/GDD.md` is APPROVED and is the
+scope law: what is in the game, the data files, the workspace map (§12) and the slice list (§13). Slices
+T1..T16 of GDD §13 are tasks TASK-002..TASK-017. Implement what the GDD says for your slice; a mechanic
+not in the GDD is out of scope unless the task says otherwise. Do not treat a mechanic as required
+because "GTA has it".
 
 Architectural law nobody breaks: **gameplay logic runs and is testable in a headless Bevy `App`**
 (no window, no GPU, no renderer — `MinimalPlugins` + the game's own plugins). Rendering, camera

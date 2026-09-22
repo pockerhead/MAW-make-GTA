@@ -18,4 +18,6 @@ Cargo discipline:
 
 Skill `game-feel` for feel-round fixes: it maps the owner's words ("ватный", "дёргается", "плывёт") to the attack/release/lag constant that has to move.
 
+Runtime self-check: once the game has a window, you may launch the `--features dev` build and drive it via `tools/qa/brp.py` (Bevy Remote Protocol: screenshot, keys, diagnostics) to confirm your change visibly works before handing off; artifacts go to the task's `scratch/`. Always shut the game down afterwards.
+
 Sub-agent discipline: the harness launches every `Agent` call asynchronously and the report arrives later as a hand-back message. Count your launches and do not end your turn until every one has reported; state `children: N launched / N reported` before your final hand-back. A `Bash` command whose result your deliverable needs runs in the FOREGROUND — never `run_in_background=true` for it, and never end your turn waiting on a background run.
