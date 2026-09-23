@@ -1,6 +1,5 @@
 # Roadmap graph (derived from task.md Dependencies — task.md is source of truth)
 
-TASK-004  (free)
 TASK-005  (free)
 TASK-006  (blocked by TASK-005)
 TASK-007  (blocked by TASK-006)
