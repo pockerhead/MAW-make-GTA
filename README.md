@@ -43,11 +43,26 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
 ## Статус
 
 - TASK-001 диздок: готов и утверждён.
-- Следующий: TASK-002 (T1) — каркас workspace, персонаж под камерой, QA-контур. Кода пока нет.
+- TASK-002 (T1): готов — персонаж-капсула под камерой из-за плеча на тестовой площадке (рампа, лестница,
+  коробки, стена), бег/спринт/шаг/прыжок с буфером, подтяг на уступ в прыжке, QA через Bevy Remote Protocol.
+- Следующий: TASK-018 (правка подтяга), затем TASK-003 (T2) — процедурный город.
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
 
 ## Запуск
 
-Появится, когда будет первый играбельный слайс. Бинарные ассеты (модели, текстуры, звук) в репо не
+Нужен Rust 1.95 (stable). Из корня репо:
+
+```
+cargo run --features fast     # быстрая итерация (dynamic linking, инкрементальная пересборка ~10 с)
+cargo run --release           # честный FPS
+cargo test -p gta_sim         # headless-гейты геймплея
+```
+
+Управление: WASD — бег, Shift — спринт, Alt — шаг, Space — прыжок, мышь — камера, Esc отпускает курсор,
+ЛКМ захватывает. Тюнинг — `assets/character/locomotion.ron`, `assets/camera/camera.ron`, `assets/world/render.ron`.
+
+QA запущенного билда: `python tools/qa/scenarios/t1.py --out <dir>` (фича `dev`, BRP на порту 15702).
+
+Бинарные ассеты (модели, текстуры, звук) в репо не
 хранятся: они лежат в zip релизов рядом с exe. Для сборки из исходников папку `assets/` берём из
 последнего релиза.
