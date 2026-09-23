@@ -51,6 +51,7 @@ maw/tasks/**/transcripts/
 *.rar
 *.exe
 *.dll
+*.gif
 *.mp4
 *.webm
 
@@ -63,3 +64,6 @@ __pycache__/
 # Third-party packs: fetched by tools/fetch_assets.py, never committed; only the manifest is tracked
 /assets/third_party/*
 !/assets/third_party/manifest.ron
+
+# Parallel MAW worktrees
+.worktrees/

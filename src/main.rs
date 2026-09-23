@@ -31,14 +31,24 @@ use visuals::{
     VisualsPlugin,
 };
 
-/// `--seed N` from the command line; without the flag a seed is taken from the clock.
-fn parse_seed() -> Result<u64, String> {
+/// The value after `flag` on the command line, `None` without the flag.
+fn flag_value(flag: &str) -> Result<Option<String>, String> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg != "--seed" {
+        if arg != flag {
             continue;
         }
-        let value = args.next().ok_or("--seed needs a value")?;
+        return args
+            .next()
+            .map(Some)
+            .ok_or_else(|| format!("{flag} needs a value"));
+    }
+    Ok(None)
+}
+
+/// `--seed N` from the command line; without the flag a seed is taken from the clock.
+fn parse_seed() -> Result<u64, String> {
+    if let Some(value) = flag_value("--seed")? {
         return value
             .parse()
             .map_err(|_| format!("--seed expects an unsigned integer, got {value:?}"));
@@ -139,13 +149,17 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
+    let title = match flag_value("--window-title") {
+        Ok(title) => title.unwrap_or_else(|| "GTA-like".into()),
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
     let root = ConfigRoot(FileAssetReader::get_base_path().join("assets"));
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "GTA-like".into(),
-            ..default()
-        }),
+        primary_window: Some(Window { title, ..default() }),
         ..default()
     }));
     info!("city seed {seed}");

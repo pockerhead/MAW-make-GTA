@@ -1,5 +1,11 @@
 # MAW-make-GTA
 
+<!-- SHOWCASE-HERO:START -->
+
+<p align="center"><img src="https://raw.githubusercontent.com/pockerhead/MAW-make-GTA/media/shooting.gif?v=bc79d093" width="720" alt="Тир в парке: пистолет, хедшот с красным CRIT, очередь из SMG"></p>
+
+<!-- SHOWCASE-HERO:END -->
+
 Эксперимент: можно ли за один присест, без человека-программиста, собрать играбельный прототип
 GTA-подобной игры от третьего лица силами мультиагентного пайплайна [MAW](https://github.com/pockerhead/maw).
 
@@ -81,15 +87,24 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
   больница, участок, штабы банд, графы тротуаров и полос), генерация ~2 мс, экран загрузки, стены по краю.
 - TASK-004 (T3): готов — тротуары с бордюром, разметка, фасады с окнами, уступы высоток, башня 156 м, площадь,
   центральный парк, пропы Kenney (4237 шт.), небо, туман, тени, меши слиты в 100 чанков; ~2.5 мс на кадр.
+  <!-- SHOWCASE:city:START -->
+  <img src="https://raw.githubusercontent.com/pockerhead/MAW-make-GTA/media/city.gif?v=f1eca1b7" width="480" alt="Процедурный город: улицы, парк, пропы Kenney и вид с крыши башни 156 м"><br><sub>Процедурный город: улицы, парк, пропы Kenney и вид с крыши башни 156 м</sub>
+  <!-- SHOWCASE:city:END -->
 - TASK-005 (T4): готов — персонаж Kenney Mini Characters вместо капсулы, анимации idle/walk/run/sprint/jump/fall
   по состоянию, скорость клипов подстроена под скорость движения (ноги не скользят), тинт одежды.
 - TASK-006 (T5): готов — здоровье и броня, урон и регенерация до 50%, аптечка и броня у больницы, смерть
   с замедлением и экраном "ПОТРАЧЕНО", возрождение у больницы, HUD. Шрифт Inter (OFL) через манифест.
+  <!-- SHOWCASE:wasted:START -->
+  <img src="https://raw.githubusercontent.com/pockerhead/MAW-make-GTA/media/wasted.gif?v=56c88f76" width="480" alt="Смерть: замедление, экран &quot;ПОТРАЧЕНО&quot; и возрождение у больницы"><br><sub>Смерть: замедление, экран &quot;ПОТРАЧЕНО&quot; и возрождение у больницы</sub>
+  <!-- SHOWCASE:wasted:END -->
 - TASK-007 (T6): готов — пистолет, SMG, дробовик (подбираются в тире в центральном парке), прицел через плечо,
   hitscan с хедшотами, разброс и отдача, перезарядка, трассеры, хит-маркер, всплывающие цифры урона
   (красный "CRIT" на голову), позы удержания ствола.
 - TASK-008 (T7): готов — ближний бой: комбо кулаков (джеб, джеб, пинок-нокдаун), бита, отброс и нокдаун,
   hit-stop и тряска камеры.
+  <!-- SHOWCASE:melee:START -->
+  <img src="https://raw.githubusercontent.com/pockerhead/MAW-make-GTA/media/melee.gif?v=3e60df74" width="480" alt="Ближний бой: комбо кулаков с нокдауном и удар битой"><br><sub>Ближний бой: комбо кулаков с нокдауном и удар битой</sub>
+  <!-- SHOWCASE:melee:END -->
 - Следующий: TASK-009 (T8) — мирные жители (гуляют по тротуарам, разбегаются от выстрелов).
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
 
