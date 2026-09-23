@@ -14,8 +14,4 @@
     ground_sensor_cling_distance: 1.0,
     ground_spring_strength: 400.0,
     ground_spring_dampening: 1.2,
-    ledge_assist_max_height: 1.4,
-    ledge_assist_forward_probe: 0.8,
-    ledge_assist_clearance: 0.05,
-    ledge_assist_window: 1.2,
 )

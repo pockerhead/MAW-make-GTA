@@ -1,5 +1,4 @@
 mod intent;
-mod ledge;
 mod locomotion;
 
 pub use intent::{Gait, MoveIntent, move_direction};
@@ -20,7 +19,7 @@ pub enum CharacterScheme {
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
-#[require(MoveIntent, JumpBuffer, ledge::LedgeAssist)]
+#[require(MoveIntent, JumpBuffer)]
 pub struct Character;
 
 #[derive(Component, Default)]
@@ -62,12 +61,6 @@ impl Plugin for CharacterPlugin {
             .add_systems(
                 FixedUpdate,
                 drive_characters.in_set(TnuaUserControlsSystems),
-            )
-            .add_systems(
-                FixedUpdate,
-                (ledge::assist_ledge, ledge::apply_ledge)
-                    .chain()
-                    .after(TnuaPipelineSystems::Motors),
             );
     }
 }

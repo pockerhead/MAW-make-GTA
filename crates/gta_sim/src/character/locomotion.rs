@@ -23,10 +23,6 @@ pub struct LocomotionConfig {
     pub ground_sensor_cling_distance: f32,
     pub ground_spring_strength: f32,
     pub ground_spring_dampening: f32,
-    pub ledge_assist_max_height: f32,
-    pub ledge_assist_forward_probe: f32,
-    pub ledge_assist_clearance: f32,
-    pub ledge_assist_window: f32,
 }
 
 impl LocomotionConfig {
