@@ -16,6 +16,10 @@ Loop:
   Methods: `rpc.discover` (list all), `world.query`, `world.get_components`, `world.mutate_components`, `brp_extras/screenshot`, `brp_extras/send_keys`, `brp_extras/move_mouse`, `brp_extras/click_mouse`, `brp_extras/get_diagnostics`, `brp_extras/shutdown`. Confirm params with `rpc.discover` — do not guess them.
 - Screenshots and scenario output go to the task's `scratch/qa/`; cite them in QA_REPORT.md by path, with what you saw in each.
 - FPS: read `brp_extras/get_diagnostics` after >= 5 s of warm-up, in a `--release` build; report min/avg frame time, not one sample.
+- FPS under vsync (`PresentMode::Fifo`) equals the display refresh, not the game cost: this host's only
+  winit monitor was a 30 Hz virtual display and read exactly 30 FPS (TASK-002). Always report the monitor
+  refresh and present mode with an FPS number, and measure frame COST with `AutoNoVsync` (switch it via BRP
+  `world.mutate_components` on the window — no production change).
 - Profiling when a criterion is about performance: `cargo run --release --features dev,profile` writes a Chrome trace (`trace_chrome`); summarise the top systems by total time yourself.
 - Always end with `brp_extras/shutdown`; then make sure no game process is left (kill it by name if it hangs). A crash or hang during a scenario is a finding with its log, not a retry.
 

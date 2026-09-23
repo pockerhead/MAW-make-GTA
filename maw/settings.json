@@ -40,5 +40,6 @@
       "provider": "claude"
     }
   },
-  "spawn_timeout_min": 100
+  "spawn_timeout_min": 100,
+  "allow_unverified_profile": true
 }

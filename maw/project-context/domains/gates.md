@@ -27,6 +27,11 @@
 
 ## Risk lessons
 
+- 2026-09-23 (TASK-002) — a headless test that drives `app.update()` by hand calls `app.finish();
+  app.cleanup();` first (plugins such as avian 0.7 register resources in `Plugin::finish`; `App::run` does
+  this, manual updates do not). Under `TimeUpdateStrategy::FixedTimesteps(n)` the FIRST `update()` runs 0
+  fixed ticks — count ticks via `Time<Fixed>`, never by counting updates.
+
 - 2026-09-23 (inherited from the owner's previous project, 60-entry calibration ledger) — half of all review findings were
   about the checking apparatus, not the game, and 5 of 6 concrete "fix the gate this way" prescriptions
   were wrong while their diagnoses were right. Act on a reviewer's diagnosis; recompute its prescription.

@@ -14,4 +14,6 @@ Math-heavy plan (camera rigs, vehicle physics, coordinate transforms) → walk 3
 
 Every tuning number the plan introduces names its data file (`assets/<domain>/*.ron`), per the data-first invariant.
 
+Dependency cache (environment fact, 2026-09-23 TASK-002): the codex implementer/fixer sandbox cannot reach crates.io (TLS `SEC_E_NO_CREDENTIALS`) and builds with `--offline`. Any crate or crate version your plan ADDS must already be in `~/.cargo/registry`: resolve it yourself in a scratch probe workspace (`cargo fetch` / `cargo check` in `scratch/`) before sealing the plan, and say so in the plan. An un-fetched dependency blocks the implementer.
+
 Sub-agent discipline: the harness launches every `Agent` call asynchronously and the report arrives later as a hand-back message. Count your launches and do not end your turn until every one has reported; state `children: N launched / N reported` before your final hand-back. A `Bash` command whose result your deliverable needs runs in the FOREGROUND — never `run_in_background=true` for it, and never end your turn waiting on a background run.

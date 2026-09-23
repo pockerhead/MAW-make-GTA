@@ -55,3 +55,7 @@ maw/tasks/**/transcripts/
 *.webm
 
 # Auto-ignored large files (>5 MB), appended by the orchestrator sync
+
+# Python bytecode
+__pycache__/
+*.pyc

@@ -51,6 +51,11 @@
   while paused) was settled by a 40-line executable probe after two plan amendments built on the wrong
   claim. When a plan depends on engine behaviour, write the probe instead of arguing from a comment.
 
+- 2026-09-23 (TASK-002) — a crate's own manifest can switch on a render feature of a THIRD crate:
+  bevy-tnua-avian3d 0.12.1 enables `avian3d/debug-plugin` → `bevy/bevy_render` unconditionally, invisible
+  from both READMEs. Before adding any ecosystem crate to `gta_sim`, run
+  `cargo tree -p gta_sim -e features -i bevy_render`; the fix precedent is the vendored patch (ADR-001).
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

@@ -1,0 +1,7 @@
+# Open decisions — TASK-002
+
+- 2026-09-23: premise-challenge ran on codex gpt-5.6-sol instead of the configured gpt-6-sol (orchestrator typed the model by hand). Not re-run: verdict PREMISE HOLDS rests on quoted Cargo.toml lines, not model judgement. From now on profiles resolve from maw/settings.json. Flip: re-run if a later stage contradicts the premise.
+- 2026-09-23: plan-reviewer-2 always gets PLAN.md as a detail source (codex PR1 compressed 58 KB to 23 KB again, same as TASK-001). V2 corrections win. Now built into the orchestrator helper for every task.
+- 2026-09-23: owner asked for Bevy fast-compile settings early; added to TASK_FINAL as an owner addition for the fixer (not a new task) so every later slice iterates on fast builds. Nightly options excluded to keep the pinned stable toolchain.
+- 2026-09-23: fixer vendored bevy_dylib 0.19.1 (checksum = crates.io) because the offline cache lacked it. Accepted for now; follow-up: fetch it from the host with network and drop vendor/bevy_dylib-0.19.1 + its patch entry.
+- 2026-09-23: QA verdict NEEDS_FIXES (B1-B4). Orchestrator decision under owner delegation (owner: "каждый блок решаешь сам"): do not block the task; run fixer round 2 on the QA findings, then QA round 2. B5 (__pycache__) fixed by the orchestrator in .gitignore. Alternative: move to blocked/ and ask the owner. Flip: if round 2 fails again on the same finding, re-plan ledge assist instead of patching.
