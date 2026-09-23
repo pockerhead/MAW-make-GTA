@@ -37,6 +37,20 @@ pub(super) fn assist_ledge(
     mut characters: AssistQuery,
 ) {
     for (entity, intent, controller, mut assist, position) in &mut characters {
+        let filter = SpatialQueryFilter::from_excluded_entities([entity]);
+        if let Some(support) = controller.basis_memory.standing_on_entity()
+            && let Some(hit) = spatial.cast_ray(
+                position.0,
+                Dir3::NEG_Y,
+                cfg.float_height + cfg.ledge_assist_clearance,
+                false,
+                &filter,
+            )
+            && hit.entity == support
+            && (hit.distance - cfg.float_height).abs() <= cfg.ledge_assist_clearance
+        {
+            assist.launch_feet_y = position.y - hit.distance;
+        }
         if matches!(
             controller.action_flow_status(),
             TnuaActionFlowStatus::ActionStarted(_)
@@ -58,7 +72,6 @@ pub(super) fn assist_ledge(
             + Vec3::Y
                 * (assist.launch_feet_y + cfg.ledge_assist_max_height + cfg.float_height
                     - position.y);
-        let filter = SpatialQueryFilter::from_excluded_entities([entity]);
         let Some(top_hit) = spatial.cast_ray(
             origin,
             Dir3::NEG_Y,
