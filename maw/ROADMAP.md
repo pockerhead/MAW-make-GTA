@@ -1,7 +1,6 @@
 # Roadmap graph (derived from task.md Dependencies — task.md is source of truth)
 
-TASK-003  (free)
-TASK-004  (blocked by TASK-003)
+TASK-004  (blocked by TASK-003) [waits on TASK-003 (in_progress)]
 TASK-005  (free)
 TASK-006  (blocked by TASK-003, TASK-005)
 TASK-007  (blocked by TASK-006)
