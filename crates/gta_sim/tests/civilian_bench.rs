@@ -6,12 +6,12 @@ mod common;
 use bevy::prelude::*;
 use common::*;
 use gta_sim::{
-    character::{AimIntent, Dead, Health},
+    character::{AimIntent, Dead, Gait, Health, LocomotionConfig},
     civilian::{Civilian, CivilianState},
     combat::{Loadout, ShotFired, Weapon},
     navigation::{GraphWalker, SidewalkGraph, flat_distance},
     perception::{PerceptionConfig, PerceptionLoad},
-    population::ViewCone,
+    population::{PopulationConfig, PopulationLoad, ViewCone},
 };
 use std::time::{Duration, Instant};
 
@@ -47,7 +47,11 @@ fn aimers(app: &mut App) -> u32 {
 
 fn bench(count: usize) -> Report {
     let mut app = city_app(1);
-    set_population(&mut app, |p| p.max_civilians = count as u32);
+    // A fixed crowd: no recycling (turnover has its own bench), so the perception slots stay balanced.
+    set_population(&mut app, |p| {
+        p.max_civilians = count as u32;
+        p.recycle_distance = p.despawn_distance;
+    });
     let slots = u32::from(app.world().resource::<PerceptionConfig>().slots);
     let player_feet = position(&mut app);
     let eye = player_feet + Vec3::Y;
@@ -164,4 +168,98 @@ fn civilian_bench() {
         full.mean
     );
     assert!(full.alive.0 > 0, "no civilian alive during the bench");
+}
+
+/// Sustained turnover: the player runs along a seed-1 street looking ahead, recycling keeps the spawner
+/// in deficit. Gates the mean tick; deficit ticks (full candidate scan + sort + rays) are reported apart.
+#[test]
+fn street_turnover_bench() {
+    const WARMUP_S: u32 = 15;
+    const RUN_S: u32 = 40;
+    let mut app = city_app(1);
+    settle(&mut app);
+    let loco = app.world().resource::<LocomotionConfig>().clone();
+    let cap = app.world().resource::<PopulationConfig>().max_civilians as usize;
+    let start = position(&mut app) - Vec3::Y * loco.float_height;
+    let (dir, length) = open_street(&mut app, start);
+    assert!(
+        length >= loco.run_speed * RUN_S as f32,
+        "GATE BROKEN: longest open street is {length} m"
+    );
+    let points = {
+        let graph = app.world().resource::<SidewalkGraph>();
+        let spacing = app
+            .world()
+            .resource::<PopulationConfig>()
+            .spawn_point_spacing;
+        graph.nodes().len()
+            + graph
+                .edges()
+                .iter()
+                .map(|&(a, b)| {
+                    (flat_distance(graph.node(a), graph.node(b)) / spacing - 0.5)
+                        .floor()
+                        .max(0.0) as usize
+                })
+                .sum::<usize>()
+    };
+    let mut deficit = Vec::new();
+    let mut full = Vec::new();
+    let (mut max_rays, mut max_agents) = (0, 0);
+    for tick in 0..(WARMUP_S + RUN_S) * 64 {
+        if tick == WARMUP_S * 64 {
+            set_intent(&mut app, |i| {
+                i.axis = Vec2::Y;
+                i.yaw = f32::atan2(-dir.x, -dir.z);
+                i.gait = Gait::Run;
+            });
+        }
+        let feet = position(&mut app) - Vec3::Y * loco.float_height;
+        set_view(&mut app, Some(chase_view(feet, dir)));
+        let before = civilians(&mut app);
+        let started = Instant::now();
+        run_ticks(&mut app, 1);
+        let elapsed = started.elapsed();
+        if tick < WARMUP_S * 64 {
+            continue;
+        }
+        max_rays = max_rays.max(app.world().resource::<PopulationLoad>().rays);
+        max_agents = max_agents.max(app.world().resource::<PerceptionLoad>().agents);
+        // The spawner ran its scan this tick iff it spawned or is still short of the cap.
+        let after = civilians(&mut app);
+        if alive(&mut app) < cap || after.iter().any(|e| !before.contains(e)) {
+            deficit.push(elapsed);
+        } else {
+            full.push(elapsed);
+        }
+    }
+    let mean = |t: &[Duration]| t.iter().sum::<Duration>() / t.len().max(1) as u32;
+    let all = [deficit.as_slice(), full.as_slice()].concat();
+    println!(
+        "turnover run {RUN_S} s: mean {:?} over {} ticks; deficit ticks {} mean {:?}, at-cap ticks {} \
+         mean {:?}; {points} spawn points in the graph; max {max_rays} occlusion rays, \
+         {max_agents} perception agents per tick",
+        mean(&all),
+        all.len(),
+        deficit.len(),
+        mean(&deficit),
+        full.len(),
+        mean(&full)
+    );
+    // Measured: 65 with recycling (behind the view only), 28 with recycling off.
+    assert!(
+        deficit.len() > 48,
+        "GATE BROKEN: only {} deficit ticks, turnover not forced",
+        deficit.len()
+    );
+    assert!(
+        mean(&all) < MEAN_LIMIT,
+        "mean tick {:?} >= {MEAN_LIMIT:?}",
+        mean(&all)
+    );
+    assert!(
+        mean(&deficit) < MEAN_LIMIT,
+        "mean deficit tick {:?} >= {MEAN_LIMIT:?}",
+        mean(&deficit)
+    );
 }

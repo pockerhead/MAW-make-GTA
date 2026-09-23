@@ -381,11 +381,59 @@ fn spawn_ring_must_be_ordered() {
     let error = sabotaged::<PopulationConfig>(
         POPULATION_CONFIG,
         "spawn_ring",
-        "spawn_ring: (60.0, 120.0),",
+        "spawn_ring: (30.0, 120.0),",
         "spawn_ring: (130.0, 120.0),",
         PopulationConfig::validate,
     );
     assert!(error.contains("spawn_ring"), "{error}");
+}
+
+#[test]
+fn occlusion_ray_budget_checks_a_whole_point() {
+    let error = sabotaged::<PopulationConfig>(
+        POPULATION_CONFIG,
+        "occlusion_rays",
+        "occlusion_rays_per_tick: 16,",
+        "occlusion_rays_per_tick: 3,",
+        PopulationConfig::validate,
+    );
+    assert!(error.contains("occlusion_rays_per_tick"), "{error}");
+}
+
+#[test]
+fn spawn_points_no_denser_than_the_separation() {
+    let error = sabotaged::<PopulationConfig>(
+        POPULATION_CONFIG,
+        "spawn_point_spacing",
+        "spawn_point_spacing: 8.0,",
+        "spawn_point_spacing: 2.0,",
+        PopulationConfig::validate,
+    );
+    assert!(error.contains("spawn_point_spacing"), "{error}");
+}
+
+#[test]
+fn recycling_stays_outside_the_spawn_ring_inner_edge() {
+    let error = sabotaged::<PopulationConfig>(
+        POPULATION_CONFIG,
+        "recycle_distance",
+        "recycle_distance: 50.0,",
+        "recycle_distance: 20.0,",
+        PopulationConfig::validate,
+    );
+    assert!(error.contains("recycle_distance"), "{error}");
+}
+
+#[test]
+fn recycling_needs_a_budget() {
+    let error = sabotaged::<PopulationConfig>(
+        POPULATION_CONFIG,
+        "recycles_per_tick",
+        "recycles_per_tick: 1,",
+        "recycles_per_tick: 0,",
+        PopulationConfig::validate,
+    );
+    assert!(error.contains("recycles_per_tick"), "{error}");
 }
 
 #[test]

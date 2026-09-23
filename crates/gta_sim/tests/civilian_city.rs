@@ -44,11 +44,11 @@ fn segment_distance(p: Vec3, a: Vec3, b: Vec3) -> f32 {
     p.distance(a + ab * t)
 }
 
-fn nearest_node(graph: &SidewalkGraph, p: Vec3) -> f32 {
+fn nearest_edge(graph: &SidewalkGraph, p: Vec3) -> f32 {
     graph
-        .nodes()
+        .edges()
         .iter()
-        .map(|&n| flat_distance(n, p))
+        .map(|&(a, b)| segment_distance(p, graph.node(a), graph.node(b)))
         .fold(f32::INFINITY, f32::min)
 }
 
@@ -236,21 +236,30 @@ fn initial_fill_closer_than_the_ring() {
         let d = flat_distance(*n, player_feet);
         cfg.initial_inner_radius <= d && d <= cfg.spawn_ring.1
     };
+    let sidewalk_points = graph(&app)
+        .edges()
+        .iter()
+        .flat_map(|&(a, b)| {
+            let (a, b) = (graph(&app).node(a), graph(&app).node(b));
+            (0..=100).map(move |k| a.lerp(b, k as f32 / 100.0))
+        })
+        .collect::<Vec<_>>();
     assert!(
-        nodes.iter().any(|n| in_range(n)
-            && flat_distance(*n, player_feet) < cfg.spawn_ring.0
-            && outside_cone(&view, *n, head, margin)),
-        "GATE BROKEN: no node closer than the ring outside the cone"
+        sidewalk_points.iter().any(|p| in_range(p)
+            && flat_distance(*p, player_feet) < cfg.spawn_ring.0
+            && outside_cone(&view, *p, head, margin)),
+        "GATE BROKEN: no sidewalk closer than the ring outside the cone"
     );
     let visible_nodes = nodes
         .iter()
         .filter(|n| in_range(n) && !outside_cone(&view, **n, head, margin))
         .copied()
         .collect::<Vec<_>>();
+    let ray = cfg.occlusion_ray_height;
     assert!(
         visible_nodes.iter().any(|&n| {
             !(blocked(&mut app, view.origin, n + Vec3::Y * 0.1)
-                && blocked(&mut app, view.origin, n + Vec3::Y * head))
+                && blocked(&mut app, view.origin, n + Vec3::Y * ray))
         }),
         "GATE BROKEN: every in-range node inside the cone is occluded"
     );
@@ -259,8 +268,8 @@ fn initial_fill_closer_than_the_ring() {
     let mut closer = 0;
     for &(e, feet) in &spawned {
         assert!(
-            nearest_node(graph(&app), feet) <= 1e-3,
-            "{e} not on a node: {feet}"
+            nearest_edge(graph(&app), feet) <= 1e-3,
+            "{e} not on a sidewalk edge: {feet}"
         );
         let d = flat_distance(feet, player_feet);
         assert!(
@@ -269,7 +278,7 @@ fn initial_fill_closer_than_the_ring() {
         );
         let hidden = outside_cone(&view, feet, head, margin)
             || (blocked(&mut app, view.origin, feet + Vec3::Y * 0.1)
-                && blocked(&mut app, view.origin, feet + Vec3::Y * head));
+                && blocked(&mut app, view.origin, feet + Vec3::Y * ray));
         assert!(hidden, "{e} spawned in view at {feet}");
         if d < cfg.spawn_ring.0 {
             closer += 1;
@@ -283,7 +292,7 @@ fn initial_fill_closer_than_the_ring() {
 }
 
 #[test]
-fn steady_spawns_in_the_ring_off_frame() {
+fn steady_spawns_in_the_ring_hidden() {
     let mut app = city_app(1);
     *app.world_mut().resource_mut::<PopulationPhase>() = PopulationPhase::Steady;
     let cfg = population_cfg(&app);
@@ -302,18 +311,22 @@ fn steady_spawns_in_the_ring_off_frame() {
     assert!(!spawned.is_empty(), "steady spawning spawned nobody");
     for &(e, feet) in &spawned {
         assert!(
-            nearest_node(graph(&app), feet) <= 1e-3,
-            "{e} not on a node: {feet}"
+            nearest_edge(graph(&app), feet) <= 1e-3,
+            "{e} not on a sidewalk edge: {feet}"
         );
         let d = flat_distance(feet, player_feet);
         assert!(
             cfg.spawn_ring.0 <= d && d <= cfg.spawn_ring.1,
             "{e} at {d} m"
         );
-        assert!(
-            outside_cone(&view, feet, head, margin),
-            "{e} spawned in the cone"
-        );
+        let hidden = outside_cone(&view, feet, head, margin)
+            || (blocked(&mut app, view.origin, feet + Vec3::Y * 0.1)
+                && blocked(
+                    &mut app,
+                    view.origin,
+                    feet + Vec3::Y * cfg.occlusion_ray_height,
+                ));
+        assert!(hidden, "{e} spawned in view at {feet}");
     }
 }
 
@@ -334,7 +347,11 @@ fn node_at(app: &App, from: Vec3, range: std::ops::Range<f32>, avoid: Option<(Ve
 #[test]
 fn despawn_after_2s_offscreen_beyond_150m() {
     let mut app = city_app(1);
-    set_population(&mut app, |p| p.max_civilians = 0);
+    // The plain far rule; recycling at the cap has its own gate.
+    set_population(&mut app, |p| {
+        p.max_civilians = 0;
+        p.recycle_distance = p.despawn_distance;
+    });
     let cfg = population_cfg(&app);
     let step = app
         .world()
@@ -421,4 +438,116 @@ fn despawn_after_2s_offscreen_beyond_150m() {
         app.world().get_entity(b).is_ok(),
         "B (inside 150 m) despawned"
     );
+}
+
+/// A walker on an edge whose point at `t` lies in `range` m of `from` and >= 10 m from `used`.
+fn edge_spot(
+    app: &App,
+    from: Vec3,
+    range: std::ops::Range<f32>,
+    used: &[Vec3],
+) -> (GraphWalker, f32, Vec3) {
+    let g = graph(app);
+    g.edges()
+        .iter()
+        .flat_map(|&(a, b)| {
+            [0.25, 0.5, 0.75].map(|t| {
+                (
+                    GraphWalker { from: a, to: b },
+                    t,
+                    g.node(a).lerp(g.node(b), t),
+                )
+            })
+        })
+        .find(|&(_, _, p)| {
+            range.contains(&flat_distance(p, from))
+                && used.iter().all(|&u| flat_distance(u, p) >= 10.0)
+        })
+        .unwrap_or_else(|| panic!("GATE BROKEN: no sidewalk spot in {range:?}"))
+}
+
+#[test]
+fn recycle_at_cap_only_calm_and_far() {
+    let mut app = city_app(1);
+    // No spawning at all: every candidate fails the separation, so the cap is set by hand.
+    set_population(&mut app, |p| p.spawn_min_separation = 1.0e6);
+    let cfg = population_cfg(&app);
+    let (player_feet, eye) = player_eye(&mut app);
+    let (near_ring, recycle) = (cfg.spawn_ring.0, cfg.recycle_distance);
+    let far = recycle + 10.0..cfg.despawn_distance - 10.0;
+    let mut used = Vec::new();
+    let mut place = |app: &mut App, range: std::ops::Range<f32>, state: CivilianState| {
+        let (walker, t, at) = edge_spot(app, player_feet, range, &used);
+        used.push(at);
+        let e = spawn_civilian(app, walker, t, calm());
+        set_civilian_state(app, e, state);
+        e
+    };
+    let calm_far = place(&mut app, far.clone(), CivilianState::Idle { left: 1.0e6 });
+    let scared_far = place(
+        &mut app,
+        far.clone(),
+        CivilianState::Cower {
+            from: player_feet,
+            left: 1.0e6,
+        },
+    );
+    let calm_near = place(
+        &mut app,
+        near_ring..recycle - 5.0,
+        CivilianState::Idle { left: 1.0e6 },
+    );
+    let corpse = place(&mut app, far, CivilianState::Idle { left: 1.0e6 });
+    set_health_of(&mut app, corpse, |h| h.current = 0.0);
+    // Looking straight up: every civilian is off-frame.
+    set_view(
+        &mut app,
+        Some(ViewCone::from_perspective(
+            eye,
+            Dir3::Y,
+            70f32.to_radians(),
+            16.0 / 9.0,
+        )),
+    );
+    let step = app
+        .world()
+        .resource::<Time<Fixed>>()
+        .timestep()
+        .as_secs_f32();
+    let grace = (cfg.despawn_offscreen_seconds / step).round() as u32;
+    set_population(&mut app, |p| p.max_civilians = 4);
+    run_ticks(&mut app, grace + 8);
+    assert_eq!(
+        civilian_state(&app, corpse),
+        CivilianState::Dead,
+        "GATE BROKEN: the corpse is not dead"
+    );
+    for (e, name) in [
+        (calm_far, "calm far"),
+        (scared_far, "scared far"),
+        (calm_near, "calm near"),
+        (corpse, "corpse"),
+    ] {
+        assert!(
+            app.world().get_entity(e).is_ok(),
+            "{name} recycled below the cap"
+        );
+    }
+    set_population(&mut app, |p| p.max_civilians = 3);
+    run_ticks(&mut app, 1);
+    assert!(
+        app.world().get_entity(calm_far).is_err(),
+        "calm civilian off-frame beyond {recycle} m not recycled at the cap"
+    );
+    run_ticks(&mut app, grace);
+    for (e, name) in [
+        (scared_far, "scared far"),
+        (calm_near, "calm near"),
+        (corpse, "corpse"),
+    ] {
+        assert!(
+            app.world().get_entity(e).is_ok(),
+            "{name} recycled at the cap"
+        );
+    }
 }

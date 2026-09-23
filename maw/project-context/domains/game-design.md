@@ -36,6 +36,10 @@
 
 ## Risk lessons
 
+- 2026-09-24 (TASK-022) — sidewalk graph nodes are block corners only (~90 m apart along a street; the 4.5 m
+  "min spacing" is between corners of one crossing). Spawners needing spots along a street sample edge points
+  (`population::spawn_points`), not nodes. A cap-limited bubble also needs recycling of calm civilians BEHIND the
+  view, one per tick: recycling any off-screen one feeds a side-spawn/recycle loop (148 spawns/10 s standing).
 - 2026-09-23 (TASK-009) — sidewalk graph, seed 1: 579 nodes, min spacing 4.5 m; median 10 nodes in the 60-120 m
   ring outside a 120 deg view wedge. Node-only spawning fills a 40 cap over seconds, never in one tick; derive any
   "cap reached by t" gate from this.

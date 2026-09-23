@@ -215,18 +215,24 @@ fn every_civilian_model_animates_from_its_own_clips() {
             "civilian {k} animates with another model's graph"
         );
     }
+    // Largest turn from the first pose over the window: two samples of a swinging leg can land on
+    // the same angle (either side of an extreme), and the clip phase depends on asset load timing.
     let before = leg_rotations(&mut app);
+    let mut turns = vec![0.0_f32; n + 1];
     for _ in 0..32 {
         app.update();
+        for (key, rotation) in leg_rotations(&mut app) {
+            let Some(&(_, first)) = before.iter().find(|(k, _)| *k == key) else {
+                continue;
+            };
+            turns[key] = turns[key].max(first.angle_between(rotation));
+        }
     }
-    let after = leg_rotations(&mut app);
-    for key in 1..=n {
-        let a = before.iter().find(|(k, _)| *k == key).map(|(_, r)| *r);
-        let b = after.iter().find(|(k, _)| *k == key).map(|(_, r)| *r);
-        let (Some(a), Some(b)) = (a, b) else {
-            panic!("model key {key} has no leg-left joint");
-        };
-        let turned = a.angle_between(b);
+    for (key, &turned) in turns.iter().enumerate().skip(1) {
+        assert!(
+            before.iter().any(|(k, _)| *k == key),
+            "model key {key} has no leg-left joint"
+        );
         assert!(
             turned > 0.1,
             "model {} ({key}): leg-left turned {turned} rad while walking (T-pose)",

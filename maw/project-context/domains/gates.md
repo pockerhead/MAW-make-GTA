@@ -72,6 +72,14 @@
   same metadata hash, and one tree can link the other's rlib ("could not find `civilian` in `gta_sim`", a failure
   in untouched code). Before trusting red from a shared target, `touch crates/*/src/lib.rs` and rebuild.
 
+- 2026-09-24 (TASK-022) — density/count gates over one deterministic walk are phase-sensitive (in-view count
+  cycles 0..21 per cross street; 20 s windows 3.3..8.6 for the same code). Gate every sliding window plus the
+  mean, start after the initial wave is gone, report the window spread next to the mean.
+- 2026-09-24 (TASK-022) — pose gates sample every update and assert the RANGE of a joint, never two snapshots:
+  a swinging leg passes the same angle on both sides of an extreme, and asset-load latency (3..11 updates)
+  randomizes the phase (`civilian_gate` was RED ~35 % of runs while summaries said "38 passed" from one run).
+  A stage that reports a new or touched presentation gate runs it at least 3 times.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

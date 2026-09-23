@@ -3,7 +3,7 @@
 use avian3d::prelude::*;
 use bevy::{
     asset::AssetPlugin,
-    ecs::{message::MessageCursor, query::QueryFilter},
+    ecs::{message::MessageCursor, query::QueryFilter, system::RunSystemOnce},
     prelude::*,
     state::app::StatesPlugin,
     time::TimeUpdateStrategy,
@@ -18,6 +18,7 @@ use gta_sim::{
     compose_sim,
     config::ConfigRoot,
     flow::{GameState, WastedPhase},
+    layers::GameLayer,
     navigation::{GraphWalker, SidewalkGraph},
     player::{DebugDamage, Player},
     population::{Appearance, CameraView, PopulationConfig, ViewCone},
@@ -399,4 +400,43 @@ pub fn position_of(app: &App, entity: Entity) -> Vec3 {
         .get::<Position>(entity)
         .expect("GATE BROKEN: entity missing Position")
         .0
+}
+
+/// The orbit camera at rest (`camera.ron`: distance 3.8 m, pivot 1.55 m, fov 70), looking along the
+/// flat `dir`, 16:9.
+pub fn chase_view(feet: Vec3, dir: Vec3) -> ViewCone {
+    ViewCone::from_perspective(
+        feet + Vec3::Y * 1.55 - dir * 3.8,
+        Dir3::new(dir).unwrap(),
+        70f32.to_radians(),
+        16.0 / 9.0,
+    )
+}
+
+/// The flat direction from `from` with the longest clear run for a character, and its length.
+pub fn open_street(app: &mut App, from: Vec3) -> (Vec3, f32) {
+    app.world_mut()
+        .run_system_once(move |spatial: SpatialQuery| {
+            let shape = Collider::sphere(0.6);
+            let filter = SpatialQueryFilter::from_mask(GameLayer::World);
+            (0..360)
+                .map(|deg| {
+                    let yaw = (deg as f32).to_radians();
+                    let dir = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
+                    let length = spatial
+                        .cast_shape(
+                            &shape,
+                            from + Vec3::Y,
+                            Quat::IDENTITY,
+                            Dir3::new(dir).unwrap(),
+                            &ShapeCastConfig::from_max_distance(1200.0),
+                            &filter,
+                        )
+                        .map_or(1200.0, |hit| hit.distance);
+                    (dir, length)
+                })
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .unwrap()
+        })
+        .expect("GATE BROKEN: cast system failed")
 }

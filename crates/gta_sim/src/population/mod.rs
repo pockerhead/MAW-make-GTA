@@ -1,5 +1,7 @@
-//! Population bubble around the player: off-camera spawning on sidewalk nodes, despawn far away
-//! and off-frame, corpse lifetime (GDD §6.1, §4.3).
+//! Population bubble around the player: spawning on sidewalk points the player cannot see (off the
+//! camera cone or behind buildings), ahead of the view first; despawn far away and off-frame (at the
+//! cap also calm civilians behind the view, off-frame past `recycle_distance`), corpse lifetime
+//! (GDD §6.1, §4.3).
 
 use crate::character::{CharacterControlConfig, Dead, HealthConfig, LocomotionConfig};
 use crate::civilian::{Civilian, CivilianConfig, CivilianState, civilian_bundle, roll_temperament};
@@ -32,9 +34,22 @@ pub struct PopulationConfig {
     pub initial_spawns_per_tick: u32,
     /// Minimum distance of a spawn node to any civilian or corpse, m.
     pub spawn_min_separation: f32,
-    /// Spawns stay outside the camera cone widened by this, degrees.
+    /// Spawns stay outside the camera cone widened by this, degrees, unless occluded.
     pub spawn_view_margin_deg: f32,
+    /// Spawn points lie on the nodes and every this many metres along each sidewalk edge, m.
+    pub spawn_point_spacing: f32,
+    /// Weight of "ahead of the view" in the spawn order; 0 = random order, 1 = ahead on par with chance.
+    pub spawn_forward_weight: f32,
+    /// Height above a node of the camera ray that must hit a building to spawn inside the cone, m.
+    pub occlusion_ray_height: f32,
+    /// Occlusion rays cast per fixed tick, at most (`OCCLUSION_RAYS_PER_POINT` per checked point).
+    pub occlusion_rays_per_tick: u32,
     pub despawn_distance: f32,
+    /// At the cap, calm civilians behind the view and off-frame this far away are despawned so the
+    /// budget refills ahead, m.
+    pub recycle_distance: f32,
+    /// Civilians recycled per fixed tick at most, farthest first.
+    pub recycles_per_tick: u32,
     pub despawn_offscreen_seconds: f32,
     pub corpse_seconds: f32,
     pub corpse_limit: u32,
@@ -49,7 +64,11 @@ impl PopulationConfig {
             ("initial_inner_radius", self.initial_inner_radius),
             ("spawn_min_separation", self.spawn_min_separation),
             ("spawn_view_margin_deg", self.spawn_view_margin_deg),
+            ("spawn_point_spacing", self.spawn_point_spacing),
+            ("spawn_forward_weight", self.spawn_forward_weight),
+            ("occlusion_ray_height", self.occlusion_ray_height),
             ("despawn_distance", self.despawn_distance),
+            ("recycle_distance", self.recycle_distance),
             ("despawn_offscreen_seconds", self.despawn_offscreen_seconds),
             ("corpse_seconds", self.corpse_seconds),
         ] {
@@ -69,14 +88,40 @@ impl PopulationConfig {
                 self.spawn_ring, self.despawn_distance
             ));
         }
+        if !(inner <= self.recycle_distance && self.recycle_distance <= self.despawn_distance) {
+            return Err(format!(
+                "recycle_distance {} must satisfy spawn_ring.0 ({inner}) <= recycle_distance <= despawn_distance ({})",
+                self.recycle_distance, self.despawn_distance
+            ));
+        }
         if self.spawns_per_tick < 1 {
             return Err("spawns_per_tick must be >= 1".into());
+        }
+        if self.recycles_per_tick < 1 {
+            return Err("recycles_per_tick must be >= 1".into());
         }
         if self.initial_spawns_per_tick < 1 {
             return Err("initial_spawns_per_tick must be >= 1".into());
         }
         if self.spawn_min_separation <= 0.0 {
             return Err("spawn_min_separation must be > 0".into());
+        }
+        if self.spawn_point_spacing < self.spawn_min_separation {
+            return Err(format!(
+                "spawn_point_spacing {} must be >= spawn_min_separation ({})",
+                self.spawn_point_spacing, self.spawn_min_separation
+            ));
+        }
+        if self.spawn_forward_weight < 0.0 {
+            return Err("spawn_forward_weight must be >= 0".into());
+        }
+        if self.occlusion_ray_height <= 0.1 {
+            return Err("occlusion_ray_height must be > 0.1 (the feet ray)".into());
+        }
+        if self.occlusion_rays_per_tick < OCCLUSION_RAYS_PER_POINT {
+            return Err(format!(
+                "occlusion_rays_per_tick must be >= {OCCLUSION_RAYS_PER_POINT} (one spawn point)"
+            ));
         }
         if !(0.0..90.0).contains(&self.spawn_view_margin_deg) {
             return Err("spawn_view_margin_deg must be in [0, 90)".into());
@@ -139,6 +184,13 @@ pub struct Corpse {
 #[reflect(Component)]
 pub struct Appearance(pub u32);
 
+/// Occlusion rays `spawn_civilians` cast in the current tick.
+#[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Resource)]
+pub struct PopulationLoad {
+    pub rays: u32,
+}
+
 /// Spawning mode: the one-shot fill at load, then the steady ring.
 #[derive(Resource, Reflect, Default, PartialEq, Eq, Debug, Clone, Copy)]
 #[reflect(Resource)]
@@ -189,10 +241,33 @@ pub fn outside_cone(view: &ViewCone, feet: Vec3, head_height: f32, margin_rad: f
         && !view.contains(feet + Vec3::Y * head_height, margin_rad)
 }
 
-/// World geometry blocks both the feet (+0.1 m) and the head of a body at `feet` from the camera.
-pub fn occluded(spatial: &SpatialQuery, view: &ViewCone, feet: Vec3, head_height: f32) -> bool {
-    sight_blocked(spatial, view.origin, feet + Vec3::Y * 0.1)
-        && sight_blocked(spatial, view.origin, feet + Vec3::Y * head_height)
+/// Rays `occluded` casts per spawn point, at most.
+pub const OCCLUSION_RAYS_PER_POINT: u32 = 4;
+
+/// World geometry hides a body at `feet` from the camera across its width: rays to the head
+/// (`ray_height`) at the centre and `half_width` to either side, and to the feet (+0.1 m); adds the
+/// rays cast to `rays`.
+pub fn occluded(
+    spatial: &SpatialQuery,
+    view: &ViewCone,
+    feet: Vec3,
+    ray_height: f32,
+    half_width: f32,
+    rays: &mut u32,
+) -> bool {
+    // Buildings stand on the ground: a blocked ray to the top of a vertical line hides the line below.
+    let side = (feet - view.origin)
+        .with_y(0.0)
+        .cross(Vec3::Y)
+        .normalize_or_zero()
+        * half_width;
+    let head = feet + Vec3::Y * ray_height;
+    [head, head + side, head - side, feet + Vec3::Y * 0.1]
+        .into_iter()
+        .all(|target| {
+            *rays += 1;
+            sight_blocked(spatial, view.origin, target)
+        })
 }
 
 pub struct PopulationPlugin {
@@ -204,6 +279,7 @@ impl Plugin for PopulationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraView>()
             .init_resource::<PopulationPhase>()
+            .init_resource::<PopulationLoad>()
             .insert_resource(NpcRng::seeded(self.seed))
             .register_type::<CameraView>()
             .register_type::<ViewCone>()
@@ -211,6 +287,7 @@ impl Plugin for PopulationPlugin {
             .register_type::<Corpse>()
             .register_type::<Appearance>()
             .register_type::<PopulationPhase>()
+            .register_type::<PopulationLoad>()
             .add_systems(
                 FixedUpdate,
                 (age_corpses, despawn_far, spawn_civilians)
@@ -250,7 +327,7 @@ fn despawn_far(
     loco: Res<LocomotionConfig>,
     time: Res<Time<Fixed>>,
     player: Query<&Position, With<Player>>,
-    mut civilians: Query<(Entity, &Position, &mut Offscreen), With<Civilian>>,
+    mut civilians: Query<(Entity, &Position, &mut Offscreen, &Civilian)>,
 ) {
     let Some(view) = view.0 else {
         return;
@@ -259,7 +336,14 @@ fn despawn_far(
         return;
     };
     let dt = time.delta_secs();
-    for (entity, position, mut offscreen) in &mut civilians {
+    let alive = civilians
+        .iter()
+        .filter(|(.., c)| c.state != CivilianState::Dead)
+        .count() as u32;
+    let at_cap = alive >= cfg.max_civilians;
+    let look = view.forward.with_y(0.0).normalize_or_zero();
+    let mut recyclable = Vec::new();
+    for (entity, position, mut offscreen, civilian) in &mut civilians {
         let feet = position.0 - Vec3::Y * loco.float_height;
         // Occlusion is ignored: a civilian behind a building counts as in frame (never a pop-out).
         if outside_cone(&view, feet, loco.head_height, 0.0) {
@@ -267,12 +351,65 @@ fn despawn_far(
         } else {
             offscreen.0 = 0.0;
         }
-        if flat_distance(position.0, player.0) > cfg.despawn_distance
-            && offscreen.0 >= cfg.despawn_offscreen_seconds
-        {
+        if offscreen.0 < cfg.despawn_offscreen_seconds {
+            continue;
+        }
+        let distance = flat_distance(position.0, player.0);
+        if distance > cfg.despawn_distance {
             commands.entity(entity).try_despawn();
+            continue;
+        }
+        // Scared civilians and corpses are part of a scene the player made; only calm ones recycle.
+        // Only from behind: a spawn off to the side would be recyclable again, and churn.
+        let behind = (position.0 - player.0).with_y(0.0).dot(look) <= 0.0;
+        if at_cap
+            && behind
+            && distance > cfg.recycle_distance
+            && matches!(
+                civilian.state,
+                CivilianState::Wander | CivilianState::Idle { .. }
+            )
+        {
+            recyclable.push((distance, entity));
         }
     }
+    recyclable.sort_by(|a, b| b.0.total_cmp(&a.0));
+    for &(_, entity) in recyclable.iter().take(cfg.recycles_per_tick as usize) {
+        commands.entity(entity).try_despawn();
+    }
+}
+
+/// A spawn point: node `from` itself, or the point at fraction `t` of edge `from -> to`.
+struct SpawnPoint {
+    from: u32,
+    edge: Option<(u32, f32)>,
+    at: Vec3,
+}
+
+/// Every node with an edge, plus points every `spacing` m inside each edge (none closer than
+/// `spacing / 2` to an end).
+fn spawn_points(graph: &SidewalkGraph, spacing: f32) -> impl Iterator<Item = SpawnPoint> + '_ {
+    let nodes = (0..graph.nodes().len() as u32)
+        .filter(|&n| !graph.neighbors(n).is_empty())
+        .map(|n| SpawnPoint {
+            from: n,
+            edge: None,
+            at: graph.node(n),
+        });
+    let inner = graph.edges().iter().flat_map(move |&(a, b)| {
+        let (pa, pb) = (graph.node(a), graph.node(b));
+        let length = flat_distance(pa, pb);
+        let count = (length / spacing - 0.5).floor().max(0.0) as u32;
+        (1..=count).map(move |k| {
+            let t = k as f32 * spacing / length;
+            SpawnPoint {
+                from: a,
+                edge: Some((b, t)),
+                at: pa.lerp(pb, t),
+            }
+        })
+    });
+    nodes.chain(inner)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -282,6 +419,7 @@ fn spawn_civilians(
     civilian_cfg: Res<CivilianConfig>,
     view: Res<CameraView>,
     mut phase: ResMut<PopulationPhase>,
+    mut load: ResMut<PopulationLoad>,
     graph: Res<SidewalkGraph>,
     mut rng: ResMut<NpcRng>,
     spatial: SpatialQuery,
@@ -293,6 +431,7 @@ fn spawn_civilians(
     player: Query<&Position, With<Player>>,
     civilians: Query<(&Position, &Civilian)>,
 ) {
+    *load = PopulationLoad::default();
     let Some(view) = view.0 else {
         return;
     };
@@ -320,40 +459,87 @@ fn spawn_civilians(
     };
     let separation = cfg.spawn_min_separation;
     let taken = civilians.iter().map(|(p, _)| p.0).collect::<Vec<_>>();
-    let mut candidates = (0..graph.nodes().len() as u32)
-        .filter(|&n| {
-            let at = graph.node(n);
-            let d = flat_distance(at, player.0);
-            inner <= d && d <= outer && !graph.neighbors(n).is_empty()
+    // The one-shot fill stays uniform around the player; only the steady ring prefers the view.
+    let forward_weight = if initial {
+        0.0
+    } else {
+        cfg.spawn_forward_weight
+    };
+    let look = view.forward.with_y(0.0).normalize_or_zero();
+    let mut candidates = spawn_points(&graph, cfg.spawn_point_spacing)
+        .filter(|point| {
+            let d = flat_distance(point.at, player.0);
+            inner <= d && d <= outer
         })
-        .filter(|&n| {
-            let at = graph.node(n);
-            taken.iter().all(|&p| flat_distance(p, at) >= separation)
+        .filter(|point| {
+            taken
+                .iter()
+                .all(|&p| flat_distance(p, point.at) >= separation)
+        })
+        .map(|point| {
+            let ahead = (point.at - player.0)
+                .with_y(0.0)
+                .normalize_or_zero()
+                .dot(look);
+            (point, forward_weight * ahead + rng.unit())
         })
         .collect::<Vec<_>>();
-    for i in (1..candidates.len()).rev() {
-        let j = ((rng.unit() * (i + 1) as f32) as usize).min(i);
-        candidates.swap(i, j);
-    }
+    candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
     let margin = cfg.spawn_view_margin_deg.to_radians();
     let wanted = budget.min(deficit) as usize;
     let mut spawned: Vec<Vec3> = Vec::new();
-    for node in candidates {
+    let mut ray_starved = false;
+    for (point, _) in candidates {
         if spawned.len() == wanted {
             break;
         }
-        let at = graph.node(node);
+        let at = point.at;
         if spawned.iter().any(|&p| flat_distance(p, at) < separation) {
             continue;
         }
-        let hidden = outside_cone(&view, at, loco.head_height, margin)
-            || (initial && occluded(&spatial, &view, at, loco.head_height));
-        if !hidden {
-            continue;
+        if !outside_cone(&view, at, loco.head_height, margin) {
+            if load.rays + OCCLUSION_RAYS_PER_POINT > cfg.occlusion_rays_per_tick {
+                ray_starved = true;
+                continue;
+            }
+            if !occluded(
+                &spatial,
+                &view,
+                at,
+                cfg.occlusion_ray_height,
+                loco.capsule_radius,
+                &mut load.rays,
+            ) {
+                continue;
+            }
         }
-        let walker = GraphWalker {
-            from: node,
-            to: wander_next(&graph, node, node, rng.unit()),
+        let (walker, t) = match point.edge {
+            None => (
+                GraphWalker {
+                    from: point.from,
+                    to: wander_next(&graph, point.from, point.from, rng.unit()),
+                },
+                0.0,
+            ),
+            Some((to, t))
+                if flat_distance(graph.node(to), player.0)
+                    <= flat_distance(graph.node(point.from), player.0) =>
+            {
+                (
+                    GraphWalker {
+                        from: point.from,
+                        to,
+                    },
+                    t,
+                )
+            }
+            Some((to, t)) => (
+                GraphWalker {
+                    from: to,
+                    to: point.from,
+                },
+                1.0 - t,
+            ),
         };
         let temperament = roll_temperament(&mut rng, civilian_cfg.reaction.temperament_spread);
         let appearance = Appearance(rng.next_u32());
@@ -363,13 +549,14 @@ fn spawn_civilians(
             &health,
             &graph,
             walker,
-            0.0,
+            t,
             temperament,
             appearance,
         ));
         spawned.push(at);
     }
-    if initial && (spawned.len() < budget as usize || spawned.len() as u32 == deficit) {
+    let exhausted = spawned.len() < budget as usize && !ray_starved;
+    if initial && (exhausted || spawned.len() as u32 == deficit) {
         *phase = PopulationPhase::Steady;
     }
 }
