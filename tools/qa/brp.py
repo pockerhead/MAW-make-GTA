@@ -1,6 +1,7 @@
 """Small JSON-RPC driver for a locally running Bevy dev build."""
 
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -10,6 +11,8 @@ from urllib import request
 
 
 REPO = Path(__file__).resolve().parents[2]
+# The game-side release timer runs on game time, which can lag the wall clock after a hitch.
+KEY_RELEASE_MARGIN_S = 0.25
 
 
 class Game:
@@ -20,6 +23,7 @@ class Game:
         self.port = port
         self.process = None
         self.log_file = None
+        self.held_until = {}
 
     def __enter__(self):
         self.start()
@@ -127,7 +131,30 @@ class Game:
         })
 
     def send_keys(self, keys, ms):
-        return self.call("brp_extras/send_keys", {"keys": keys, "duration_ms": ms})
+        """Press `keys` for `ms` ms. bevy_brp_extras releases every call on its own timer, so a key
+        pressed again before its previous hold ends is released by the older timer right after the new
+        press; such overlapping holds are refused. Hold once for longer (max 60000 ms) instead."""
+        now = time.monotonic()
+        busy = [key for key in keys if self.held_until.get(key, 0.0) > now]
+        if busy:
+            raise RuntimeError(
+                f"send_keys: {busy} still held by an earlier call (or unknown after a failed RPC); "
+                "its release would cut this press"
+            )
+        try:
+            result = self.call("brp_extras/send_keys", {"keys": keys, "duration_ms": ms})
+        except RuntimeError:
+            raise  # the game answered with an error: nothing was pressed
+        except Exception:
+            # Transport failure: the press may still reach the game, its release time is unknowable.
+            for key in keys:
+                self.held_until[key] = math.inf
+            raise
+        # The game starts its release timer no later than its reply, so count the hold from here.
+        released_by = time.monotonic() + ms / 1000.0 + KEY_RELEASE_MARGIN_S
+        for key in keys:
+            self.held_until[key] = released_by
+        return result
 
     def move_mouse(self, dx, dy):
         return self.call("brp_extras/move_mouse", {"delta": [dx, dy]})
