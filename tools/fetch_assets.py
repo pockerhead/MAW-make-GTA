@@ -6,14 +6,17 @@ Usage:
   python tools/fetch_assets.py --validate-only F   parse and schema-check a manifest file
 
 The schema rules mirror gta_sim::config::manifest::ThirdPartyManifest::validate.
+A pack may carry a `rig` record; --check and installation compare it with the GLB bytes.
 """
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import sys
 import time
 import urllib.request
@@ -28,6 +31,9 @@ RETRY_PAUSES = (2, 4, 8)
 
 PACK_KEYS = {"name", "version", "page", "url", "archive_sha256", "license", "license_file", "files"}
 FILE_KEYS = {"archive", "path", "sha256"}
+OPTIONAL_PACK_KEYS = frozenset({"rig"})
+RIG_KEYS = {"models", "skinned_meshes", "joints", "clips"}
+GLB_JSON_CHUNK = 0x4E4F534A
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 NAME = re.compile(r"[a-z0-9-]+")
@@ -78,9 +84,17 @@ class Parser:
         match = IDENT.match(self.text, self.pos)
         if match:
             self.pos = match.end()
+            ident = match.group()
+            if ident == "Some" and self.peek() == "(":
+                self.expect("(")
+                inner = self.value()
+                self.expect(")")
+                return inner
             if self.peek() == "(":
-                self.fail(f"named struct {match.group()!r} is not supported")
-            return match.group()
+                self.fail(f"named struct {ident!r} is not supported")
+            if ident == "None":
+                return None
+            return ident
         self.fail(f"unexpected {char!r}")
 
     def struct(self):
@@ -151,10 +165,10 @@ def safe_path(value):
             and all(seg not in ("", ".", "..") for seg in value.split("/")))
 
 
-def exact_keys(obj, keys, where):
+def exact_keys(obj, keys, where, optional=frozenset()):
     if not isinstance(obj, dict):
         raise ManifestError(f"{where}: expected a struct")
-    extra, missing = set(obj) - keys, keys - set(obj)
+    extra, missing = set(obj) - keys - optional, keys - set(obj)
     if extra or missing:
         raise ManifestError(f"{where}: unknown fields {sorted(extra)}, missing fields {sorted(missing)}")
 
@@ -166,7 +180,7 @@ def check_schema(doc):
         raise ManifestError("packs is empty")
     names = set()
     for pack in packs:
-        exact_keys(pack, PACK_KEYS, "pack")
+        exact_keys(pack, PACK_KEYS, "pack", OPTIONAL_PACK_KEYS)
         name = pack["name"]
         if name in names:
             raise ManifestError(f"duplicate pack name {name!r}")
@@ -203,6 +217,33 @@ def check_schema(doc):
             archives.add(entry["archive"])
         if pack["license_file"] not in paths:
             raise ManifestError(f"pack {name}: license_file {pack['license_file']!r} is not listed in files")
+        rig = pack.get("rig")
+        if rig is None:
+            continue
+        exact_keys(rig, RIG_KEYS, f"pack {name} rig")
+        check_rig(name, rig, paths)
+
+
+def check_names(pack, field, items):
+    if not isinstance(items, list) or not items:
+        raise ManifestError(f"pack {pack}: rig {field} is empty")
+    seen = set()
+    for item in items:
+        if not isinstance(item, str) or not item:
+            raise ManifestError(f"pack {pack}: rig {field} has an empty name")
+        if item in seen:
+            raise ManifestError(f"pack {pack}: rig {field} has duplicate {item!r}")
+        seen.add(item)
+
+
+def check_rig(pack, rig, paths):
+    for field in ("models", "skinned_meshes", "joints", "clips"):
+        check_names(pack, field, rig[field])
+    for model in rig["models"]:
+        if model not in paths:
+            raise ManifestError(f"pack {pack}: rig model {model!r} is not listed in files")
+        if not model.endswith(".glb"):
+            raise ManifestError(f"pack {pack}: rig model {model!r} is not a .glb")
 
 
 def load_manifest(path):
@@ -241,6 +282,46 @@ def pack_problems(pack):
         actual = sha256_file(directory / rel)
         if actual != expected[rel]:
             problems.append(f"{pack['name']}: {rel} sha256 {actual}, manifest {expected[rel]}")
+    if not problems and pack.get("rig"):
+        problems += rig_problems(pack, lambda p: (directory / p).read_bytes())
+    return problems
+
+
+def glb_json(model, data):
+    if len(data) < 20:
+        raise ManifestError(f"{model}: not a GLB file")
+    magic, version, length = struct.unpack_from("<4sII", data, 0)
+    if magic != b"glTF" or version != 2 or length != len(data):
+        raise ManifestError(f"{model}: not a glTF 2 binary (magic {magic!r}, version {version}, length {length})")
+    chunk_length, chunk_type = struct.unpack_from("<II", data, 12)
+    if chunk_type != GLB_JSON_CHUNK:
+        raise ManifestError(f"{model}: first GLB chunk is not JSON")
+    return json.loads(data[20:20 + chunk_length])
+
+
+def rig_facts(gltf):
+    nodes = gltf.get("nodes", [])
+    skinned = [node.get("name") for node in nodes if "skin" in node]
+    joints_per_skin = [[nodes[j].get("name") for j in skin["joints"]] for skin in gltf.get("skins", [])]
+    clips = [animation.get("name") for animation in gltf.get("animations", [])]
+    return skinned, joints_per_skin, clips
+
+
+def rig_problems(pack, read):
+    rig = pack["rig"]
+    problems = []
+    for model in rig["models"]:
+        skinned, joints_per_skin, clips = rig_facts(glb_json(model, read(model)))
+        where = f"{pack['name']}: {model}: rig"
+        if skinned != rig["skinned_meshes"]:
+            problems.append(f"{where} skinned_meshes {skinned}, manifest {rig['skinned_meshes']}")
+        if len(joints_per_skin) != len(skinned):
+            problems.append(f"{where} skins {len(joints_per_skin)}, skinned meshes {len(skinned)}")
+        for joints in joints_per_skin:
+            if joints != rig["joints"]:
+                problems.append(f"{where} joints {joints}, manifest {rig['joints']}")
+        if clips != rig["clips"]:
+            problems.append(f"{where} clips {clips}, manifest {rig['clips']}")
     return problems
 
 
@@ -316,6 +397,10 @@ def extract(pack, archive):
                 target = tmp / entry["path"]
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
+        if pack.get("rig"):
+            problems = rig_problems(pack, lambda p: (tmp / p).read_bytes())
+            if problems:
+                raise ManifestError("\n".join(problems))
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise

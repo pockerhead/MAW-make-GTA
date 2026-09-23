@@ -26,11 +26,13 @@ fn shipped() -> ThirdPartyManifest {
 
 #[test]
 fn manifest_fixtures_are_judged() {
-    let valid = ron::from_str::<ThirdPartyManifest>(&fixture("valid_minimal.ron"))
-        .unwrap_or_else(|e| panic!("valid_minimal.ron must parse: {e}"));
-    valid
-        .validate()
-        .unwrap_or_else(|e| panic!("valid_minimal.ron must validate: {e}"));
+    for name in ["valid_minimal.ron", "valid_rig.ron", "valid_rig_none.ron"] {
+        let valid = ron::from_str::<ThirdPartyManifest>(&fixture(name))
+            .unwrap_or_else(|e| panic!("{name} must parse: {e}"));
+        valid
+            .validate()
+            .unwrap_or_else(|e| panic!("{name} must validate: {e}"));
+    }
 
     for name in [
         "bad_unknown_field.ron",
@@ -49,6 +51,8 @@ fn manifest_fixtures_are_judged() {
         ("bad_hash.ron", "sha256"),
         ("bad_license_file.ron", "license_file"),
         ("bad_url.ron", "url"),
+        ("bad_rig_model.ron", "rig"),
+        ("bad_rig_duplicate_clip.ron", "rig"),
     ] {
         let manifest = ron::from_str::<ThirdPartyManifest>(&fixture(name))
             .unwrap_or_else(|e| panic!("{name} must parse (its defect is semantic): {e}"));
@@ -73,11 +77,46 @@ fn shipped_manifest_is_valid() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         names,
-        BTreeSet::from(["city-kit-roads", "city-kit-suburban", "city-kit-industrial"])
+        BTreeSet::from([
+            "city-kit-roads",
+            "city-kit-suburban",
+            "city-kit-industrial",
+            "mini-characters"
+        ])
     );
-    for pack in &manifest.packs {
+    for pack in manifest
+        .packs
+        .iter()
+        .filter(|p| p.name != "mini-characters")
+    {
         assert_eq!(pack.files.len(), 4, "pack {} file count", pack.name);
+        assert!(pack.rig.is_none(), "pack {} has no rig", pack.name);
     }
+    let characters = manifest
+        .packs
+        .iter()
+        .find(|p| p.name == "mini-characters")
+        .unwrap();
+    assert_eq!(characters.files.len(), 14, "mini-characters file count");
+    // Counts and clip order come from the byte audit of the pinned archive (TASK-005 scratch).
+    let rig = characters
+        .rig
+        .as_ref()
+        .expect("mini-characters records its rig");
+    assert_eq!(rig.models.len(), 12);
+    assert_eq!(rig.skinned_meshes.len(), 2);
+    assert_eq!(rig.joints.len(), 7);
+    assert_eq!(rig.clips.len(), 32);
+    for (clip, index) in [
+        ("idle", 1),
+        ("walk", 2),
+        ("sprint", 3),
+        ("jump", 4),
+        ("fall", 5),
+    ] {
+        assert_eq!(rig.clip_index(clip), Some(index), "clip {clip}");
+    }
+    assert_eq!(rig.clip_index("run"), None);
 }
 
 fn files_under(dir: &Path) -> BTreeSet<String> {

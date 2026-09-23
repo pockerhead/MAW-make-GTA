@@ -11,6 +11,8 @@ pub struct LocomotionConfig {
     pub walk_speed: f32,
     pub run_speed: f32,
     pub sprint_speed: f32,
+    /// Horizontal speed below which the body shows `AnimState::Idle`, m/s.
+    pub anim_idle_speed: f32,
     pub time_to_run_speed: f32,
     pub turn_rate_deg: f32,
     pub jump_height: f32,
@@ -26,6 +28,27 @@ pub struct LocomotionConfig {
 }
 
 impl LocomotionConfig {
+    /// Checks the speeds that split `AnimState`.
+    pub fn validate(&self) -> Result<(), String> {
+        let speeds = [
+            self.anim_idle_speed,
+            self.walk_speed,
+            self.run_speed,
+            self.sprint_speed,
+        ];
+        let ordered = speeds.iter().all(|s| s.is_finite())
+            && 0.0 < self.anim_idle_speed
+            && speeds.windows(2).all(|pair| pair[0] < pair[1]);
+        if ordered {
+            return Ok(());
+        }
+        Err(format!(
+            "anim_idle_speed {} / walk_speed {} / run_speed {} / sprint_speed {} must be finite and satisfy \
+             0 < anim_idle_speed < walk_speed < run_speed < sprint_speed",
+            self.anim_idle_speed, self.walk_speed, self.run_speed, self.sprint_speed
+        ))
+    }
+
     pub fn speed(&self, gait: Gait) -> f32 {
         match gait {
             Gait::Walk => self.walk_speed,

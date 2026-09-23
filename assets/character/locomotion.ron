@@ -2,6 +2,7 @@
     walk_speed: 1.8,
     run_speed: 4.5,
     sprint_speed: 6.8,
+    anim_idle_speed: 0.2,
     time_to_run_speed: 0.15,
     turn_rate_deg: 720.0,
     jump_height: 1.0,

@@ -1,6 +1,8 @@
+mod anim;
 mod intent;
 mod locomotion;
 
+pub use anim::{AnimState, anim_state, is_airborne};
 pub use intent::{Gait, MoveIntent, move_direction};
 pub use locomotion::{LOCOMOTION_CONFIG, LocomotionConfig};
 
@@ -19,7 +21,7 @@ pub enum CharacterScheme {
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
-#[require(MoveIntent, JumpBuffer)]
+#[require(MoveIntent, JumpBuffer, AnimState)]
 pub struct Character;
 
 #[derive(Component, Default)]
@@ -58,9 +60,15 @@ impl Plugin for CharacterPlugin {
             .register_type::<Character>()
             .register_type::<CharacterBody>()
             .register_type::<MoveIntent>()
+            .register_type::<AnimState>()
             .add_systems(
                 FixedUpdate,
                 drive_characters.in_set(TnuaUserControlsSystems),
+            )
+            // Avian steps in FixedPostUpdate (`PhysicsPlugins::default()`): read the post-step velocity.
+            .add_systems(
+                FixedPostUpdate,
+                anim::update_anim_state.after(PhysicsSystems::Last),
             );
     }
 }

@@ -13,7 +13,39 @@ use std::{
 
 #[test]
 fn shipped_locomotion_config_loads() {
-    load_config::<LocomotionConfig>(&assets_root(), LOCOMOTION_CONFIG).unwrap();
+    load_config::<LocomotionConfig>(&assets_root(), LOCOMOTION_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn locomotion_thresholds_are_validated() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_anim_{}_{}",
+        std::process::id(),
+        unique
+    )));
+    let file = root.path(LOCOMOTION_CONFIG);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = fs::read_to_string(assets_root().path(LOCOMOTION_CONFIG)).unwrap();
+    assert!(
+        original.contains("anim_idle_speed: 0.2,"),
+        "GATE BROKEN: shipped locomotion.ron has no anim_idle_speed: 0.2"
+    );
+    fs::write(
+        &file,
+        original.replacen("anim_idle_speed: 0.2,", "anim_idle_speed: 2.0,", 1),
+    )
+    .unwrap();
+    let loaded = load_config::<LocomotionConfig>(&root, LOCOMOTION_CONFIG);
+    fs::remove_dir_all(&root.0).unwrap();
+    let error = loaded.unwrap().validate().unwrap_err();
+    assert!(error.contains("anim_idle_speed"), "{error}");
 }
 
 #[test]

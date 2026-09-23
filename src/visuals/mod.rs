@@ -1,3 +1,7 @@
+mod character;
+mod character_config;
+#[cfg(test)]
+mod character_gate;
 mod city;
 #[cfg(test)]
 mod city_gate;
@@ -7,6 +11,7 @@ mod facade;
 mod props;
 mod sky;
 
+pub use character_config::{CHARACTER_VISUAL_CONFIG, CharacterClips, CharacterVisualConfig};
 pub use config::{RENDER_CONFIG, RenderConfig};
 
 use bevy::{
@@ -14,7 +19,7 @@ use bevy::{
     prelude::*,
 };
 use facade::FacadeMaterial;
-use gta_sim::{character::CharacterBody, world::Block};
+use gta_sim::world::Block;
 
 pub struct VisualsPlugin;
 
@@ -36,9 +41,9 @@ impl Plugin for VisualsPlugin {
             MaterialPlugin::<FacadeMaterial>::default(),
             sky::SkyPlugin,
             city::CityVisualsPlugin,
+            character::CharacterVisualsPlugin,
         ))
-        .add_observer(visualize_block)
-        .add_observer(visualize_character);
+        .add_observer(visualize_block);
     }
 }
 
@@ -80,37 +85,4 @@ fn visualize_block(
         Mesh3d(meshes.add(Cuboid::from_size(block.size))),
         MeshMaterial3d(materials.add(Color::srgb(0.55, 0.58, 0.62))),
     ));
-}
-
-fn visualize_character(
-    event: On<Add, CharacterBody>,
-    bodies: Query<&CharacterBody>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let Ok(body) = bodies.get(event.entity) else {
-        return;
-    };
-    let visible_height = body.float_height + body.height / 2.0;
-    let center_offset = (body.float_height - body.height / 2.0) / 2.0;
-    let material = materials.add(Color::srgb(0.2, 0.5, 0.9));
-    commands
-        .entity(event.entity)
-        .insert(Visibility::default())
-        .with_children(|parent| {
-            parent.spawn((
-                Mesh3d(meshes.add(Capsule3d {
-                    radius: body.radius,
-                    half_length: visible_height / 2.0 - body.radius,
-                })),
-                MeshMaterial3d(material.clone()),
-                Transform::from_xyz(0.0, -center_offset, 0.0),
-            ));
-            parent.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.16, 0.12, 0.3))),
-                MeshMaterial3d(material),
-                Transform::from_xyz(0.0, 0.25, -body.radius),
-            ));
-        });
 }

@@ -1,0 +1,18 @@
+(
+    packs: [
+        (
+            name: "city-kit-roads",
+            version: "2.1",
+            page: "https://kenney.nl/assets/city-kit-roads",
+            url: "https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1787042796/kenney_city-kit-roads.zip",
+            archive_sha256: "22058af3d68173a7cf9bda9f0e243a8cef6bd68168c302ebc76327063849674e",
+            license: CC0,
+            license_file: "License.txt",
+            files: [
+                (archive: "Models/GLB format/light-square.glb", path: "light-square.glb", sha256: "6230d136c8883d7f9bc1b86f0309077e452e26e5e1e587ef1b77abef3c5f047c"),
+                (archive: "License.txt", path: "License.txt", sha256: "87b9404aef5dff6162ae1e53a27bc6427fe1cdd2e2dd5ec05fdd25f17da10498"),
+            ],
+            rig: Some((models: ["missing.glb"], skinned_meshes: ["m"], joints: ["root"], clips: ["idle"])),
+        ),
+    ],
+)

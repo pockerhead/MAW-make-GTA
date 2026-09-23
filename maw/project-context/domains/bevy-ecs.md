@@ -56,6 +56,14 @@
   from both READMEs. Before adding any ecosystem crate to `gta_sim`, run
   `cargo tree -p gta_sim -e features -i bevy_render`; the fix precedent is the vendored patch (ADR-001).
 
+- 2026-09-23 (TASK-005) — bevy-tnua 0.32 `TnuaController::is_airborne()` stays `false` while the ground
+  sensor still reaches the floor (`float_height + cling_distance`, 2.05 m here): any hop under ~1 m never
+  reports airborne. "In the air" for gameplay/animation = `is_airborne() || action is Jump`
+  (`gta_sim::character::is_airborne`). Do not gate on Tnua's airborne flag alone.
+- 2026-09-23 (TASK-005) — in Bevy 0.19.1 `WorldInstanceReady` / `GltfMeshName` are not in the prelude
+  (`bevy::world_serialization::WorldInstanceReady`), and `InstanceId::new` is private: a headless test cannot
+  trigger `WorldInstanceReady` by hand. Gate such handlers via a real `WorldAsset` spawn or runtime BRP QA.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

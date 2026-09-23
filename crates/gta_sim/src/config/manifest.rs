@@ -25,6 +25,8 @@ pub struct AssetPack {
     pub license: AssetLicense,
     pub license_file: String,
     pub files: Vec<PackFile>,
+    #[serde(default)]
+    pub rig: Option<PackRig>,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +40,16 @@ pub struct PackFile {
     pub archive: String,
     pub path: String,
     pub sha256: String,
+}
+
+/// Skinned models of a pack, recorded from the pinned archive and checked against the GLB bytes by fetch_assets.py.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PackRig {
+    pub models: Vec<String>,
+    pub skinned_meshes: Vec<String>,
+    pub joints: Vec<String>,
+    pub clips: Vec<String>,
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -119,7 +131,55 @@ impl AssetPack {
                 self.license_file
             ));
         }
+        let Some(rig) = &self.rig else {
+            return Ok(());
+        };
+        rig.validate(name, &paths)
+    }
+}
+
+fn check_names(pack: &str, field: &str, list: &[String]) -> Result<(), String> {
+    if list.is_empty() {
+        return Err(format!("pack {pack}: rig {field} is empty"));
+    }
+    let mut seen = HashSet::new();
+    for item in list {
+        if item.is_empty() {
+            return Err(format!("pack {pack}: rig {field} has an empty name"));
+        }
+        if !seen.insert(item.as_str()) {
+            return Err(format!("pack {pack}: rig {field} has duplicate {item:?}"));
+        }
+    }
+    Ok(())
+}
+
+impl PackRig {
+    fn validate(&self, pack: &str, paths: &HashSet<&str>) -> Result<(), String> {
+        for (field, list) in [
+            ("models", &self.models),
+            ("skinned_meshes", &self.skinned_meshes),
+            ("joints", &self.joints),
+            ("clips", &self.clips),
+        ] {
+            check_names(pack, field, list)?;
+        }
+        for model in &self.models {
+            if !paths.contains(model.as_str()) {
+                return Err(format!(
+                    "pack {pack}: rig model {model:?} is not listed in files"
+                ));
+            }
+            if !model.ends_with(".glb") {
+                return Err(format!("pack {pack}: rig model {model:?} is not a .glb"));
+            }
+        }
         Ok(())
+    }
+
+    /// Position of `name` in `clips`, which is its glTF animation index.
+    pub fn clip_index(&self, name: &str) -> Option<usize> {
+        self.clips.iter().position(|clip| clip == name)
     }
 }
 
@@ -157,6 +217,17 @@ impl ThirdPartyManifest {
             pack.files
                 .iter()
                 .any(|file| asset_path == format!("{THIRD_PARTY_DIR}/{}/{}", pack.name, file.path))
+        })
+    }
+
+    /// Rig of the pack whose rig lists `asset_path` (`third_party/<pack>/<model>`) as a model.
+    pub fn rig_for(&self, asset_path: &str) -> Option<&PackRig> {
+        self.packs.iter().find_map(|pack| {
+            let rig = pack.rig.as_ref()?;
+            rig.models
+                .iter()
+                .any(|model| asset_path == format!("{THIRD_PARTY_DIR}/{}/{model}", pack.name))
+                .then_some(rig)
         })
     }
 }

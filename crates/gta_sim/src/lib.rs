@@ -22,6 +22,10 @@ pub fn compose_sim(
     source: WorldSource,
 ) -> Result<(), ConfigError> {
     let cfg = load_config::<LocomotionConfig>(&root, LOCOMOTION_CONFIG)?;
+    cfg.validate().map_err(|message| ConfigError {
+        path: root.path(LOCOMOTION_CONFIG),
+        message,
+    })?;
     if let WorldSource::City { .. } = source {
         let params = load_config::<CityParams>(&root, CITY_CONFIG)?;
         params.validate().map_err(|message| ConfigError {

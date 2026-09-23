@@ -1,0 +1,14 @@
+(
+    model: "third_party/mini-characters/character-male-a.glb",
+    model_height: 0.67132,
+    height: 1.8,
+    tinted_mesh: "body-mesh",
+    tint: (1.0, 1.0, 1.0),
+    blend_seconds: 0.15,
+    idle: "idle",
+    jump: "jump",
+    fall: "fall",
+    walk: (clip: "walk", native_speed: 1.28),
+    run: (clip: "sprint", native_speed: 2.66),
+    sprint: (clip: "sprint", native_speed: 2.66),
+)
