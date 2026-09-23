@@ -36,10 +36,12 @@ pub(super) fn assist_ledge(
     mut characters: AssistQuery,
 ) {
     for (entity, intent, controller, mut assist, position) in &mut characters {
-        if matches!(
-            controller.action_flow_status(),
-            TnuaActionFlowStatus::ActionStarted(_)
-        ) {
+        if assist.remaining <= 0.0
+            && matches!(
+                controller.action_flow_status(),
+                TnuaActionFlowStatus::ActionStarted(_)
+            )
+        {
             assist.launch_feet_y = position.y - cfg.float_height;
             assist.remaining = cfg.ledge_assist_window;
         }
@@ -84,23 +86,40 @@ pub(super) fn assist_ledge(
         ) else {
             continue;
         };
-        if wall_hit.entity != top_hit.entity || wall_hit.normal.dot(*forward) > -0.5 {
+        if wall_hit.entity != top_hit.entity {
             continue;
         }
         if rise > cfg.ledge_assist_max_height {
-            let keep_out =
-                (cfg.capsule_radius + cfg.ledge_assist_clearance - wall_hit.distance).max(0.0);
+            assist.remaining = cfg.ledge_assist_window;
+            let incidence = -wall_hit.normal.dot(*forward);
+            let keep_out = (cfg.capsule_radius + cfg.ledge_assist_clearance
+                - wall_hit.distance * incidence)
+                .max(0.0);
             assist.target = Some(LedgeTarget {
-                position: position.0 - direction * keep_out,
+                position: position.0 + wall_hit.normal * keep_out,
                 snapped: false,
             });
+            continue;
+        }
+        if wall_hit.normal.dot(*forward) > -0.5 {
             continue;
         }
         // Tnua's float spring settles slowly at an edge; finish the jump onto the detected top.
         let target = position.0
             + direction * (wall_hit.distance + cfg.capsule_radius + cfg.ledge_assist_clearance);
+        let target = Vec3::new(target.x, top_y + cfg.float_height, target.z);
+        let capsule = Collider::capsule(
+            cfg.capsule_radius,
+            cfg.capsule_height - 2.0 * cfg.capsule_radius,
+        );
+        if !spatial
+            .shape_intersections(&capsule, target, Quat::IDENTITY, &filter)
+            .is_empty()
+        {
+            continue;
+        }
         assist.target = Some(LedgeTarget {
-            position: Vec3::new(target.x, top_y + cfg.float_height, target.z),
+            position: target,
             snapped: true,
         });
         assist.remaining = 0.0;
