@@ -50,7 +50,9 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
   больница, участок, штабы банд, графы тротуаров и полос), генерация ~2 мс, экран загрузки, стены по краю.
 - TASK-004 (T3): готов — тротуары с бордюром, разметка, фасады с окнами, уступы высоток, башня 156 м, площадь,
   центральный парк, пропы Kenney (4237 шт.), небо, туман, тени, меши слиты в 100 чанков; ~2.5 мс на кадр.
-- Следующий: TASK-005 (T4) — гуманоид с анимациями (Kenney Mini Characters).
+- TASK-005 (T4): готов — персонаж Kenney Mini Characters вместо капсулы, анимации idle/walk/run/sprint/jump/fall
+  по состоянию, скорость клипов подстроена под скорость движения (ноги не скользят), тинт одежды.
+- Следующий: TASK-006 (T5) — здоровье, урон, смерть ("ПОТРАЧЕНО") и возрождение у больницы.
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
 
 ## Запуск
@@ -73,7 +75,7 @@ cargo test -p gta_sim         # headless-гейты геймплея
 Управление: WASD — бег, Shift — спринт, Alt — шаг, Space — прыжок, мышь — камера, Esc отпускает курсор,
 ЛКМ захватывает. Тюнинг — `assets/character/locomotion.ron`, `assets/camera/camera.ron`, `assets/world/render.ron`.
 
-QA запущенного билда: `python tools/qa/scenarios/t1.py --out <dir>`, `t2.py`, `t3.py` (фича `dev`, BRP на порту 15702).
+QA запущенного билда: `python tools/qa/scenarios/t1.py --out <dir>`, `t2.py`, `t3.py`, `t4.py` (фича `dev`, BRP на порту 15702).
 
 Бинарные ассеты (модели, текстуры, звук) в репо не
 хранятся: они лежат в zip релизов рядом с exe. Для сборки из исходников папку `assets/` берём из
