@@ -4,12 +4,16 @@ use super::character_config::{CharacterClips, CharacterVisualConfig};
 use crate::juice::{HitStop, HitStopSystems};
 use avian3d::prelude::LinearVelocity;
 use bevy::{
-    animation::AnimationTargetId, gltf::GltfMeshName, prelude::*,
-    world_serialization::WorldInstanceReady,
+    animation::AnimationTargetId,
+    gltf::GltfMeshName,
+    prelude::*,
+    world_serialization::{WorldAsset, WorldInstanceReady},
 };
 use gta_sim::{
-    character::{AnimState, CharacterBody},
+    character::{AnimState, CharacterBody, Dead},
+    civilian::{Civilian, CivilianState},
     combat::{HitReaction, Loadout, Melee, MeleeWeapon, ShotFired, Swing, Weapon},
+    population::Appearance,
 };
 use std::time::Duration;
 
@@ -53,10 +57,15 @@ impl Plugin for CharacterVisualsPlugin {
     }
 }
 
-/// Animation graph shared by every character model; node `i` plays the clip of `AnimState` `i`.
+/// One animation graph per character model, built from that model's own clips (a clip drives only
+/// the model whose glTF root name it carries). Every graph has the same node indices; node `i`
+/// plays the clip of `AnimState` `i`.
 #[derive(Resource)]
 pub(super) struct CharacterAnimations {
-    pub(super) graph: Handle<AnimationGraph>,
+    /// Indexed by `ModelKey`: 0 = `model` (player, dummies), 1.. = `civilian_models`.
+    pub(super) graphs: Vec<Handle<AnimationGraph>>,
+    /// Scene of each model, by `ModelKey`; loaded up front so civilians never wait on asset IO.
+    pub(super) scenes: Vec<Handle<WorldAsset>>,
     /// Locomotion on every joint (unarmed).
     pub(super) nodes: [AnimationNodeIndex; 6],
     /// The same locomotion without the arms (armed: the arm layer owns them).
@@ -68,6 +77,11 @@ pub(super) struct CharacterAnimations {
     pub(super) fists: [AnimationNodeIndex; 3],
     pub(super) bat: AnimationNodeIndex,
     pub(super) knockdown: AnimationNodeIndex,
+    /// Death (played once) and cower (looped) clips.
+    pub(super) death: AnimationNodeIndex,
+    pub(super) cower: AnimationNodeIndex,
+    /// The death clip is the knockdown clip: a knocked-down body that dies keeps lying, no re-fall.
+    pub(super) death_is_knockdown: bool,
     /// Rest pose under every other clip, at the configured weight.
     pub(super) rest: AnimationNodeIndex,
     /// Clip assets of the swings, for their durations.
@@ -75,48 +89,102 @@ pub(super) struct CharacterAnimations {
     pub(super) bat_clip: Handle<AnimationClip>,
 }
 
+/// Node indices of one per-model graph; equal for every model (same build order).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct GraphNodes {
+    nodes: [AnimationNodeIndex; 6],
+    legs: [AnimationNodeIndex; 6],
+    hold: [AnimationNodeIndex; 2],
+    shoot: [AnimationNodeIndex; 2],
+    fists: [AnimationNodeIndex; 3],
+    bat: AnimationNodeIndex,
+    knockdown: AnimationNodeIndex,
+    death: AnimationNodeIndex,
+    cower: AnimationNodeIndex,
+    rest: AnimationNodeIndex,
+}
+
+/// The character graph of `model`, every clip loaded from `model` itself.
+fn build_graph(
+    asset_server: &AssetServer,
+    model: &str,
+    clips: &CharacterClips,
+    rest_weight: f32,
+) -> (AnimationGraph, GraphNodes) {
+    let clip = |index: usize| {
+        asset_server.load(GltfAssetLabel::Animation(index).from_asset(model.to_owned()))
+    };
+    let mut graph = AnimationGraph::new();
+    let root = graph.root;
+    let nodes = clips.locomotion.map(|i| graph.add_clip(clip(i), 1.0, root));
+    let legs = clips
+        .locomotion
+        .map(|i| graph.add_clip_with_mask(clip(i), 1 << ARMS_GROUP, 1.0, root));
+    let hold = clips
+        .hold
+        .map(|i| graph.add_clip_with_mask(clip(i), 1 << BODY_GROUP, 1.0, root));
+    let shoot = clips
+        .shoot
+        .map(|i| graph.add_clip_with_mask(clip(i), 1 << BODY_GROUP, 1.0, root));
+    let fists = clips.melee.map(|i| graph.add_clip(clip(i), 1.0, root));
+    let bat = graph.add_clip(clip(clips.bat), 1.0, root);
+    let knockdown = graph.add_clip(clip(clips.knockdown), 1.0, root);
+    let rest = graph.add_clip(clip(clips.rest), rest_weight, root);
+    let death = graph.add_clip(clip(clips.death), 1.0, root);
+    let cower = graph.add_clip(clip(clips.cower), 1.0, root);
+    let nodes = GraphNodes {
+        nodes,
+        legs,
+        hold,
+        shoot,
+        fists,
+        bat,
+        knockdown,
+        death,
+        cower,
+        rest,
+    };
+    (graph, nodes)
+}
+
 impl FromWorld for CharacterAnimations {
     fn from_world(world: &mut World) -> Self {
-        let model = world.resource::<CharacterVisualConfig>().model.clone();
-        let rest_weight = world.resource::<CharacterVisualConfig>().rest.weight;
+        let config = world.resource::<CharacterVisualConfig>().clone();
         let clips = *world.resource::<CharacterClips>();
         let asset_server = world.resource::<AssetServer>().clone();
+        let models = std::iter::once(&config.model)
+            .chain(&config.civilian_models)
+            .collect::<Vec<_>>();
+        let mut graphs = Vec::with_capacity(models.len());
+        let mut scenes = Vec::with_capacity(models.len());
+        let mut first: Option<GraphNodes> = None;
+        for model in models {
+            let (graph, nodes) = build_graph(&asset_server, model, &clips, config.rest.weight);
+            debug_assert!(first.is_none_or(|first| first == nodes));
+            first.get_or_insert(nodes);
+            graphs.push(world.resource_mut::<Assets<AnimationGraph>>().add(graph));
+            scenes.push(asset_server.load(GltfAssetLabel::Scene(0).from_asset(model.clone())));
+        }
+        let n = first.expect("the player model is always first");
         let clip = |index: usize| {
-            asset_server.load(GltfAssetLabel::Animation(index).from_asset(model.clone()))
+            asset_server.load(GltfAssetLabel::Animation(index).from_asset(config.model.clone()))
         };
-        let mut graph = AnimationGraph::new();
-        let root = graph.root;
-        let nodes = clips.locomotion.map(|i| graph.add_clip(clip(i), 1.0, root));
-        let legs = clips
-            .locomotion
-            .map(|i| graph.add_clip_with_mask(clip(i), 1 << ARMS_GROUP, 1.0, root));
-        let hold = clips
-            .hold
-            .map(|i| graph.add_clip_with_mask(clip(i), 1 << BODY_GROUP, 1.0, root));
-        let shoot = clips
-            .shoot
-            .map(|i| graph.add_clip_with_mask(clip(i), 1 << BODY_GROUP, 1.0, root));
-        let fist_clips = clips.melee.map(clip);
-        let bat_clip = clip(clips.bat);
-        let fists = fist_clips
-            .clone()
-            .map(|handle| graph.add_clip(handle, 1.0, root));
-        let bat = graph.add_clip(bat_clip.clone(), 1.0, root);
-        let knockdown = graph.add_clip(clip(clips.knockdown), 1.0, root);
-        let rest = graph.add_clip(clip(clips.rest), rest_weight, root);
-        let graph = world.resource_mut::<Assets<AnimationGraph>>().add(graph);
         Self {
-            graph,
-            nodes,
-            legs,
-            hold,
-            shoot,
-            fists,
-            bat,
-            knockdown,
-            rest,
-            fist_clips,
-            bat_clip,
+            graphs,
+            scenes,
+            nodes: n.nodes,
+            legs: n.legs,
+            hold: n.hold,
+            shoot: n.shoot,
+            fists: n.fists,
+            bat: n.bat,
+            knockdown: n.knockdown,
+            death: n.death,
+            cower: n.cower,
+            death_is_knockdown: clips.death == clips.knockdown,
+            rest: n.rest,
+            fist_clips: clips.melee.map(clip),
+            bat_clip: clip(clips.bat),
         }
     }
 }
@@ -125,6 +193,11 @@ impl FromWorld for CharacterAnimations {
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 pub struct CharacterModel;
+
+/// Which model (index into `CharacterAnimations::graphs`) a `CharacterModel` instance and its
+/// animator use.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ModelKey(pub(super) usize);
 
 /// On the model's `AnimationPlayer`: which character it follows and which state it shows.
 #[derive(Component)]
@@ -144,6 +217,8 @@ pub(super) enum ShownAction {
     /// A swing, by its attack id.
     Swing(u32),
     Knockdown,
+    Death,
+    Cower,
 }
 
 /// Model feet (y = 0) on the ground: the body centre floats `float_height` above it.
@@ -153,32 +228,58 @@ pub(super) fn model_transform(float_height: f32, scale: f32) -> Transform {
         .with_scale(Vec3::splat(scale))
 }
 
+/// Model key of a body: a civilian's `Appearance` picks one of the civilian models, others use 0.
+pub(super) fn model_key(appearance: Option<Appearance>, civilian_models: usize) -> usize {
+    appearance.map_or(0, |a| 1 + a.0 as usize % civilian_models)
+}
+
 fn spawn_character_model(
     event: On<Add, CharacterBody>,
     bodies: Query<&CharacterBody>,
+    civilians: Query<&Appearance, With<Civilian>>,
     config: Res<CharacterVisualConfig>,
-    asset_server: Res<AssetServer>,
+    animations: Res<CharacterAnimations>,
     mut commands: Commands,
 ) {
     let Ok(body) = bodies.get(event.entity) else {
         return;
     };
-    let scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset(config.model.clone()));
+    let appearance = civilians.get(event.entity).ok().copied();
+    let key = model_key(appearance, config.civilian_models.len());
+    let scene = animations.scenes[key].clone();
     let transform = model_transform(body.float_height, config.scale());
     commands
         .entity(event.entity)
         .insert(Visibility::default())
         .with_children(|parent| {
             parent
-                .spawn((CharacterModel, WorldAssetRoot(scene), transform))
+                .spawn((
+                    CharacterModel,
+                    ModelKey(key),
+                    WorldAssetRoot(scene),
+                    transform,
+                ))
                 .observe(on_model_ready);
         });
+}
+
+/// Tint of a body's tinted mesh: a civilian's `Appearance` picks one of the civilian tints.
+pub(super) fn body_tint(
+    appearance: Option<Appearance>,
+    config: &CharacterVisualConfig,
+) -> (f32, f32, f32) {
+    let Some(a) = appearance else {
+        return config.tint;
+    };
+    let n = config.civilian_models.len();
+    config.civilian_tints[(a.0 as usize / n) % config.civilian_tints.len()]
 }
 
 #[allow(clippy::too_many_arguments)]
 fn on_model_ready(
     ready: On<WorldInstanceReady>,
-    models: Query<&ChildOf, With<CharacterModel>>,
+    models: Query<(&ChildOf, &ModelKey), With<CharacterModel>>,
+    appearances: Query<&Appearance, With<Civilian>>,
     children: Query<&Children>,
     mut players: Query<&mut AnimationPlayer>,
     meshes: Query<(&GltfMeshName, &MeshMaterial3d<StandardMaterial>)>,
@@ -189,25 +290,28 @@ fn on_model_ready(
     mut graphs: ResMut<Assets<AnimationGraph>>,
     mut commands: Commands,
 ) {
-    let Ok(child_of) = models.get(ready.entity) else {
+    let Ok((child_of, &key)) = models.get(ready.entity) else {
         return;
     };
     let character = child_of.parent();
+    let tint = body_tint(appearances.get(character).ok().copied(), &config);
     let mut wired = 0;
     for entity in children.iter_descendants(ready.entity) {
         if let Ok(mut player) = players.get_mut(entity) {
-            wire_player(entity, &mut player, character, &animations, &mut commands);
-            wired += 1;
-        }
-        if let Ok((name, material)) = meshes.get(entity) {
-            tint_mesh(
+            wire_player(
                 entity,
-                name,
-                material,
-                &config,
-                &mut materials,
+                &mut player,
+                character,
+                key,
+                &animations,
                 &mut commands,
             );
+            wired += 1;
+        }
+        if let Ok((name, material)) = meshes.get(entity)
+            && name.0 == config.tinted_mesh
+        {
+            tint_mesh(entity, name, material, tint, &mut materials, &mut commands);
         }
     }
     if wired == 0 {
@@ -224,10 +328,10 @@ fn on_model_ready(
             (*target, if arm { ARMS_GROUP } else { BODY_GROUP })
         })
         .collect::<Vec<_>>();
-    assign_mask_groups(&animations.graph, &groups, &mut graphs);
+    assign_mask_groups(&animations.graphs[key.0], &groups, &mut graphs);
 }
 
-/// Adds the model's animated nodes to the shared graph's mask groups (no-op once every node is known).
+/// Adds the model's animated nodes to its graph's mask groups (no-op once every node is known).
 fn assign_mask_groups(
     graph: &Handle<AnimationGraph>,
     groups: &[(AnimationTargetId, u32)],
@@ -253,6 +357,7 @@ fn wire_player(
     entity: Entity,
     player: &mut AnimationPlayer,
     character: Entity,
+    key: ModelKey,
     animations: &CharacterAnimations,
     commands: &mut Commands,
 ) {
@@ -265,7 +370,8 @@ fn wire_player(
         )
         .repeat();
     commands.entity(entity).insert((
-        AnimationGraphHandle(animations.graph.clone()),
+        AnimationGraphHandle(animations.graphs[key.0].clone()),
+        key,
         transitions,
         CharacterAnimator {
             character,
@@ -277,17 +383,16 @@ fn wire_player(
     ));
 }
 
-/// Multiplies the base colour of `tinted_mesh` by `tint` on a clone, so meshes sharing the material keep it.
+/// Multiplies the base colour of the tinted mesh by `tint` on a clone, so meshes sharing the material keep it.
 fn tint_mesh(
     entity: Entity,
     name: &GltfMeshName,
     material: &MeshMaterial3d<StandardMaterial>,
-    config: &CharacterVisualConfig,
+    (r, g, b): (f32, f32, f32),
     materials: &mut Assets<StandardMaterial>,
     commands: &mut Commands,
 ) {
-    let (r, g, b) = config.tint;
-    if (r, g, b) == (1.0, 1.0, 1.0) || name.0 != config.tinted_mesh {
+    if (r, g, b) == (1.0, 1.0, 1.0) {
         return;
     }
     let Some(mut tinted) = materials.get(&material.0).cloned() else {
@@ -310,8 +415,9 @@ fn drive_character_animation(
         &AnimState,
         &LinearVelocity,
         Option<&Loadout>,
-        &HitReaction,
-        &Melee,
+        (&HitReaction, &Melee),
+        Has<Dead>,
+        Option<&Civilian>,
     )>,
     mut shots: MessageReader<ShotFired>,
     mut animators: Query<(
@@ -326,7 +432,8 @@ fn drive_character_animation(
     let shooters = shots.read().map(|shot| shot.shooter).collect::<Vec<_>>();
     let blend = Duration::from_secs_f32(config.blend_seconds);
     for (mut animator, mut player, mut transitions) in &mut animators {
-        let Ok((state, velocity, loadout, reaction, melee)) = characters.get(animator.character)
+        let Ok((state, velocity, loadout, (reaction, melee), dead, civilian)) =
+            characters.get(animator.character)
         else {
             continue;
         };
@@ -334,14 +441,31 @@ fn drive_character_animation(
             player.start(animations.rest).repeat();
         }
         let knocked_down = reaction.is_knocked_down();
-        let action = if knocked_down {
+        let cowering = civilian.is_some_and(|c| matches!(c.state, CivilianState::Cower { .. }));
+        let action = if dead {
+            Some(ShownAction::Death)
+        } else if knocked_down {
             Some(ShownAction::Knockdown)
+        } else if cowering {
+            Some(ShownAction::Cower)
         } else {
             melee.swing.map(|swing| ShownAction::Swing(swing.attack))
         };
         let action_ended = action.is_none() && animator.action.is_some();
         if action != animator.action {
             match (action, melee.swing) {
+                (Some(ShownAction::Death), _) => {
+                    let lying = animator.action == Some(ShownAction::Knockdown)
+                        && animations.death_is_knockdown;
+                    if !lying {
+                        transitions.play(&mut player, animations.death, blend);
+                    }
+                }
+                (Some(ShownAction::Cower), _) => {
+                    transitions
+                        .play(&mut player, animations.cower, blend)
+                        .repeat();
+                }
                 (Some(ShownAction::Knockdown), _) => {
                     transitions.play(&mut player, animations.knockdown, blend);
                 }
@@ -352,14 +476,17 @@ fn drive_character_animation(
             }
             animator.action = action;
         }
-        let pose = if knocked_down {
+        let pose = if knocked_down || dead {
             None
         } else {
             arm_pose(loadout.and_then(|loadout| loadout.held))
         };
         let fired = shooters.contains(&animator.character);
         drive_arms(&mut animator, &mut player, &animations, pose, fired);
-        if let Some(swing) = melee.swing.filter(|_| !knocked_down) {
+        if let Some(swing) = melee
+            .swing
+            .filter(|_| matches!(animator.action, Some(ShownAction::Swing(_))))
+        {
             // Stretches the clip over the sim's swing; 1.0 until the clip asset is loaded.
             let speed = clips
                 .get(swing_clip(&animations, swing))

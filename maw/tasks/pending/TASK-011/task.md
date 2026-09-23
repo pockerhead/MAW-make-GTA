@@ -29,3 +29,7 @@ Goal (GDD §13): heat-таблица, пороги звёзд, свидетел�
 - [ ] Every new tuning value lives in its GDD §12 data file, not in a `const`
 - [ ] `cargo build`, `cargo clippy -- -D warnings`, `cargo test -p gta_sim` (and `-p citygen` where touched) are green
 - [ ] Existing tests pass
+
+## Orchestrator note (from TASK-009)
+
+- A witness who keeps seeing the same corpse can complete several calls in a row (up to ~7 during a 30 s corpse lifetime, see TASK-009 FIX_SUMMARY.md). Wanted-level accounting must count one report per corpse/incident, not per completed call; gate it.

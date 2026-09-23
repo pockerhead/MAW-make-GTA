@@ -1,0 +1,13 @@
+(
+    max_civilians: 40,
+    spawn_ring: (60.0, 120.0),          // m from the player: steady-state spawning (GDD §6.1)
+    spawns_per_tick: 1,
+    initial_inner_radius: 20.0,         // m; the one-shot fill at load uses [this, spawn_ring.1]
+    initial_spawns_per_tick: 8,         // initial fill budget per fixed tick
+    spawn_min_separation: 4.0,          // m to any civilian or corpse; below the 4.5 m node spacing: one per node
+    spawn_view_margin_deg: 5.0,         // spawn only outside the camera cone widened by this
+    despawn_distance: 150.0,            // m
+    despawn_offscreen_seconds: 2.0,
+    corpse_seconds: 30.0,               // GDD §4.3
+    corpse_limit: 20,
+)

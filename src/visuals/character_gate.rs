@@ -120,6 +120,8 @@ fn character_visuals_reference_manifest_rig() {
             shoot: [16, 18],
             melee: [19, 20, 21],
             bat: 19,
+            death: 9,
+            cower: 6,
             knockdown: 9,
             rest: 0,
         }
@@ -254,7 +256,7 @@ fn graph_nodes_follow_manifest_clips() {
     let animations = app.world().resource::<CharacterAnimations>();
     let graphs = app.world().resource::<Assets<AnimationGraph>>();
     let graph = graphs
-        .get(&animations.graph)
+        .get(&animations.graphs[0])
         .expect("CharacterAnimations graph is not in Assets<AnimationGraph>");
     let clips = shipped_clips();
     let arms = 1 << ARMS_GROUP;

@@ -50,6 +50,20 @@ pub struct HudLayout {
     pub hit_marker_seconds: f32,
     pub hit_marker_color: Rgb,
     pub kill_marker_color: Rgb,
+    pub witness_bar: WitnessBarConfig,
+}
+
+/// Progress bar over a civilian in `Report` (GDD §6.2).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct WitnessBarConfig {
+    /// Size of the full bar, px.
+    pub width: f32,
+    pub height: f32,
+    /// Bar anchor above the model's head top, m.
+    pub head_offset: f32,
+    pub fill_color: Rgb,
+    pub back_color: Rgba,
 }
 
 fn positive(field: &str, value: f32) -> Result<(), String> {
@@ -102,6 +116,19 @@ impl UiConfig {
         positive("hud.crosshair_thickness", hud.crosshair_thickness)?;
         positive("hud.hit_marker_size", hud.hit_marker_size)?;
         positive("hud.hit_marker_seconds", hud.hit_marker_seconds)?;
+        let witness = &hud.witness_bar;
+        positive("hud.witness_bar.width", witness.width)?;
+        positive("hud.witness_bar.height", witness.height)?;
+        if !(witness.head_offset.is_finite() && witness.head_offset >= 0.0) {
+            return Err(format!(
+                "hud.witness_bar.head_offset must be a finite number >= 0, got {}",
+                witness.head_offset
+            ));
+        }
+        let (r, g, b) = witness.fill_color;
+        unit("hud.witness_bar.fill_color", &[r, g, b])?;
+        let (r, g, b, a) = witness.back_color;
+        unit("hud.witness_bar.back_color", &[r, g, b, a])?;
         if !(self.wasted_saturation.is_finite() && self.wasted_saturation >= 0.0) {
             return Err(format!(
                 "wasted_saturation must be a finite number >= 0, got {}",

@@ -36,7 +36,12 @@
 
 ## Risk lessons
 
-(none yet — this project has no design history)
+- 2026-09-23 (TASK-009) — sidewalk graph, seed 1: 579 nodes, min spacing 4.5 m; median 10 nodes in the 60-120 m
+  ring outside a 120 deg view wedge. Node-only spawning fills a 40 cap over seconds, never in one tick; derive any
+  "cap reached by t" gate from this.
+- 2026-09-23 (TASK-009) — "spawn only outside the camera cone, 60-120 m" (GDD §6.1) makes the street in front of
+  the player look empty (QA: 0-3 civilians within 60 m in view with 40 alive). Visibility rules for spawning
+  must be judged by what the player sees, not only by the cap count; T9/T11 spawners inherit this.
 
 ## Pointers
 

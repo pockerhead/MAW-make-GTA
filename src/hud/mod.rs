@@ -1,5 +1,8 @@
 mod wasted;
 mod weapon;
+mod witness;
+#[cfg(test)]
+mod witness_gate;
 
 use crate::menu::UiConfig;
 use bevy::prelude::*;
@@ -9,30 +12,31 @@ use gta_sim::{
     player::Player,
 };
 
-/// Health and armour bars (top right), ammo, crosshair, hit marker and the "ПОТРАЧЕНО" screen.
+/// Health and armour bars (top right), ammo, crosshair, hit marker, witness bars and the "ПОТРАЧЕНО" screen.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            OnTransition {
-                exited: GameState::Loading,
-                entered: GameState::Playing,
-            },
-            (spawn_hud, weapon::spawn_weapon_hud),
-        )
-        .add_systems(
-            Update,
-            (
-                update_bars,
-                weapon::update_ammo,
-                weapon::update_crosshair,
-                weapon::update_hit_marker,
-            ),
-        )
-        .add_systems(OnEnter(WastedPhase::Screen), wasted::spawn_wasted_screen)
-        .add_systems(OnEnter(GameState::Wasted), wasted::desaturate)
-        .add_systems(OnExit(GameState::Wasted), wasted::restore_saturation);
+        app.add_plugins(witness::WitnessBarPlugin)
+            .add_systems(
+                OnTransition {
+                    exited: GameState::Loading,
+                    entered: GameState::Playing,
+                },
+                (spawn_hud, weapon::spawn_weapon_hud),
+            )
+            .add_systems(
+                Update,
+                (
+                    update_bars,
+                    weapon::update_ammo,
+                    weapon::update_crosshair,
+                    weapon::update_hit_marker,
+                ),
+            )
+            .add_systems(OnEnter(WastedPhase::Screen), wasted::spawn_wasted_screen)
+            .add_systems(OnEnter(GameState::Wasted), wasted::desaturate)
+            .add_systems(OnExit(GameState::Wasted), wasted::restore_saturation);
     }
 }
 

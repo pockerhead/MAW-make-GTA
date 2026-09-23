@@ -1,11 +1,15 @@
 //! Headless gameplay simulation.
 
 pub mod character;
+pub mod civilian;
 pub mod combat;
 pub mod config;
 pub mod flow;
 pub mod layers;
+pub mod navigation;
+pub mod perception;
 pub mod player;
+pub mod population;
 pub mod wanted;
 pub mod world;
 
@@ -15,12 +19,16 @@ use bevy_tnua_avian3d::prelude::*;
 use character::{
     CharacterPlugin, HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig,
 };
+use civilian::{CIVILIAN_CONFIG, CivilianConfig, CivilianPlugin};
 use combat::{
     AIM_CONFIG, AimConfig, CombatPlugin, MELEE_CONFIG, MeleeConfig, WEAPONS_CONFIG, WeaponsConfig,
 };
 use config::{ConfigError, ConfigRoot, load_config};
 use flow::{FlowPlugin, RESPAWN_CONFIG, RespawnConfig};
+use navigation::{NAVIGATION_CONFIG, NavigationConfig, NavigationPlugin};
+use perception::{PERCEPTION_CONFIG, PerceptionConfig, PerceptionPlugin};
 use player::PlayerPlugin;
+use population::{POPULATION_CONFIG, PopulationConfig, PopulationPlugin};
 use wanted::WantedPlugin;
 use world::{CITY_CONFIG, CityParams, CityParamsRes, WorldPlugin, WorldSource};
 
@@ -60,6 +68,26 @@ pub fn compose_sim(
         path: root.path(MELEE_CONFIG),
         message,
     })?;
+    let population = load_config::<PopulationConfig>(&root, POPULATION_CONFIG)?;
+    population.validate().map_err(|message| ConfigError {
+        path: root.path(POPULATION_CONFIG),
+        message,
+    })?;
+    let perception = load_config::<PerceptionConfig>(&root, PERCEPTION_CONFIG)?;
+    perception.validate().map_err(|message| ConfigError {
+        path: root.path(PERCEPTION_CONFIG),
+        message,
+    })?;
+    let navigation = load_config::<NavigationConfig>(&root, NAVIGATION_CONFIG)?;
+    navigation.validate().map_err(|message| ConfigError {
+        path: root.path(NAVIGATION_CONFIG),
+        message,
+    })?;
+    let civilian = load_config::<CivilianConfig>(&root, CIVILIAN_CONFIG)?;
+    civilian.validate().map_err(|message| ConfigError {
+        path: root.path(CIVILIAN_CONFIG),
+        message,
+    })?;
     // A city run rolls from its own seed; the fixed test level always rolls the same sequence.
     let combat_seed = match source {
         WorldSource::City { seed } => seed,
@@ -80,6 +108,10 @@ pub fn compose_sim(
         .insert_resource(weapons)
         .insert_resource(aim)
         .insert_resource(melee)
+        .insert_resource(population)
+        .insert_resource(perception)
+        .insert_resource(navigation)
+        .insert_resource(civilian)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),
@@ -88,6 +120,10 @@ pub fn compose_sim(
             WorldPlugin { source },
             PlayerPlugin,
             CombatPlugin { seed: combat_seed },
+            NavigationPlugin,
+            PerceptionPlugin,
+            PopulationPlugin { seed: combat_seed },
+            CivilianPlugin,
             WantedPlugin,
         ));
     Ok(())

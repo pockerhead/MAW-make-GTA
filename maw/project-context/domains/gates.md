@@ -62,6 +62,16 @@
   a pause gate over it is a tautology. Assert `animation(node).is_some_and(|a| a.is_paused())` on a node the
   test started and asserted active.
 
+- 2026-09-23 (TASK-009) — a headless client test CAN load real Kenney GLBs and prove a pose: `MinimalPlugins +
+  TransformPlugin + AssetPlugin{file_path} + ImagePlugin + MeshPlugin + AnimationPlugin + WorldSerializationPlugin +
+  GltfPlugin` + `init_asset::<StandardMaterial>()` (no bevy_render). Assert a joint (`leg-left`) actually rotates;
+  structure-only graph tests cannot see the wrong-root clip bug. Precedent: `src/visuals/civilian_gate.rs`.
+- 2026-09-23 (TASK-009) — tick-time gates on NPC load: gate the MEAN fixed-tick time only; per-tick max has OS spikes
+  of 6-8 ms. Measured: Tnua walker ~3 us/character/tick in the seed-1 city, 20 m avian ray ~0.6 us.
+- 2026-09-23 (TASK-009) — phantom red: cargo builds of `gta_sim`/`citygen` from two trees sharing `target/` get the
+  same metadata hash, and one tree can link the other's rlib ("could not find `civilian` in `gta_sim`", a failure
+  in untouched code). Before trusting red from a shared target, `touch crates/*/src/lib.rs` and rebuild.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

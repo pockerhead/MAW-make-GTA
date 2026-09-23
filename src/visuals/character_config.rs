@@ -8,8 +8,12 @@ pub const CHARACTER_VISUAL_CONFIG: &str = "character/visual.ron";
 #[derive(Resource, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CharacterVisualConfig {
-    /// Asset path of the glTF model.
+    /// Asset path of the glTF model (player and dummies).
     pub(crate) model: String,
+    /// Asset paths of the civilian models; each builds its own animation graph from its own clips.
+    pub(crate) civilian_models: Vec<String>,
+    /// Civilian base colour multipliers of `tinted_mesh`.
+    pub(super) civilian_tints: Vec<(f32, f32, f32)>,
     /// Head top of the model in model units (feet at 0).
     pub(super) model_height: f32,
     /// Target body height, m.
@@ -38,6 +42,10 @@ pub struct CharacterVisualConfig {
     pub(super) fists: Vec<String>,
     /// Full-body clip of a bat swing.
     pub(super) bat: String,
+    /// Full-body clip of a dead character, played once.
+    pub(super) death: String,
+    /// Full-body clip looped while a civilian cowers.
+    pub(super) cower: String,
     /// Full-body clip of a knockdown.
     pub(super) knockdown: String,
     /// Rest-pose layer under every other clip.
@@ -81,6 +89,8 @@ pub struct CharacterClips {
     /// Full-body clip per fist combo step.
     pub melee: [usize; 3],
     pub bat: usize,
+    pub death: usize,
+    pub cower: usize,
     pub knockdown: usize,
     /// Rest-pose clip that keys every joint.
     pub rest: usize,
@@ -126,12 +136,21 @@ impl CharacterVisualConfig {
                 return Err(format!("{field} * scale = {metres} must be finite and > 0"));
             }
         }
-        let (r, g, b) = self.tint;
-        if ![r, g, b].iter().all(|c| c.is_finite() && *c >= 0.0) {
-            return Err(format!(
-                "tint {:?} components must be finite and >= 0",
-                self.tint
-            ));
+        if self.civilian_models.is_empty() {
+            return Err("civilian_models must name at least one model".into());
+        }
+        if self.civilian_tints.is_empty() {
+            return Err("civilian_tints must name at least one tint".into());
+        }
+        for (field, (r, g, b)) in std::iter::once(("tint", self.tint))
+            .chain(self.civilian_tints.iter().map(|&t| ("civilian_tints", t)))
+        {
+            if ![r, g, b].iter().all(|c| c.is_finite() && *c >= 0.0) {
+                return Err(format!(
+                    "{field} {:?} components must be finite and >= 0",
+                    (r, g, b)
+                ));
+            }
         }
         Ok(())
     }
@@ -147,9 +166,32 @@ impl CharacterVisualConfig {
         ]
     }
 
-    /// Resolves every clip name against the manifest rig of `model`; collects all errors.
+    /// Resolves every clip name against the manifest rig of `model`, and checks that every civilian
+    /// model resolves to the same clips; collects all errors.
     pub fn resolve(&self, manifest: &ThirdPartyManifest) -> Result<CharacterClips, Vec<String>> {
-        let model = &self.model;
+        let clips = self.resolve_model(manifest, &self.model)?;
+        let mut errors = Vec::new();
+        for civilian in &self.civilian_models {
+            match self.resolve_model(manifest, civilian) {
+                Ok(own) if own == clips => {}
+                Ok(_) => errors.push(format!(
+                    "civilian model {civilian} resolves clips differently from {}",
+                    self.model
+                )),
+                Err(own) => errors.extend(own),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        Ok(clips)
+    }
+
+    fn resolve_model(
+        &self,
+        manifest: &ThirdPartyManifest,
+        model: &str,
+    ) -> Result<CharacterClips, Vec<String>> {
         let Some(rig) = manifest.rig_for(model) else {
             return Err(vec![format!(
                 "model {model} has no rig in {THIRD_PARTY_MANIFEST}"
@@ -182,6 +224,8 @@ impl CharacterVisualConfig {
             .map(|name| index(name))
             .collect::<Vec<_>>();
         let bat = index(&self.bat);
+        let death = index(&self.death);
+        let cower = index(&self.cower);
         let knockdown = index(&self.knockdown);
         let rest = index(&self.rest.clip);
         let melee = <[usize; 3]>::try_from(fists).unwrap_or_else(|fists| {
@@ -200,6 +244,8 @@ impl CharacterVisualConfig {
             shoot,
             melee,
             bat,
+            death,
+            cower,
             knockdown,
             rest,
         })

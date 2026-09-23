@@ -87,6 +87,11 @@
   (Kenney `die` keys root rotation, `idle` does not → a knocked-down body stayed lying). A low-weight rest-pose
   layer under all clips fixes it (`visual.ron` `rest`).
 
+- 2026-09-23 (TASK-009) — bevy_gltf 0.19.1 targets clip curves by a node-name path that STARTS with the glTF
+  animation-root name (`loader/mod.rs:559-563`, `:1545-1558`). Every Kenney Mini Character has the same joints but
+  its own root name, so a clip loaded from `character-male-a.glb` silently leaves any other model in bind pose.
+  Each character model needs clips/graph from its own GLB (or a root rename on load). Hits T9 gangs, T11 police.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

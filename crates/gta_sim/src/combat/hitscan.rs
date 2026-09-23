@@ -97,7 +97,7 @@ impl CombatRng {
 }
 
 /// Uniform in `[0, 1)` from the top 24 bits.
-fn unit_f32(rng: &mut impl Rng) -> f32 {
+pub(crate) fn unit_f32(rng: &mut impl Rng) -> f32 {
     (rng.next_u32() >> 8) as f32 * (1.0 / 16_777_216.0)
 }
 

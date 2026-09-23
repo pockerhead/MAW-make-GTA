@@ -13,11 +13,14 @@ use gta_sim::{
         ActionIntent, AimIntent, CharacterControlConfig, Health, HealthConfig, LocomotionConfig,
         MoveIntent,
     },
+    civilian::{Civilian, CivilianState, Temperament, civilian_bundle},
     combat::{BulletTrace, DamageDealt, Loadout, ShotFired, dummy_bundle},
     compose_sim,
     config::ConfigRoot,
     flow::{GameState, WastedPhase},
+    navigation::{GraphWalker, SidewalkGraph},
     player::{DebugDamage, Player},
+    population::{Appearance, CameraView, PopulationConfig, ViewCone},
     world::{CityParams, CityParamsRes, PlayerSpawn, WorldSource},
 };
 use std::{
@@ -316,4 +319,84 @@ impl Shots {
         self.trace_log.clear();
         self.dealt_log.clear();
     }
+}
+
+/// Replaces the sidewalk graph with a test graph.
+pub fn test_graph(app: &mut App, nodes: Vec<Vec3>, edges: &[(u32, u32)]) {
+    let graph = SidewalkGraph::new(nodes, edges).expect("GATE BROKEN: invalid test graph");
+    app.world_mut().insert_resource(graph);
+}
+
+/// A wandering civilian built by the production bundle on `walker`'s edge at fraction `t`.
+pub fn spawn_civilian(
+    app: &mut App,
+    walker: GraphWalker,
+    t: f32,
+    temperament: Temperament,
+) -> Entity {
+    let world = app.world();
+    let loco = world.resource::<LocomotionConfig>().clone();
+    let health = world.resource::<HealthConfig>().clone();
+    let handle = world.resource::<CharacterControlConfig>().0.clone();
+    let graph = app
+        .world_mut()
+        .remove_resource::<SidewalkGraph>()
+        .expect("GATE BROKEN: no SidewalkGraph");
+    let bundle = civilian_bundle(
+        &loco,
+        handle,
+        &health,
+        &graph,
+        walker,
+        t,
+        temperament,
+        Appearance(0),
+    );
+    let entity = app.world_mut().spawn(bundle).id();
+    app.world_mut().insert_resource(graph);
+    entity
+}
+
+pub fn calm() -> Temperament {
+    Temperament {
+        flee: 1.0,
+        cower: 1.0,
+        report: 1.0,
+    }
+}
+
+pub fn civilian_state(app: &App, entity: Entity) -> CivilianState {
+    app.world()
+        .get::<Civilian>(entity)
+        .expect("GATE BROKEN: civilian missing")
+        .state
+}
+
+pub fn set_civilian_state(app: &mut App, entity: Entity, state: CivilianState) {
+    app.world_mut()
+        .get_mut::<Civilian>(entity)
+        .expect("GATE BROKEN: civilian missing")
+        .state = state;
+}
+
+pub fn set_view(app: &mut App, view: Option<ViewCone>) {
+    app.world_mut().resource_mut::<CameraView>().0 = view;
+}
+
+pub fn set_population(app: &mut App, update: impl FnOnce(&mut PopulationConfig)) {
+    update(app.world_mut().resource_mut::<PopulationConfig>().as_mut());
+}
+
+pub fn civilians(app: &mut App) -> Vec<Entity> {
+    app.world_mut()
+        .query_filtered::<Entity, With<Civilian>>()
+        .iter(app.world())
+        .collect()
+}
+
+pub fn position_of(app: &App, entity: Entity) -> Vec3 {
+    app.world()
+        .get::<Position>(entity)
+        .expect("GATE BROKEN: entity missing Position")
+        .0
 }

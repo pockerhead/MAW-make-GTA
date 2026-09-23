@@ -1,0 +1,404 @@
+//! Civilians: enum FSM over the sidewalk graph, utility reaction to threats, witnesses (GDD §6.2).
+
+mod reaction;
+
+pub use reaction::{Reaction, choose_reaction};
+
+use crate::character::{
+    Character, CharacterSchemeConfig, Gait, Health, HealthConfig, HealthSystems, LocomotionConfig,
+    MoveIntent, character_components,
+};
+use crate::flow::NpcSystems;
+use crate::navigation::{
+    GraphWalker, NavigationConfig, SidewalkGraph, flat_distance, flee_next, flee_start,
+    lane_target, steer, wander_next,
+};
+use crate::perception::{AiSystems, Perception, Threat};
+use crate::population::{Appearance, NpcRng, Offscreen, corpse_components};
+use avian3d::prelude::*;
+use bevy::prelude::*;
+use serde::Deserialize;
+
+/// Path of the civilian config, relative to the assets root.
+pub const CIVILIAN_CONFIG: &str = "npc/civilian.ron";
+
+/// Civilian behaviour tuning (GDD §6.2).
+#[derive(Resource, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CivilianConfig {
+    pub wander_gait: Gait,
+    pub flee_gait: Gait,
+    /// Chance to stop at a node while wandering.
+    pub idle_chance: f32,
+    pub idle_seconds: (f32, f32),
+    /// Path length of one flight, m.
+    pub flee_distance: (f32, f32),
+    pub cower_seconds: (f32, f32),
+    /// Duration of a police call (`Report`), s.
+    pub call_seconds: f32,
+    pub reaction: ReactionConfig,
+}
+
+/// Weights of the reaction scorer.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ReactionConfig {
+    pub flee: f32,
+    pub cower: f32,
+    pub report: f32,
+    /// Each temperament factor is rolled in `[1 - spread, 1 + spread]`.
+    pub temperament_spread: f32,
+    /// The cower weight falls to 0 at this threat distance, m.
+    pub panic_distance: f32,
+    /// A gunshot or fight closer than this is never phoned in, m.
+    pub report_min_distance: f32,
+}
+
+fn range_ok(field: &str, (lo, hi): (f32, f32)) -> Result<(), String> {
+    if lo.is_finite() && hi.is_finite() && 0.0 <= lo && lo <= hi {
+        Ok(())
+    } else {
+        Err(format!(
+            "{field} ({lo}, {hi}) must be finite with 0 <= lo <= hi"
+        ))
+    }
+}
+
+impl CivilianConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        range_ok("idle_seconds", self.idle_seconds)?;
+        range_ok("flee_distance", self.flee_distance)?;
+        range_ok("cower_seconds", self.cower_seconds)?;
+        if !(0.0..=1.0).contains(&self.idle_chance) {
+            return Err(format!(
+                "idle_chance {} must be in [0, 1]",
+                self.idle_chance
+            ));
+        }
+        if !(self.call_seconds.is_finite() && self.call_seconds > 0.0) {
+            return Err(format!(
+                "call_seconds {} must be finite and > 0",
+                self.call_seconds
+            ));
+        }
+        let r = &self.reaction;
+        for (field, value) in [
+            ("reaction.flee", r.flee),
+            ("reaction.cower", r.cower),
+            ("reaction.report", r.report),
+            ("reaction.report_min_distance", r.report_min_distance),
+        ] {
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(format!("{field} {value} must be finite and >= 0"));
+            }
+        }
+        if !(0.0..1.0).contains(&r.temperament_spread) {
+            return Err(format!(
+                "reaction.temperament_spread {} must be in [0, 1)",
+                r.temperament_spread
+            ));
+        }
+        if !(r.panic_distance.is_finite() && r.panic_distance > 0.0) {
+            return Err(format!(
+                "reaction.panic_distance {} must be finite and > 0",
+                r.panic_distance
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Reflect, Clone, Copy, Debug, PartialEq)]
+pub enum CivilianState {
+    Wander,
+    Idle {
+        left: f32,
+    },
+    Flee {
+        from: Vec3,
+        left: f32,
+    },
+    Cower {
+        from: Vec3,
+        left: f32,
+    },
+    /// Phoning the police; `progress` goes 0 -> 1 over `call_seconds`.
+    Report {
+        progress: f32,
+    },
+    Dead,
+}
+
+/// Per-civilian multipliers of the reaction weights.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq)]
+pub struct Temperament {
+    pub flee: f32,
+    pub cower: f32,
+    pub report: f32,
+}
+
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+#[require(Character, Perception, Offscreen)]
+pub struct Civilian {
+    pub state: CivilianState,
+    pub temperament: Temperament,
+}
+
+/// A wandering civilian on `walker`'s edge at fraction `t` from `node(from)`.
+#[allow(clippy::too_many_arguments)]
+pub fn civilian_bundle(
+    loco: &LocomotionConfig,
+    handle: Handle<CharacterSchemeConfig>,
+    health: &HealthConfig,
+    graph: &SidewalkGraph,
+    walker: GraphWalker,
+    t: f32,
+    temperament: Temperament,
+    appearance: Appearance,
+) -> impl Bundle {
+    let feet = graph.node(walker.from).lerp(graph.node(walker.to), t);
+    (
+        Civilian {
+            state: CivilianState::Wander,
+            temperament,
+        },
+        walker,
+        appearance,
+        Name::new("Civilian"),
+        Transform::from_translation(feet + Vec3::Y * loco.float_height),
+        character_components(loco, handle),
+        Health::full(health),
+    )
+}
+
+pub fn roll_temperament(rng: &mut NpcRng, spread: f32) -> Temperament {
+    let mut factor = || 1.0 + spread * (2.0 * rng.unit() - 1.0);
+    Temperament {
+        flee: factor(),
+        cower: factor(),
+        report: factor(),
+    }
+}
+
+fn roll(rng: &mut NpcRng, (lo, hi): (f32, f32)) -> f32 {
+    lo + (hi - lo) * rng.unit()
+}
+
+pub struct CivilianPlugin;
+
+impl Plugin for CivilianPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_type::<Civilian>()
+            .register_type::<CivilianState>()
+            .register_type::<Temperament>()
+            .add_systems(
+                FixedUpdate,
+                (
+                    civilian_death
+                        .in_set(HealthSystems::Death)
+                        .in_set(NpcSystems),
+                    civilian_fsm.in_set(AiSystems::Decide),
+                ),
+            );
+    }
+}
+
+fn civilian_death(
+    mut commands: Commands,
+    mut civilians: Query<(
+        Entity,
+        &Health,
+        &mut Civilian,
+        &mut Perception,
+        &mut MoveIntent,
+    )>,
+) {
+    for (entity, health, mut civilian, mut perception, mut intent) in &mut civilians {
+        if civilian.state == CivilianState::Dead || health.current > 0.0 {
+            continue;
+        }
+        civilian.state = CivilianState::Dead;
+        perception.pending = None;
+        intent.axis = Vec2::ZERO;
+        commands.entity(entity).insert(corpse_components());
+    }
+}
+
+/// What one civilian knows this tick.
+struct Context<'a> {
+    cfg: &'a CivilianConfig,
+    graph: &'a SidewalkGraph,
+    dt: f32,
+    /// Horizontal speed, m/s.
+    speed: f32,
+}
+
+/// Wander / Idle meeting a threat.
+fn react(
+    threat: Threat,
+    civilian: &Civilian,
+    walker: &mut GraphWalker,
+    allow_report: bool,
+    ctx: &Context,
+    rng: &mut NpcRng,
+) -> CivilianState {
+    let reaction = choose_reaction(
+        &threat,
+        &civilian.temperament,
+        &ctx.cfg.reaction,
+        allow_report,
+    );
+    match reaction {
+        Reaction::Flee => flee(threat.at, walker, ctx, rng),
+        Reaction::Cower => CivilianState::Cower {
+            from: threat.at,
+            left: roll(rng, ctx.cfg.cower_seconds),
+        },
+        Reaction::Report => CivilianState::Report { progress: 0.0 },
+    }
+}
+
+fn flee(from: Vec3, walker: &mut GraphWalker, ctx: &Context, rng: &mut NpcRng) -> CivilianState {
+    *walker = flee_start(ctx.graph, *walker, from);
+    CivilianState::Flee {
+        from,
+        left: roll(rng, ctx.cfg.flee_distance),
+    }
+}
+
+/// Next state of a live civilian; `threat` is this tick's perception.
+fn next_state(
+    civilian: &Civilian,
+    threat: Option<Threat>,
+    walker: &mut GraphWalker,
+    ctx: &Context,
+    rng: &mut NpcRng,
+) -> CivilianState {
+    let cfg = ctx.cfg;
+    match (civilian.state, threat) {
+        (CivilianState::Wander | CivilianState::Idle { .. }, Some(threat)) => {
+            react(threat, civilian, walker, true, ctx, rng)
+        }
+        (CivilianState::Report { .. }, Some(threat)) => {
+            react(threat, civilian, walker, false, ctx, rng)
+        }
+        // Commitment: a new threat only refreshes the running flight or crouch.
+        (CivilianState::Flee { .. }, Some(threat)) => flee(threat.at, walker, ctx, rng),
+        (CivilianState::Cower { .. }, Some(threat)) => CivilianState::Cower {
+            from: threat.at,
+            left: roll(rng, cfg.cower_seconds),
+        },
+        (CivilianState::Idle { left }, None) => {
+            let left = left - ctx.dt;
+            if left <= 0.0 {
+                CivilianState::Wander
+            } else {
+                CivilianState::Idle { left }
+            }
+        }
+        (CivilianState::Report { progress }, None) => {
+            let progress = progress + ctx.dt / cfg.call_seconds;
+            if progress >= 1.0 {
+                CivilianState::Wander
+            } else {
+                CivilianState::Report { progress }
+            }
+        }
+        (CivilianState::Flee { from, left }, None) => {
+            let left = left - ctx.speed * ctx.dt;
+            if left <= 0.0 {
+                CivilianState::Wander
+            } else {
+                CivilianState::Flee { from, left }
+            }
+        }
+        (CivilianState::Cower { from, left }, None) => {
+            let left = left - ctx.dt;
+            if left <= 0.0 {
+                flee(from, walker, ctx, rng)
+            } else {
+                CivilianState::Cower { from, left }
+            }
+        }
+        (state @ CivilianState::Wander, None) | (state @ CivilianState::Dead, _) => state,
+    }
+}
+
+/// Takes the next edge on arrival at the lane target of `to`; may stop a wanderer there.
+fn arrive(
+    state: CivilianState,
+    walker: &mut GraphWalker,
+    position: Vec3,
+    nav: &NavigationConfig,
+    ctx: &Context,
+    rng: &mut NpcRng,
+) -> CivilianState {
+    let target = lane_target(ctx.graph, *walker, nav.keep_right);
+    if flat_distance(position, target) > nav.arrive_radius {
+        return state;
+    }
+    let next = match state {
+        CivilianState::Wander => wander_next(ctx.graph, walker.from, walker.to, rng.unit()),
+        CivilianState::Flee { from, .. } => flee_next(ctx.graph, walker.to, from),
+        _ => return state,
+    };
+    *walker = GraphWalker {
+        from: walker.to,
+        to: next,
+    };
+    if state == CivilianState::Wander && rng.unit() < ctx.cfg.idle_chance {
+        return CivilianState::Idle {
+            left: roll(rng, ctx.cfg.idle_seconds),
+        };
+    }
+    state
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn civilian_fsm(
+    cfg: Res<CivilianConfig>,
+    nav: Res<NavigationConfig>,
+    graph: Res<SidewalkGraph>,
+    time: Res<Time<Fixed>>,
+    mut rng: ResMut<NpcRng>,
+    mut civilians: Query<(
+        &mut Civilian,
+        &mut Perception,
+        &mut GraphWalker,
+        &mut MoveIntent,
+        &Position,
+        &LinearVelocity,
+    )>,
+) {
+    let dt = time.timestep().as_secs_f32();
+    for (mut civilian, mut perception, mut walker, mut intent, position, velocity) in &mut civilians
+    {
+        let threat = perception.pending.take();
+        if civilian.state == CivilianState::Dead {
+            continue;
+        }
+        let ctx = Context {
+            cfg: &cfg,
+            graph: &graph,
+            dt,
+            speed: Vec2::new(velocity.x, velocity.z).length(),
+        };
+        let state = next_state(&civilian, threat, &mut walker, &ctx, &mut rng);
+        let state = arrive(state, &mut walker, position.0, &nav, &ctx, &mut rng);
+        civilian.state = state;
+        let gait = match state {
+            CivilianState::Wander => cfg.wander_gait,
+            CivilianState::Flee { .. } => cfg.flee_gait,
+            _ => {
+                intent.axis = Vec2::ZERO;
+                continue;
+            }
+        };
+        intent.axis = Vec2::Y;
+        intent.gait = gait;
+        if let Some(yaw) = steer(position.0, lane_target(&graph, *walker, nav.keep_right)) {
+            intent.yaw = yaw;
+        }
+    }
+}

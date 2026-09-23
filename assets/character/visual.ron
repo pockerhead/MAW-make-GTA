@@ -1,5 +1,15 @@
 (
     model: "third_party/mini-characters/character-male-a.glb",
+    // Civilian looks: `Appearance` picks a model and a tint (a multiplier of tinted_mesh).
+    civilian_models: [
+        "third_party/mini-characters/character-female-a.glb",
+        "third_party/mini-characters/character-female-b.glb",
+        "third_party/mini-characters/character-female-d.glb",
+        "third_party/mini-characters/character-male-b.glb",
+        "third_party/mini-characters/character-male-c.glb",
+        "third_party/mini-characters/character-male-e.glb",
+    ],
+    civilian_tints: [(1.0, 1.0, 1.0), (0.55, 0.75, 1.0), (1.0, 0.7, 0.45), (0.6, 1.0, 0.6)],
     model_height: 0.67132,
     height: 1.8,
     tinted_mesh: "body-mesh",
@@ -17,6 +27,8 @@
     two_hands: (hold: "holding-both", shoot: "holding-both-shoot"),
     fists: ["attack-melee-right", "attack-melee-left", "attack-kick-right"],   // fist combo steps in order
     bat: "attack-melee-right",
+    death: "die",       // played once for every dead character, holds the last pose
+    cower: "crouch",    // looped while a civilian cowers
     knockdown: "die",   // played once, holds the last pose until the character stands up
     // Keys every joint under all other clips at a tiny weight, so a joint the next clip leaves
     // unanimated (root after "die", legs after a kick) returns to rest instead of freezing.

@@ -1,0 +1,17 @@
+(
+    wander_gait: Walk,
+    flee_gait: Run,
+    idle_chance: 0.15,             // per node arrival while wandering
+    idle_seconds: (2.0, 8.0),
+    flee_distance: (30.0, 60.0),   // m of travelled path
+    cower_seconds: (3.0, 6.0),
+    call_seconds: 4.0,             // Report duration (GDD §6.2)
+    reaction: (
+        flee: 1.0,
+        cower: 1.5,
+        report: 0.8,
+        temperament_spread: 0.5,   // each temperament factor in [1 - s, 1 + s]
+        panic_distance: 15.0,      // cower weight 0 at and beyond this, m
+        report_min_distance: 25.0, // an active threat closer than this is never phoned in, m
+    ),
+)

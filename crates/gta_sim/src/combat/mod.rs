@@ -4,6 +4,7 @@ mod pickups;
 mod range;
 mod weapons;
 
+pub(crate) use hitscan::unit_f32;
 pub use hitscan::{
     AIM_CONFIG, AimConfig, BulletTrace, CombatRng, DamageDealt, ShotFired, aim_yaw, cone_sample,
     muzzle,

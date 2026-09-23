@@ -12,6 +12,7 @@ use gta_sim::{
     flow::GameState,
     layers::GameLayer,
     player::Player,
+    population::{CameraView, ViewCone},
 };
 
 #[derive(Component, Reflect)]
@@ -42,7 +43,12 @@ impl Plugin for CameraPlugin {
             .add_systems(OnExit(GameState::Wasted), reset_pivot)
             .add_systems(
                 PostUpdate,
-                follow_player.before(TransformSystems::Propagate),
+                (
+                    follow_player.before(TransformSystems::Propagate),
+                    publish_camera_view
+                        .after(follow_player)
+                        .run_if(any_with_component::<Player>),
+                ),
             )
             .add_observer(enable_player_interpolation);
     }
@@ -153,6 +159,23 @@ pub fn follow_player(
     aim.origin = camera_transform.translation;
     aim.direction = rotation * Vec3::NEG_Z;
     camera_transform.rotation = rotation * Quat::from_rotation_x(recoil.pitch) * shake.rotation;
+}
+
+/// Hands the sim the camera's view cone (final pose, recoil and shake included) for off-screen spawning.
+fn publish_camera_view(
+    camera: Single<(&Transform, &Projection), With<OrbitCamera>>,
+    mut view: ResMut<CameraView>,
+) {
+    let (transform, projection) = *camera;
+    let Projection::Perspective(perspective) = projection else {
+        return;
+    };
+    view.0 = Some(ViewCone::from_perspective(
+        transform.translation,
+        transform.forward(),
+        perspective.fov,
+        perspective.aspect_ratio,
+    ));
 }
 
 /// After the respawn teleport the pivot jumps to the new head instead of flying across the city.

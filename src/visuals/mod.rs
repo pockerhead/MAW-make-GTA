@@ -6,6 +6,8 @@ mod city;
 #[cfg(test)]
 mod city_gate;
 mod city_mesh;
+#[cfg(test)]
+mod civilian_gate;
 mod config;
 mod facade;
 mod pickups;

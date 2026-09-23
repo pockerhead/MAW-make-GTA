@@ -28,6 +28,11 @@ pub enum WastedPhase {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayingSystems;
 
+/// NPC gameplay; keeps running while the player is wasted. A new state that pauses gameplay must
+/// join this condition or clear the NPC message readers' backlog on exit.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NpcSystems;
+
 /// Frame systems that run only in `GameState::Wasted`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WastedSystems;
@@ -44,6 +49,11 @@ impl Plugin for FlowPlugin {
             .configure_sets(
                 FixedUpdate,
                 PlayingSystems.run_if(in_state(GameState::Playing)),
+            )
+            .configure_sets(
+                FixedUpdate,
+                NpcSystems
+                    .run_if(in_state(GameState::Playing).or_else(in_state(GameState::Wasted))),
             )
             .configure_sets(Update, WastedSystems.run_if(in_state(GameState::Wasted)))
             .add_systems(

@@ -110,6 +110,13 @@ fn preflight(
             "{CHARACTER_VISUAL_CONFIG}: model {model} is not listed in {THIRD_PARTY_MANIFEST}"
         ));
     }
+    for civilian in &character_config.civilian_models {
+        if !manifest.contains_asset(civilian) {
+            unlisted.push(format!(
+                "{CHARACTER_VISUAL_CONFIG}: civilian model {civilian} is not listed in {THIRD_PARTY_MANIFEST}"
+            ));
+        }
+    }
     for font in ui_config.font_paths() {
         if !manifest.contains_asset(font) {
             unlisted.push(format!(

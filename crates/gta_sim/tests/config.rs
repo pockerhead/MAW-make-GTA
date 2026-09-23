@@ -3,9 +3,13 @@ mod common;
 use common::assets_root;
 use gta_sim::{
     character::{HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig},
+    civilian::{CIVILIAN_CONFIG, CivilianConfig},
     combat::{AIM_CONFIG, AimConfig, MELEE_CONFIG, MeleeConfig, WEAPONS_CONFIG, WeaponsConfig},
     config::{ConfigRoot, load_config},
     flow::{RESPAWN_CONFIG, RespawnConfig},
+    navigation::{NAVIGATION_CONFIG, NavigationConfig},
+    perception::{PERCEPTION_CONFIG, PerceptionConfig},
+    population::{POPULATION_CONFIG, PopulationConfig},
     world::{CITY_CONFIG, CityParams},
 };
 use std::{
@@ -313,4 +317,109 @@ fn unknown_melee_field_names_file_and_field() {
         error.contains("melee.ron") && error.contains("bogus_field"),
         "{error}"
     );
+}
+
+#[test]
+fn shipped_npc_configs_load() {
+    let root = assets_root();
+    load_config::<PopulationConfig>(&root, POPULATION_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+    load_config::<PerceptionConfig>(&root, PERCEPTION_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+    load_config::<NavigationConfig>(&root, NAVIGATION_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+    load_config::<CivilianConfig>(&root, CIVILIAN_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn unknown_population_field_names_file_and_field() {
+    let original = fs::read_to_string(assets_root().path(POPULATION_CONFIG)).unwrap();
+    assert!(
+        original.contains("max_civilians: 40,"),
+        "GATE BROKEN: shipped population.ron has no max_civilians: 40"
+    );
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_population_unknown_{}_{unique}",
+        std::process::id()
+    )));
+    let file = tmp.path(POPULATION_CONFIG);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(
+        &file,
+        original.replacen(
+            "max_civilians: 40,",
+            "max_civilians: 40, bogus_field: 1.0,",
+            1,
+        ),
+    )
+    .unwrap();
+    let error = load_config::<PopulationConfig>(&tmp, POPULATION_CONFIG)
+        .unwrap_err()
+        .to_string();
+    fs::remove_dir_all(&tmp.0).unwrap();
+    assert!(
+        error.contains("population.ron") && error.contains("bogus_field"),
+        "{error}"
+    );
+}
+
+#[test]
+fn spawn_ring_must_be_ordered() {
+    let error = sabotaged::<PopulationConfig>(
+        POPULATION_CONFIG,
+        "spawn_ring",
+        "spawn_ring: (60.0, 120.0),",
+        "spawn_ring: (130.0, 120.0),",
+        PopulationConfig::validate,
+    );
+    assert!(error.contains("spawn_ring"), "{error}");
+}
+
+#[test]
+fn initial_fill_starts_inside_the_ring() {
+    let error = sabotaged::<PopulationConfig>(
+        POPULATION_CONFIG,
+        "initial_inner",
+        "initial_inner_radius: 20.0,",
+        "initial_inner_radius: 70.0,",
+        PopulationConfig::validate,
+    );
+    assert!(error.contains("initial_inner_radius"), "{error}");
+}
+
+#[test]
+fn perception_needs_a_slot() {
+    let error = sabotaged::<PerceptionConfig>(
+        PERCEPTION_CONFIG,
+        "slots",
+        "slots: 4,",
+        "slots: 0,",
+        PerceptionConfig::validate,
+    );
+    assert!(error.contains("slots"), "{error}");
+}
+
+#[test]
+fn temperament_spread_below_one() {
+    let error = sabotaged::<CivilianConfig>(
+        CIVILIAN_CONFIG,
+        "spread",
+        "temperament_spread: 0.5,",
+        "temperament_spread: 1.5,",
+        CivilianConfig::validate,
+    );
+    assert!(error.contains("temperament_spread"), "{error}");
 }

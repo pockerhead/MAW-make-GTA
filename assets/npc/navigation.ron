@@ -1,0 +1,4 @@
+(
+    arrive_radius: 0.5, // m: a walker this close to its target point takes the next edge
+    keep_right: 0.5,    // m right of the edge line: opposing walkers pass without touching
+)
