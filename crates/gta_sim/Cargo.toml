@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+citygen = { path = "../citygen" }
 bevy = { workspace = true, features = ["std", "multi_threaded", "bevy_state", "bevy_log", "bevy_asset", "serialize", "reflect_auto_register"] }
 avian3d = { workspace = true }
 bevy-tnua = { workspace = true }

@@ -1,0 +1,3 @@
+# Open decisions — TASK-003
+
+- 2026-09-23: third codex-sandbox failure in a row (`0xC0000142`), this time mid-implementation with no client build — the cause is host memory pressure, not a specific command. Orchestrator changed maw/settings.json: implementer and fixer -> claude (native subagents, outside the codex sandbox and outside the background-shell reaper); code-reviewer -> codex so the code chain keeps a cross-vendor reviewer (reviewer diversity rule). Planner/plan-reviewer split unchanged. The partial codex work is committed as WIP; the new implementer pre-flights it and completes the plan. Flip: when the host has memory headroom again, restore implementer/fixer=codex, code-reviewer=claude.

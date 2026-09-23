@@ -2,7 +2,7 @@ use super::Block;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-// Level geometry; citygen replaces this table in T2.
+// Fixture level for the headless character gates.
 const TEST_AREA: &[(Vec3, Vec3, f32)] = &[
     (Vec3::new(80.0, 1.0, 80.0), Vec3::new(0.0, -0.5, 0.0), 0.0),
     (Vec3::new(1.0, 1.0, 1.0), Vec3::new(10.0, 0.5, 10.0), 0.0),

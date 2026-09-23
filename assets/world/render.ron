@@ -3,4 +3,13 @@
     sun_illuminance: 10000.0,
     sun_pitch_deg: -45.836624,
     sun_yaw_deg: -28.64789,
+    district_colors: (downtown: (0.62, 0.64, 0.70), commercial: (0.78, 0.70, 0.55),
+                      residential: (0.80, 0.62, 0.52), industrial: (0.55, 0.55, 0.50)),
+    hospital_color: (0.95, 0.95, 0.95),
+    police_color: (0.20, 0.30, 0.75),
+    gang_hq_color: (0.75, 0.20, 0.55),
+    road_color: (0.18, 0.18, 0.20),
+    sidewalk_color: (0.60, 0.60, 0.58),
+    park_color: (0.30, 0.55, 0.25),
+    surface_layer_step: 0.02,
 )

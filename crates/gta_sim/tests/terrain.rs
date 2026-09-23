@@ -1,17 +1,7 @@
 mod common;
 
-use avian3d::prelude::Position;
 use bevy::prelude::*;
 use common::*;
-
-fn place_player(app: &mut App, at: Vec3) {
-    let entity = player(app);
-    app.world_mut().get_mut::<Position>(entity).unwrap().0 = at;
-    app.world_mut()
-        .get_mut::<Transform>(entity)
-        .unwrap()
-        .translation = at;
-}
 
 #[test]
 fn walking_into_arena_box_stays_blocked() {

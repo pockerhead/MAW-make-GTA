@@ -1,5 +1,6 @@
 use crate::character::{CharacterControlConfig, LocomotionConfig, character_components};
-use crate::world::{PlayerSpawn, spawn_test_area};
+use crate::flow::GameState;
+use crate::world::PlayerSpawn;
 use bevy::prelude::*;
 
 #[derive(Component, Reflect, Default)]
@@ -11,7 +12,7 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Player>()
-            .add_systems(Startup, spawn_player.after(spawn_test_area));
+            .add_systems(OnEnter(GameState::Playing), spawn_player);
     }
 }
 

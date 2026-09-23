@@ -86,6 +86,38 @@ class Game:
             raise RuntimeError(f"{suffix} not reflected/registered uniquely: {matches}")
         return matches[0]
 
+    def resource_path(self, suffix):
+        matches = [name for name in self.call("world.list_resources") if name.endswith("::" + suffix)]
+        if len(matches) != 1:
+            raise RuntimeError(f"{suffix} not reflected/registered uniquely as a resource: {matches}")
+        return matches[0]
+
+    def resource(self, suffix):
+        value = self.call("world.get_resources", {"resource": self.resource_path(suffix)})["value"]
+        if isinstance(value, list) and len(value) == 1:
+            value = value[0]
+        return int(value)
+
+    def wait_resource(self, suffix, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                raise RuntimeError(f"game exited while waiting for {suffix}:\n{self.log_tail()}")
+            try:
+                return self.resource(suffix)
+            except RuntimeError:
+                time.sleep(0.5)
+        raise TimeoutError(f"resource {suffix} did not appear in {timeout} s:\n{self.log_tail()}")
+
+    def log_tail(self, size=4000):
+        return (REPO / "target" / "qa" / "game.log").read_text(errors="replace")[-size:]
+
+    def mutate_component(self, entity, component, path, value):
+        """Verified form for avian Position (newtype over Vec3): path "" and value [x, y, z]."""
+        return self.call("world.mutate_components", {
+            "entity": entity, "component": component, "path": path, "value": value,
+        })
+
     def query(self, components, with_=()):
         return self.call("world.query", {
             "data": {"components": list(components)},
@@ -132,6 +164,19 @@ class Game:
             if self.log_file is not None:
                 self.log_file.close()
                 self.log_file = None
+
+
+def load_golden():
+    """Golden layout hashes {seed: hash} from citygen's golden_hashes.txt (same rule as the Rust gates)."""
+    golden = {}
+    text = (REPO / "crates" / "citygen" / "tests" / "golden_hashes.txt").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        seed, value = line.split(" ", 1)
+        golden[int(seed)] = int(value.strip(), 16)
+    return golden
 
 
 def vec3(value):

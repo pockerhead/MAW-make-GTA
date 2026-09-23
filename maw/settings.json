@@ -28,13 +28,13 @@
       "provider": "claude"
     },
     "implementer": {
-      "provider": "codex"
-    },
-    "code-reviewer": {
       "provider": "claude"
     },
-    "fixer": {
+    "code-reviewer": {
       "provider": "codex"
+    },
+    "fixer": {
+      "provider": "claude"
     },
     "qa": {
       "provider": "claude"

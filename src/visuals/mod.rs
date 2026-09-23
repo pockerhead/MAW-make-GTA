@@ -1,3 +1,5 @@
+mod city;
+
 use bevy::{light::GlobalAmbientLight, prelude::*};
 use gta_sim::{character::CharacterBody, world::Block};
 use serde::Deserialize;
@@ -11,6 +13,25 @@ pub struct RenderConfig {
     sun_illuminance: f32,
     sun_pitch_deg: f32,
     sun_yaw_deg: f32,
+    district_colors: DistrictColors,
+    hospital_color: (f32, f32, f32),
+    police_color: (f32, f32, f32),
+    gang_hq_color: (f32, f32, f32),
+    road_color: (f32, f32, f32),
+    sidewalk_color: (f32, f32, f32),
+    park_color: (f32, f32, f32),
+    // Lift of flat surface layers above the ground against z-fighting (m).
+    surface_layer_step: f32,
+}
+
+/// sRGB building colours per district kind.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DistrictColors {
+    downtown: (f32, f32, f32),
+    commercial: (f32, f32, f32),
+    residential: (f32, f32, f32),
+    industrial: (f32, f32, f32),
 }
 
 pub struct VisualsPlugin;
@@ -25,6 +46,7 @@ impl Plugin for VisualsPlugin {
             ..default()
         })
         .add_systems(Startup, spawn_light)
+        .add_plugins(city::CityVisualsPlugin)
         .add_observer(visualize_block)
         .add_observer(visualize_character);
     }

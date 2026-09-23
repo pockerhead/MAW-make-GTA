@@ -17,12 +17,23 @@ def only_row(game, component, marker):
     return rows[0]["components"][component]
 
 
+def wait_rows(game, marker, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if game.query([marker], with_=[marker]):
+            return
+        time.sleep(0.25)
+    raise TimeoutError(f"no {marker} entity after {timeout} s")
+
+
 def run(out):
     out.mkdir(parents=True, exist_ok=True)
     summary = {}
-    with Game(features=("dev",)) as game:
-        time.sleep(2)
+    with Game(features=("dev",), args=("--seed", "1")) as game:
+        game.wait_resource("CityLayoutHash", 180)
         player = game.component_path("Player")
+        wait_rows(game, player)
+        time.sleep(1.0)
         transform = game.component_path("Transform")
         start = vec3(only_row(game, transform, player)["translation"])
         game.send_keys(["KeyW"], 1000)

@@ -1,0 +1,9 @@
+# Golden layout hashes: "seed 0xhash", one per line.
+# Changes only together with an intended change of the generator or assets/world/city.ron.
+# Read by citygen (tests/golden.rs), gta_sim (tests/city.rs) and tools/qa/scenarios/t2.py.
+# Update with the bless procedure: properties green, then
+#   cargo test -p citygen --test golden -- --ignored bless_print_golden --nocapture
+# and paste the printed lines here by hand.
+1 0xae2b9c82e875577e
+2 0x436944f502e8d30d
+42 0x37b9705bd7bc71a3
