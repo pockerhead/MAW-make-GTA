@@ -14,6 +14,7 @@ pub(super) struct LedgeAssist {
 struct LedgeTarget {
     position: Vec3,
     snapped: bool,
+    wall_normal: Vec3,
 }
 
 type AssistQuery<'w, 's> = Query<
@@ -36,11 +37,10 @@ pub(super) fn assist_ledge(
     mut characters: AssistQuery,
 ) {
     for (entity, intent, controller, mut assist, position) in &mut characters {
-        if assist.remaining <= 0.0
-            && matches!(
-                controller.action_flow_status(),
-                TnuaActionFlowStatus::ActionStarted(_)
-            )
+        if matches!(
+            controller.action_flow_status(),
+            TnuaActionFlowStatus::ActionStarted(_)
+        ) && (assist.remaining <= 0.0 || controller.basis_memory.standing_on_entity().is_some())
         {
             assist.launch_feet_y = position.y - cfg.float_height;
             assist.remaining = cfg.ledge_assist_window;
@@ -98,6 +98,7 @@ pub(super) fn assist_ledge(
             assist.target = Some(LedgeTarget {
                 position: position.0 + wall_hit.normal * keep_out,
                 snapped: false,
+                wall_normal: wall_hit.normal,
             });
             continue;
         }
@@ -121,6 +122,7 @@ pub(super) fn assist_ledge(
         assist.target = Some(LedgeTarget {
             position: target,
             snapped: true,
+            wall_normal: Vec3::ZERO,
         });
         assist.remaining = 0.0;
     }
@@ -146,8 +148,8 @@ pub(super) fn apply_ledge(
         if target.snapped {
             velocity.0 = Vec3::ZERO;
         } else {
-            velocity.x = 0.0;
-            velocity.z = 0.0;
+            let into_wall = velocity.0.dot(target.wall_normal).min(0.0);
+            velocity.0 -= target.wall_normal * into_wall;
         }
     }
 }

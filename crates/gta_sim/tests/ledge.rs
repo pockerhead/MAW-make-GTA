@@ -44,8 +44,7 @@ fn attempt_with_obstacle(
         ));
     }
     let entity = player(&mut app);
-    let start_z = if angle_deg == 0.0 { 3.0 } else { -1.45 };
-    let start = Vec3::new(25.0, cfg.float_height, start_z);
+    let start = Vec3::new(25.0, cfg.float_height, 3.0);
     app.world_mut().get_mut::<Position>(entity).unwrap().0 = start;
     app.world_mut()
         .get_mut::<Transform>(entity)
@@ -62,10 +61,7 @@ fn attempt_with_obstacle(
     let mut buried_ticks = 0;
     let mut ceiling_overlap = false;
     let mut reached_wall = false;
-    for tick in 0..150 {
-        if angle_deg != 0.0 && tick == 30 {
-            set_intent(&mut app, |intent| intent.jump_held = false);
-        }
+    for tick in 0..300 {
         let before = position(&mut app);
         if !jumped && before.z < -0.8 {
             set_intent(&mut app, |intent| {
@@ -143,21 +139,65 @@ fn pull_up_settles_quickly_without_burying_feet() {
 
 #[test]
 fn configured_limit_blocks_oblique_approaches() {
+    let mut climbed = Vec::new();
     for angle in [0.0, 45.0, 62.0, 75.0] {
         let result = attempt_with_obstacle(1.3, Some(1.2), angle, false);
         assert!(
             result.reached_wall,
             "{angle} degree approach missed the wall"
         );
-        assert!(
-            !result.on_top,
-            "{angle} degree approach climbed above limit"
-        );
+        if result.on_top {
+            climbed.push(angle);
+        }
     }
+    assert!(climbed.is_empty(), "above-limit climbs at {climbed:?} degrees");
 }
 
 #[test]
 fn low_ceiling_blocks_pull_up_snap() {
     let result = attempt_with_obstacle(1.4, None, 0.0, true);
     assert!(!result.ceiling_overlap, "capsule snapped into low ceiling");
+}
+
+#[test]
+fn landing_on_crate_allows_next_jump_over_short_step() {
+    let mut app = headless_app();
+    settle(&mut app);
+    let cfg = app.world().resource::<LocomotionConfig>().clone();
+    for (height, depth, z) in [(0.8, 2.0, -2.0), (1.5, 97.0, -51.5)] {
+        app.world_mut().spawn((
+            RigidBody::Static,
+            Collider::cuboid(100.0, height, depth),
+            Transform::from_xyz(25.0, height / 2.0, z),
+        ));
+    }
+    let entity = player(&mut app);
+    let start = Vec3::new(25.0, cfg.float_height, 1.0);
+    app.world_mut().get_mut::<Position>(entity).unwrap().0 = start;
+    app.world_mut()
+        .get_mut::<Transform>(entity)
+        .unwrap()
+        .translation = start;
+    run_ticks(&mut app, 16);
+    set_intent(&mut app, |intent| {
+        intent.axis = Vec2::Y;
+        intent.jump_requested = true;
+        intent.jump_held = true;
+    });
+    let mut cleared = false;
+    for tick in 0..180 {
+        if tick > 60 && tick % 40 == 0 {
+            set_intent(&mut app, |intent| intent.jump_held = false);
+        }
+        if tick > 60 && tick % 40 == 5 {
+            set_intent(&mut app, |intent| {
+                intent.jump_requested = true;
+                intent.jump_held = true;
+            });
+        }
+        run_ticks(&mut app, 1);
+        let at = position(&mut app);
+        cleared |= at.z < -3.3 && at.y > 1.5 + cfg.float_height - 0.2;
+    }
+    assert!(cleared, "second jump could not clear 0.7 m step");
 }
