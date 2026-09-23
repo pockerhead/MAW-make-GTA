@@ -17,9 +17,9 @@
 
 **Стек:** Rust + Bevy целиком (ECS, рендер, звук, ввод). Godot и других движков нет. Bevy `=0.19.1` (пин в TASK-002), avian3d 0.7.0, bevy-tnua 0.32.0, bevy_enhanced_input 0.26.0 (GDD §10.1); после TASK-002 источник правды — `Cargo.lock`. Workspace: корневой клиент + `crates/gta_sim` (геймплей, headless) + `crates/citygen` (GDD §12).
 
-**Стадия:** диздок утверждён (`docs/design/GDD.md`, APPROVED), идёт реализация слайсов T1..T16 = TASK-002..TASK-017 T1 (TASK-002, TASK-020) готов. TASK-018/019 (подтяг на уступ) в `blocked/`: владелец выбрал обычное поведение Tnua. Механика вне GDD — не в скоупе.
+**Стадия:** диздок утверждён (`docs/design/GDD.md`, APPROVED), идёт реализация слайсов T1..T16 = TASK-002..TASK-017 T1 (TASK-002, TASK-020) и T2 (TASK-003) готовы. TASK-018/019 (подтяг на уступ) в `blocked/`: владелец выбрал обычное поведение Tnua. Механика вне GDD — не в скоупе.
 
-**Сборка:** `cargo run --features fast` (итерация), `cargo run --release`, `cargo test -p gta_sim` (headless-гейт; не `--workspace` — унификация фич размывает границу sim/render), `python tools/qa/tree_check.py`, `python tools/qa/scenarios/t<N>.py --out <dir>` (BRP). Профили dev оптимизированы, линкер `rust-lld` (`.cargo/config.toml`). Vendored: `bevy-tnua-avian3d` (ADR-001), `bevy_dylib` (временно, до сетевого fetch).
+**Сборка:** `cargo run --features fast` (итерация), `cargo run --release`, `cargo test -p gta_sim -p citygen` (headless-гейты; не `--workspace` — унификация фич размывает границу sim/render), `python tools/qa/tree_check.py`, `python tools/qa/scenarios/t<N>.py --out <dir>` (BRP). Профили dev оптимизированы, линкер `rust-lld` (`.cargo/config.toml`). Vendored: `bevy-tnua-avian3d` (ADR-001), `bevy_dylib` (временно, до сетевого fetch).
 
 **Донор:** предыдущий Bevy-проект владельца, указатели локально (gitignored): @.claude/local/donor.md
 
