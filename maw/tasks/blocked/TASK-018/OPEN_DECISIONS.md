@@ -1,0 +1,4 @@
+# Open decisions — TASK-018
+
+- 2026-09-23: QA NEEDS_FIXES (B1 regression: walk-off-crate and buffered-landing paths still cannot climb a 0.7 m step from a 0.8 m crate; B2 75-degree row vacuous). Orchestrator decision: fixer round 2 with an explicit mechanism to verify (anchor follows the support surface), not another path-by-path patch. Flip: if round 2 fails on the same class, stop patching and re-plan ledge assist as a full-mode task.
+- 2026-09-23: QA round 2 NEEDS_FIXES — B3 is the same class as B1 (the reach anchor is a single centre ray while Tnua stands on a 0.29 m cylinder sensor; narrow 0.25 m steps pin the character). The pre-set flip condition is met: stop patching. TASK-018 goes to blocked/ and is superseded by TASK-019 (full mode, re-plan ledge assist from all evidence). TASK-019 branches from this branch, so the angle-independent barrier, free-space check and all gates carry over.
