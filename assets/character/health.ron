@@ -1,0 +1,9 @@
+(
+    max_health: 100.0,
+    max_armor: 100.0,
+    regen_delay: 5.0,
+    regen_rate: 5.0,
+    regen_cap: 0.5,
+    debug_damage: 25.0,
+    pickups: (health: 50.0, armor: 50.0, radius: 1.0, respawn: 30.0, spacing: 6.0),
+)

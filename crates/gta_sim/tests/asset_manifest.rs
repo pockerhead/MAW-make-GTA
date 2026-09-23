@@ -3,7 +3,7 @@ mod common;
 use common::assets_root;
 use gta_sim::config::{
     load_config,
-    manifest::{THIRD_PARTY_DIR, THIRD_PARTY_MANIFEST, ThirdPartyManifest},
+    manifest::{AssetLicense, THIRD_PARTY_DIR, THIRD_PARTY_MANIFEST, ThirdPartyManifest},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -26,7 +26,12 @@ fn shipped() -> ThirdPartyManifest {
 
 #[test]
 fn manifest_fixtures_are_judged() {
-    for name in ["valid_minimal.ron", "valid_rig.ron", "valid_rig_none.ron"] {
+    for name in [
+        "valid_minimal.ron",
+        "valid_rig.ron",
+        "valid_rig_none.ron",
+        "valid_github_ofl.ron",
+    ] {
         let valid = ron::from_str::<ThirdPartyManifest>(&fixture(name))
             .unwrap_or_else(|e| panic!("{name} must parse: {e}"));
         valid
@@ -53,6 +58,10 @@ fn manifest_fixtures_are_judged() {
         ("bad_url.ron", "url"),
         ("bad_rig_model.ron", "rig"),
         ("bad_rig_duplicate_clip.ron", "rig"),
+        ("bad_github_url.ron", "url"),
+        // "page" alone would match the "/media/pages/" of a Kenney url in any url error.
+        ("bad_license_source.ron", "OFL requires page"),
+        ("bad_ofl_version.ron", "url"),
     ] {
         let manifest = ron::from_str::<ThirdPartyManifest>(&fixture(name))
             .unwrap_or_else(|e| panic!("{name} must parse (its defect is semantic): {e}"));
@@ -81,17 +90,22 @@ fn shipped_manifest_is_valid() {
             "city-kit-roads",
             "city-kit-suburban",
             "city-kit-industrial",
-            "mini-characters"
+            "mini-characters",
+            "inter"
         ])
     );
     for pack in manifest
         .packs
         .iter()
-        .filter(|p| p.name != "mini-characters")
+        .filter(|p| p.name != "mini-characters" && p.name != "inter")
     {
         assert_eq!(pack.files.len(), 4, "pack {} file count", pack.name);
         assert!(pack.rig.is_none(), "pack {} has no rig", pack.name);
     }
+    let inter = manifest.packs.iter().find(|p| p.name == "inter").unwrap();
+    assert_eq!(inter.files.len(), 3, "inter file count");
+    assert_eq!(inter.license, AssetLicense::OFL);
+    assert!(inter.rig.is_none());
     let characters = manifest
         .packs
         .iter()
@@ -184,7 +198,7 @@ fn local_assets_match_manifest() {
             );
         }
         let license = fs::read(dir.join(&pack.license_file)).unwrap();
-        for needle in [&b"Creative Commons Zero"[..], b"CC0"] {
+        for &needle in pack.license.markers() {
             assert!(
                 license.windows(needle.len()).any(|w| w == needle),
                 "pack {}: {} does not state {:?}",

@@ -17,6 +17,7 @@ use gta_sim::{
         manifest::{THIRD_PARTY_MANIFEST, ThirdPartyManifest},
     },
     flow::GameState,
+    player::{DebugDamage, Player},
     world::{City, CityBuilding, CityParamsRes, WorldSource},
 };
 use std::{
@@ -194,4 +195,70 @@ fn render_props_reference_manifest_files() {
             "{RENDER_CONFIG}: {path} is not listed in {THIRD_PARTY_MANIFEST}"
         );
     }
+}
+
+fn city_entities<F: QueryFilter>(app: &mut App) -> BTreeSet<Entity> {
+    app.world_mut()
+        .query_filtered::<Entity, F>()
+        .iter(app.world())
+        .collect()
+}
+
+#[test]
+fn city_is_built_once_across_respawn() {
+    let mut app = city_visuals_app(1);
+    let chunks = city_entities::<(With<CityChunk>, With<Mesh3d>)>(&mut app);
+    let props = city_entities::<With<CityProp>>(&mut app);
+    assert!(
+        !chunks.is_empty() && !props.is_empty(),
+        "GATE BROKEN: no city"
+    );
+    let mut rebuilt = Vec::new();
+    let mut step = |app: &mut App, label: &str| {
+        app.update();
+        let world = app.world();
+        if world.contains_resource::<CityMeshTask>()
+            || world.contains_resource::<PendingCitySpawn>()
+        {
+            rebuilt.push(label.to_string());
+        }
+    };
+    let state = |app: &App| app.world().resource::<State<GameState>>().get().clone();
+
+    app.world_mut()
+        .write_message(DebugDamage { amount: 1000.0 });
+    for k in 0.. {
+        assert!(k < 3, "lethal damage did not enter Wasted");
+        step(&mut app, "entering Wasted");
+        if state(&app) == GameState::Wasted {
+            break;
+        }
+    }
+    for k in 0.. {
+        assert!(k < 300, "Wasted did not end within 300 updates");
+        step(&mut app, "Wasted");
+        if state(&app) == GameState::Playing {
+            break;
+        }
+    }
+    for _ in 0..30 {
+        step(&mut app, "Playing after respawn");
+    }
+
+    assert!(
+        rebuilt.is_empty(),
+        "the city mesh build ran again: {:?}",
+        rebuilt.first()
+    );
+    assert_eq!(
+        city_entities::<(With<CityChunk>, With<Mesh3d>)>(&mut app),
+        chunks,
+        "chunk entities changed across respawn"
+    );
+    assert_eq!(
+        city_entities::<With<CityProp>>(&mut app),
+        props,
+        "prop entities changed across respawn"
+    );
+    assert_eq!(count::<With<Player>>(&mut app), 1);
 }

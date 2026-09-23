@@ -29,9 +29,23 @@ pub struct AssetPack {
     pub rig: Option<PackRig>,
 }
 
+/// Licence of a pack; each licence is tied to one kind of source (see `AssetPack::check_source`).
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetLicense {
+    /// Kenney packs from kenney.nl.
     CC0,
+    /// SIL Open Font License 1.1 fonts from a version-pinned GitHub release.
+    OFL,
+}
+
+impl AssetLicense {
+    /// Byte strings the pack's licence file must contain.
+    pub fn markers(self) -> &'static [&'static [u8]] {
+        match self {
+            Self::CC0 => &[b"Creative Commons Zero", b"CC0"],
+            Self::OFL => &[b"SIL Open Font License"],
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -82,20 +96,7 @@ impl AssetPack {
         if self.version.is_empty() {
             return Err(format!("pack {name}: version is empty"));
         }
-        let page = format!("https://kenney.nl/assets/{name}");
-        if self.page != page {
-            return Err(format!(
-                "pack {name}: page {:?}, expected {page:?}",
-                self.page
-            ));
-        }
-        let prefix = format!("https://kenney.nl/media/pages/assets/{name}/");
-        if !self.url.starts_with(&prefix) || !self.url.ends_with(".zip") {
-            return Err(format!(
-                "pack {name}: url {:?} must start with {prefix:?} and end with .zip",
-                self.url
-            ));
-        }
+        self.check_source()?;
         if !is_sha256(&self.archive_sha256) {
             return Err(format!(
                 "pack {name}: archive_sha256 {:?} is not 64 lowercase hex digits",
@@ -135,6 +136,54 @@ impl AssetPack {
             return Ok(());
         };
         rig.validate(name, &paths)
+    }
+}
+
+fn is_github_repo_page(page: &str) -> bool {
+    let Some(repo) = page.strip_prefix("https://github.com/") else {
+        return false;
+    };
+    let segments = repo.split('/').collect::<Vec<_>>();
+    segments.len() == 2
+        && segments.iter().all(|s| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        })
+}
+
+impl AssetPack {
+    /// CC0 packs come from kenney.nl, OFL packs from a GitHub release pinned to `version`.
+    fn check_source(&self) -> Result<(), String> {
+        let name = &self.name;
+        let prefix = match self.license {
+            AssetLicense::CC0 => {
+                let page = format!("https://kenney.nl/assets/{name}");
+                if self.page != page {
+                    return Err(format!(
+                        "pack {name}: page {:?}, expected {page:?}",
+                        self.page
+                    ));
+                }
+                format!("https://kenney.nl/media/pages/assets/{name}/")
+            }
+            AssetLicense::OFL => {
+                if !is_github_repo_page(&self.page) {
+                    return Err(format!(
+                        "pack {name}: license OFL requires page https://github.com/<owner>/<repo>, got {:?}",
+                        self.page
+                    ));
+                }
+                format!("{}/releases/download/v{}/", self.page, self.version)
+            }
+        };
+        if !self.url.starts_with(&prefix) || !self.url.ends_with(".zip") {
+            return Err(format!(
+                "pack {name}: url {:?} must start with {prefix:?} and end with .zip",
+                self.url
+            ));
+        }
+        Ok(())
     }
 }
 

@@ -15,6 +15,7 @@ mod roads;
 
 pub use geom::{centroid, contains_convex, convex_overlap, dist_point_segment};
 pub use glam::Vec2;
+pub use graphs::sidewalk_anchor;
 pub use hash::layout_hash;
 pub use layout::*;
 pub use params::*;

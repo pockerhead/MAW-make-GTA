@@ -1,6 +1,7 @@
 mod camera;
 #[cfg(feature = "debug")]
 mod debug;
+mod hud;
 mod input;
 mod menu;
 #[cfg(feature = "dev")]
@@ -18,7 +19,7 @@ use gta_sim::{
     world::WorldSource,
 };
 use input::PlayerInputPlugin;
-use menu::MenuPlugin;
+use menu::{MenuPlugin, UI_CONFIG, UiConfig};
 use std::time::{SystemTime, UNIX_EPOCH};
 use visuals::{
     CHARACTER_VISUAL_CONFIG, CharacterClips, CharacterVisualConfig, RENDER_CONFIG, RenderConfig,
@@ -44,12 +45,13 @@ fn parse_seed() -> Result<u64, String> {
     Ok(nanos as u64)
 }
 
-/// Checks the render and character configs, that every third-party asset they name is listed and
-/// present, and resolves the character clips against the manifest rig.
+/// Checks the render, character and UI configs, that every third-party asset they name is listed
+/// and present, and resolves the character clips against the manifest rig.
 fn preflight(
     root: &ConfigRoot,
     render_config: &RenderConfig,
     character_config: &CharacterVisualConfig,
+    ui_config: &UiConfig,
 ) -> Result<CharacterClips, Vec<String>> {
     render_config
         .validate()
@@ -60,6 +62,9 @@ fn preflight(
             root.path(CHARACTER_VISUAL_CONFIG).display()
         )]
     })?;
+    ui_config
+        .validate()
+        .map_err(|message| vec![format!("{}: {message}", root.path(UI_CONFIG).display())])?;
     let manifest = load_config::<ThirdPartyManifest>(root, THIRD_PARTY_MANIFEST)
         .map_err(|error| vec![error.to_string()])?;
     manifest.validate().map_err(|message| {
@@ -80,6 +85,13 @@ fn preflight(
         unlisted.push(format!(
             "{CHARACTER_VISUAL_CONFIG}: model {model} is not listed in {THIRD_PARTY_MANIFEST}"
         ));
+    }
+    for font in ui_config.font_paths() {
+        if !manifest.contains_asset(font) {
+            unlisted.push(format!(
+                "{UI_CONFIG}: font {font} is not listed in {THIRD_PARTY_MANIFEST}"
+            ));
+        }
     }
     if !unlisted.is_empty() {
         return Err(unlisted);
@@ -149,7 +161,14 @@ fn main() -> AppExit {
                 return AppExit::error();
             }
         };
-    let clips = match preflight(&root, &render_config, &character_config) {
+    let ui_config = match load_config::<UiConfig>(&root, UI_CONFIG) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
+    let clips = match preflight(&root, &render_config, &character_config, &ui_config) {
         Ok(clips) => clips,
         Err(errors) => {
             for error in errors {
@@ -158,17 +177,19 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
-    // CharacterAnimations (VisualsPlugin) reads the character config and clips while the plugin builds.
+    // CharacterAnimations (VisualsPlugin) and UiFonts (MenuPlugin) read their configs while the plugins build.
     app.insert_resource(camera_config)
         .insert_resource(render_config)
         .insert_resource(character_config)
         .insert_resource(clips)
+        .insert_resource(ui_config)
         .add_plugins((
             bevy_enhanced_input::prelude::EnhancedInputPlugin,
             PlayerInputPlugin,
             CameraPlugin,
             VisualsPlugin,
             MenuPlugin,
+            hud::HudPlugin,
         ));
     #[cfg(feature = "dev")]
     app.add_plugins(remote::QaRemotePlugin);

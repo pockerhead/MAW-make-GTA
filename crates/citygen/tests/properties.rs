@@ -2,9 +2,10 @@ mod common;
 
 use citygen::{
     BuildingKind, CityLayout, CityParams, DistrictKind, RoadClass, Vec2, centroid, contains_convex,
-    convex_overlap, dist_point_segment, generate,
+    convex_overlap, dist_point_segment, generate, sidewalk_anchor,
 };
 use common::{layouts, shipped_params};
+use serde::Deserialize;
 
 fn reached(count: usize, start: usize, next: &[Vec<usize>]) -> Vec<bool> {
     let mut seen = vec![false; count];
@@ -290,6 +291,108 @@ fn player_spawn_on_sidewalk() {
             );
         }
     }
+}
+
+#[derive(Deserialize)]
+struct HealthFile {
+    pickups: PickupsFile,
+}
+
+#[derive(Deserialize)]
+struct PickupsFile {
+    spacing: f32,
+}
+
+/// `pickups.spacing` of the shipped `character/health.ron`: the sidewalk margin of the hospital anchor.
+fn pickup_spacing() -> f32 {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/character/health.ron"
+    );
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("GATE BROKEN: cannot read {path}: {e}"));
+    let file: HealthFile =
+        ron::from_str(&text).unwrap_or_else(|e| panic!("GATE BROKEN: cannot parse {path}: {e}"));
+    file.pickups.spacing
+}
+
+#[test]
+fn hospital_anchor_on_sidewalk() {
+    let params = shipped_params();
+    let margin = pickup_spacing();
+    for (seed, layout) in layouts() {
+        let hospitals = layout
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.kind == BuildingKind::Hospital)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+        let &[idx] = hospitals.as_slice() else {
+            panic!("seed {seed}: expected one hospital, found {hospitals:?}");
+        };
+        let (point, along) = sidewalk_anchor(layout, &params, idx, margin)
+            .unwrap_or_else(|| panic!("seed {seed}: hospital {idx} has no sidewalk anchor"));
+        assert!(
+            (along.length() - 1.0).abs() < 1e-4,
+            "seed {seed}: direction {along} is not unit"
+        );
+        for p in [point, point + along * margin, point - along * margin] {
+            let on_sidewalk = layout.roads.edges.iter().any(|e| {
+                let half = params.half_carriageway(e.class);
+                let (a, b) = (
+                    layout.roads.nodes[e.a as usize],
+                    layout.roads.nodes[e.b as usize],
+                );
+                let d = dist_point_segment(p, a, b);
+                e.class != RoadClass::Alley && d >= half && d <= half + params.sidewalk(e.class)
+            });
+            assert!(on_sidewalk, "seed {seed}: {p} is not on a sidewalk");
+            for (i, e) in layout.roads.edges.iter().enumerate() {
+                let (a, b) = (
+                    layout.roads.nodes[e.a as usize],
+                    layout.roads.nodes[e.b as usize],
+                );
+                let d = dist_point_segment(p, a, b);
+                assert!(
+                    d >= params.half_carriageway(e.class) - 1e-3,
+                    "seed {seed}: {p} is on the carriageway of edge {i} ({d} m from its axis)"
+                );
+            }
+            for (i, lot) in layout.lots.iter().enumerate() {
+                assert!(
+                    !contains_convex(&lot.polygon, p, 0.0),
+                    "seed {seed}: {p} inside lot {i}"
+                );
+            }
+        }
+        let center = layout.buildings[idx].center;
+        let off = (center - point).dot(along).abs();
+        assert!(
+            off <= margin + 1e-3,
+            "seed {seed}: anchor {point} is {off} m along the sidewalk from hospital {center}"
+        );
+    }
+}
+
+#[test]
+fn sidewalk_anchor_rejects_bad_indices() {
+    let params = shipped_params();
+    let margin = pickup_spacing();
+    let (seed, layout) = &layouts()[0];
+    let idx = layout
+        .buildings
+        .iter()
+        .position(|b| b.kind == BuildingKind::Hospital)
+        .unwrap_or_else(|| panic!("seed {seed}: no hospital"));
+    assert!(sidewalk_anchor(layout, &params, layout.buildings.len(), margin).is_none());
+    let mut broken = layout.clone();
+    let block = broken.lots[broken.buildings[idx].lot as usize].block as usize;
+    broken.blocks[block].nodes[0] = u32::MAX;
+    assert!(
+        sidewalk_anchor(&broken, &params, idx, margin).is_none(),
+        "seed {seed}: an out-of-range block node must give None"
+    );
 }
 
 #[test]

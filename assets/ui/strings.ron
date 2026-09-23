@@ -1,0 +1,13 @@
+(
+    font: "third_party/inter/Inter-Regular.ttf",
+    title_font: "third_party/inter/InterDisplay-Black.ttf",
+    loading: "Генерация города (seed {seed})",
+    loading_size: 32.0,
+    wasted: "ПОТРАЧЕНО",
+    wasted_size: 96.0,
+    wasted_color: (0.78, 0.08, 0.08),
+    wasted_backdrop: (0.0, 0.0, 0.0, 0.35),
+    wasted_saturation: 0.0,
+    hud: (margin: 24.0, bar_width: 200.0, bar_height: 12.0, bar_gap: 6.0,
+          health_color: (0.80, 0.15, 0.15), armor_color: (0.25, 0.45, 0.90), back_color: (0.0, 0.0, 0.0, 0.55)),
+)

@@ -21,7 +21,14 @@ impl Plugin for CityVisualsPlugin {
         app.register_type::<CityChunk>()
             .register_type::<CityProp>()
             .add_systems(Startup, (create_facade_material, load_prop_assets))
-            .add_systems(OnEnter(GameState::Playing), start_city_mesh_build)
+            // Once per session: returning from `Wasted` must not build the city a second time.
+            .add_systems(
+                OnTransition {
+                    exited: GameState::Loading,
+                    entered: GameState::Playing,
+                },
+                start_city_mesh_build,
+            )
             .add_systems(
                 Update,
                 (

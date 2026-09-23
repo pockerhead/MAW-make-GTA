@@ -27,6 +27,15 @@ pub struct Block {
 #[derive(Resource)]
 pub struct PlayerSpawn(pub Vec3);
 
+/// Respawn point on the sidewalk in front of the hospital and the unit sidewalk direction there;
+/// the pickups stand along `along` on both sides. Read by QA over BRP.
+#[derive(Resource, Reflect, Clone, Copy, Debug)]
+#[reflect(Resource)]
+pub struct HospitalSpawn {
+    pub point: Vec3,
+    pub along: Vec3,
+}
+
 /// Which world the simulation builds while in `GameState::Loading`.
 #[derive(Clone, Copy, Debug)]
 pub enum WorldSource {
@@ -48,6 +57,11 @@ pub struct WorldPlugin {
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PlayerSpawn(Vec3::ZERO))
+            .insert_resource(HospitalSpawn {
+                point: Vec3::ZERO,
+                along: Vec3::X,
+            })
+            .register_type::<HospitalSpawn>()
             .register_type::<Block>();
         match self.source {
             WorldSource::TestArea => {

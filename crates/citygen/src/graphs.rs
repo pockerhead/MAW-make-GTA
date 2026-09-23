@@ -1,5 +1,6 @@
 use crate::{
-    Block, CityParams, Connector, Lane, LaneGraph, RoadClass, RoadGraph, Vec2, WalkGraph, geom,
+    Block, CityLayout, CityParams, Connector, Lane, LaneGraph, RoadClass, RoadGraph, Vec2,
+    WalkGraph, geom,
 };
 
 /// Builds the sidewalk graph, the directed lane graph and the player spawn point.
@@ -152,4 +153,115 @@ fn player_spawn(params: &CityParams, roads: &RoadGraph, blocks: &[Block]) -> Vec
         }
     }
     best.expect("a city with buildable blocks has north-south streets")
+}
+
+/// Point on the sidewalk centre line of the building's block facing `building`, and the unit sidewalk
+/// direction there. The point is at least `margin` from both ends of its sidewalk side, so
+/// `point ± dir * margin` stays on the same side. `None` for a bad index or no side long enough.
+pub fn sidewalk_anchor(
+    layout: &CityLayout,
+    params: &CityParams,
+    building: usize,
+    margin: f32,
+) -> Option<(Vec2, Vec2)> {
+    let b = layout.buildings.get(building)?;
+    let lot = layout.lots.get(b.lot as usize)?;
+    let block = layout.blocks.get(lot.block as usize)?;
+    let classes = block
+        .sides
+        .iter()
+        .map(|&s| Some(layout.roads.edges.get(s as usize)?.class))
+        .collect::<Option<Vec<_>>>()?;
+    let offsets = classes
+        .iter()
+        .map(|&class| walk_offset(params, class))
+        .collect::<Vec<_>>();
+    let polygon = block
+        .nodes
+        .iter()
+        .map(|&n| layout.roads.nodes.get(n as usize).copied())
+        .collect::<Option<Vec<_>>>()?;
+    // Side k of the ring lies on road side k moved inward to the sidewalk centre line.
+    let ring = geom::inset(&polygon, &offsets)?;
+    let n = ring.len();
+    classes
+        .iter()
+        .enumerate()
+        .filter(|&(_, &class)| class != RoadClass::Alley)
+        .filter_map(|(k, _)| anchor_on_segment(ring[k], ring[(k + 1) % n], b.center, margin))
+        .min_by(|p, q| {
+            p.0.distance_squared(b.center)
+                .total_cmp(&q.0.distance_squared(b.center))
+        })
+}
+
+/// Closest point to `target` on segment `a → c`, kept `margin` away from both ends; `None` when the
+/// segment is shorter than `2 * margin`.
+fn anchor_on_segment(a: Vec2, c: Vec2, target: Vec2, margin: f32) -> Option<(Vec2, Vec2)> {
+    let len = a.distance(c);
+    // Written so that a NaN length or margin also yields `None` (and `clamp` never panics).
+    let long_enough = len >= 2.0 * margin && len > 0.0;
+    if !long_enough {
+        return None;
+    }
+    let d = (c - a) / len;
+    let t = (target - a).dot(d).clamp(margin, len - margin);
+    Some((a + d * t, d))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anchor_on_segment;
+    use crate::Vec2;
+
+    #[test]
+    fn anchor_on_segment_examples() {
+        let v = Vec2::new;
+        let cases = [
+            (
+                v(-50.0, 0.0),
+                v(50.0, 0.0),
+                v(35.0, 10.0),
+                Some((v(35.0, 0.0), v(1.0, 0.0))),
+            ),
+            (
+                v(50.0, 0.0),
+                v(-50.0, 0.0),
+                v(35.0, 10.0),
+                Some((v(35.0, 0.0), v(-1.0, 0.0))),
+            ),
+            (
+                v(0.0, -50.0),
+                v(0.0, 50.0),
+                v(-10.0, 49.0),
+                Some((v(0.0, 44.0), v(0.0, 1.0))),
+            ),
+            (
+                v(-50.0, 0.0),
+                v(50.0, 0.0),
+                v(-60.0, 5.0),
+                Some((v(-44.0, 0.0), v(1.0, 0.0))),
+            ),
+            (v(0.0, 0.0), v(10.0, 0.0), v(5.0, 1.0), None),
+        ];
+        for (i, (a, c, target, expected)) in cases.into_iter().enumerate() {
+            let got = anchor_on_segment(a, c, target, 6.0);
+            match (got, expected) {
+                (None, None) => {}
+                (Some((p, d)), Some((ep, ed))) => {
+                    assert!(
+                        p.distance(ep) < 1e-4,
+                        "case {}: point {p}, expected {ep}",
+                        i + 1
+                    );
+                    assert!(
+                        d.distance(ed) < 1e-4,
+                        "case {}: dir {d}, expected {ed}",
+                        i + 1
+                    );
+                }
+                _ => panic!("case {}: got {got:?}, expected {expected:?}", i + 1),
+            }
+        }
+    }
 }

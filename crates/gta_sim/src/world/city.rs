@@ -1,11 +1,12 @@
-use super::PlayerSpawn;
+use super::{HospitalSpawn, PlayerSpawn};
+use crate::character::HealthConfig;
 use crate::flow::GameState;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use citygen::{
     BuildingKind, CityLayout, CityParams, DistrictKind, GenError, Vec2 as LayoutVec2, centroid,
-    generate, layout_hash,
+    generate, layout_hash, sidewalk_anchor,
 };
 
 // The ground is a 1 m thick static slab with its top face at y = 0 (collision geometry law).
@@ -77,6 +78,7 @@ pub(super) fn apply_city_generation(
     mut commands: Commands,
     mut task: ResMut<CityGenTask>,
     params: Res<CityParamsRes>,
+    health: Res<HealthConfig>,
     mut next: ResMut<NextState<GameState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -102,10 +104,41 @@ pub(super) fn apply_city_generation(
         return;
     }
     spawn_buildings(&mut commands, &layout);
+    match hospital_spawn(&layout, &params.0, curb, health.pickups.spacing) {
+        Ok(spawn) => commands.insert_resource(spawn),
+        Err(err) => {
+            error!("city generation failed: {err}");
+            exit.write(AppExit::error());
+            return;
+        }
+    }
     commands.insert_resource(landmarks(&layout, curb));
     commands.insert_resource(CityLayoutHash(hash));
     commands.insert_resource(City(layout));
     next.set(GameState::Playing);
+}
+
+fn hospital_spawn(
+    layout: &CityLayout,
+    params: &CityParams,
+    curb: f32,
+    margin: f32,
+) -> Result<HospitalSpawn, String> {
+    let idx = layout
+        .buildings
+        .iter()
+        .position(|b| b.kind == BuildingKind::Hospital)
+        .ok_or("no hospital")?;
+    let (p, d) = sidewalk_anchor(layout, params, idx, margin).ok_or_else(|| {
+        format!(
+            "hospital {idx}: no sidewalk side of length >= {}",
+            2.0 * margin
+        )
+    })?;
+    Ok(HospitalSpawn {
+        point: Vec3::new(p.x, curb, p.y),
+        along: Vec3::new(d.x, 0.0, d.y),
+    })
 }
 
 fn spawn_ground_and_walls(commands: &mut Commands, params: &CityParams, ground: f32) {

@@ -38,4 +38,5 @@
         traffic_light_offset: 1.0, park_tree_spacing: 14.0, park_tree_jitter: 3.0, park_tree_margin: 3.0,
         container_gap: 1.0,
     ),
+    pickups: (size: 0.5, lift: 0.5, health_color: (0.90, 0.95, 0.90), armor_color: (0.25, 0.45, 0.90)),
 )

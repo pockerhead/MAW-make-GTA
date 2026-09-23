@@ -1,13 +1,16 @@
 #![allow(dead_code)]
 
 use avian3d::prelude::Position;
-use bevy::{asset::AssetPlugin, prelude::*, state::app::StatesPlugin, time::TimeUpdateStrategy};
+use bevy::{
+    asset::AssetPlugin, ecs::query::QueryFilter, prelude::*, state::app::StatesPlugin,
+    time::TimeUpdateStrategy,
+};
 use gta_sim::{
-    character::{LocomotionConfig, MoveIntent},
+    character::{Health, LocomotionConfig, MoveIntent},
     compose_sim,
     config::ConfigRoot,
-    flow::GameState,
-    player::Player,
+    flow::{GameState, WastedPhase},
+    player::{DebugDamage, Player},
     world::{CityParams, CityParamsRes, PlayerSpawn, WorldSource},
 };
 use std::{
@@ -134,4 +137,42 @@ pub fn set_intent(app: &mut App, update: impl FnOnce(&mut MoveIntent)) {
             .expect("GATE BROKEN: missing MoveIntent")
             .as_mut(),
     );
+}
+
+pub fn health(app: &mut App) -> Health {
+    let entity = player(app);
+    *app.world()
+        .get::<Health>(entity)
+        .expect("GATE BROKEN: player missing Health")
+}
+
+pub fn set_health(app: &mut App, update: impl FnOnce(&mut Health)) {
+    let entity = player(app);
+    update(
+        app.world_mut()
+            .get_mut::<Health>(entity)
+            .expect("GATE BROKEN: player missing Health")
+            .as_mut(),
+    );
+}
+
+pub fn write_damage(app: &mut App, amount: f32) {
+    app.world_mut().write_message(DebugDamage { amount });
+}
+
+pub fn game_state(app: &App) -> GameState {
+    app.world().resource::<State<GameState>>().get().clone()
+}
+
+pub fn wasted_phase(app: &App) -> Option<WastedPhase> {
+    app.world()
+        .get_resource::<State<WastedPhase>>()
+        .map(|s| s.get().clone())
+}
+
+pub fn count<F: QueryFilter>(app: &mut App) -> usize {
+    app.world_mut()
+        .query_filtered::<(), F>()
+        .iter(app.world())
+        .count()
 }

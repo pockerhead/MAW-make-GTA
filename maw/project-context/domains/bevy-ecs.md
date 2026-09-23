@@ -18,6 +18,11 @@
   `Update`/`PostUpdate` from that state. Input is read in `Update`/`PreUpdate` and accumulated into an
   intent component/resource that `FixedUpdate` consumes; never read `just_pressed` / `just_released`
   inside `FixedUpdate` (it is missed or repeated when the fixed step runs 0 or 2+ times per frame).
+- Exception to the fixed-time rule: timers that by design run on REAL time (GDD §3.4 `Wasted`/`Busted`,
+  so slow-mo does not stretch them) tick in `Update` on `Time<Real>`, never in `FixedUpdate`.
+- One-shot spawns (player, city meshes/colliders) never hang on `OnEnter` of a state the game RETURNS to
+  (`Playing` after `Wasted`/`Busted`): use `OnTransition { exited: Loading, entered: Playing }` or a
+  keyed one-shot, and gate "state re-entry spawns nothing twice" (TASK-006).
 - Buffered cross-system signals are `Message`s (`MessageWriter<T>` / `MessageReader<T>`); `Event` +
   observers (`On<T>`, `add_observer`) are for immediate reactions. Pick by semantics and name which one
   in the plan. Confirm both APIs against the pinned Bevy source — they were renamed recently.

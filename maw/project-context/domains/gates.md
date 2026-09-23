@@ -46,6 +46,11 @@
   directory itself silently ignores the negated file too. Verify ignore rules with `git add -A --dry-run` /
   `git check-ignore -v`, never by reading them.
 
+- 2026-09-23 (TASK-006) — a fixture gate asserting "the error mentions KEYWORD" is only as strong as the
+  keyword is unique (`"page"` matched `/media/pages/` in a Kenney URL). Flip each fixture with a sabotage
+  that yields a DIFFERENT error, not only "no error". A clamp gate driven by steps that divide the distance
+  exactly never overshoots, so removing the clamp stays GREEN — include one off-grid start value.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

@@ -35,6 +35,7 @@ pub struct RenderConfig {
     pub(super) markings: MarkingsConfig,
     pub(super) facade: FacadeConfig,
     pub(super) props: PropsConfig,
+    pub(super) pickups: PickupVisuals,
 }
 
 /// sRGB colours per district kind.
@@ -141,6 +142,18 @@ pub(super) struct PropsConfig {
     pub(super) park_tree_jitter: f32,
     pub(super) park_tree_margin: f32,
     pub(super) container_gap: f32,
+}
+
+/// Placeholder cubes of the medkit and armour pickups.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PickupVisuals {
+    /// Cube edge (m).
+    pub(super) size: f32,
+    /// Height of the cube centre above the pickup point (m).
+    pub(super) lift: f32,
+    pub(super) health_color: Rgb,
+    pub(super) armor_color: Rgb,
 }
 
 impl PropsConfig {
@@ -335,6 +348,17 @@ impl RenderConfig {
         )?;
         unit("facade.glass_roughness", f.glass_roughness)?;
         unit("facade.wall_roughness", f.wall_roughness)?;
+        let k = &self.pickups;
+        positive("pickups.size", k.size)?;
+        positive("pickups.lift", k.lift)?;
+        for (name, (r, g, b)) in [
+            ("pickups.health_color", k.health_color),
+            ("pickups.armor_color", k.armor_color),
+        ] {
+            for value in [r, g, b] {
+                unit(name, value)?;
+            }
+        }
         Ok(())
     }
 }

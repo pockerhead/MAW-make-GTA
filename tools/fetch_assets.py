@@ -5,7 +5,8 @@ Usage:
   python tools/fetch_assets.py --check             verify installed packs offline
   python tools/fetch_assets.py --validate-only F   parse and schema-check a manifest file
 
-The schema rules mirror gta_sim::config::manifest::ThirdPartyManifest::validate.
+The schema rules mirror gta_sim::config::manifest::ThirdPartyManifest::validate:
+CC0 packs come from kenney.nl, OFL fonts from a GitHub release pinned to the pack version.
 A pack may carry a `rig` record; --check and installation compare it with the GLB bytes.
 """
 
@@ -37,6 +38,7 @@ GLB_JSON_CHUNK = 0x4E4F534A
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 NAME = re.compile(r"[a-z0-9-]+")
+GITHUB_REPO = re.compile(r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 
 
 class ManifestError(Exception):
@@ -189,13 +191,21 @@ def check_schema(doc):
             raise ManifestError(f"pack {name!r}: name must match ^[a-z0-9-]+$")
         if not pack["version"]:
             raise ManifestError(f"pack {name}: version is empty")
-        if pack["page"] != f"https://kenney.nl/assets/{name}":
-            raise ManifestError(f"pack {name}: page {pack['page']!r}")
-        prefix = f"https://kenney.nl/media/pages/assets/{name}/"
+        license = pack["license"]
+        if license == "CC0":
+            if pack["page"] != f"https://kenney.nl/assets/{name}":
+                raise ManifestError(f"pack {name}: page {pack['page']!r}")
+            prefix = f"https://kenney.nl/media/pages/assets/{name}/"
+        elif license == "OFL":
+            if not isinstance(pack["page"], str) or not GITHUB_REPO.fullmatch(pack["page"]):
+                raise ManifestError(
+                    f"pack {name}: license OFL requires page https://github.com/<owner>/<repo>, got {pack['page']!r}"
+                )
+            prefix = f"{pack['page']}/releases/download/v{pack['version']}/"
+        else:
+            raise ManifestError(f"pack {name}: license {license!r} is not CC0 or OFL")
         if not pack["url"].startswith(prefix) or not pack["url"].endswith(".zip"):
             raise ManifestError(f"pack {name}: url {pack['url']!r} must start with {prefix!r} and end with .zip")
-        if pack["license"] != "CC0":
-            raise ManifestError(f"pack {name}: license {pack['license']!r} is not CC0")
         if not SHA256.fullmatch(pack["archive_sha256"]):
             raise ManifestError(f"pack {name}: archive_sha256 {pack['archive_sha256']!r} is not 64 lowercase hex digits")
         files = pack["files"]

@@ -14,6 +14,8 @@ scope law: its data files (§12), crate/plugin boundaries and verified crate ver
 
 Goal (GDD §13): оружие из `weapons.ron` (пистолет, SMG, дробовик), режим прицела (камера и strafe), `AimIntent` из клиента, hitscan двумя лучами, сенсор головы в слое `Hitbox` (сначала проверить, что сенсор земли Tnua его не видит), разброс, магазин, перезарядка, смена оружия, пикапы оружия и патронов, манекены-мишени, HUD патронов, прицел, хит-маркер, вспышка, трассер, отдача камеры.
 
+Known issue from TASK-006 QA (B1): a damage message written in the last frame of `Wasted` hits the already-respawned player (70/100 instead of 100). With real weapon damage in this slice, damage must be dropped for a target that is `Dead` or when the game is not in `Playing`, and gated: damage queued during Wasted does not reach the respawned player.
+
 ## Dependencies
 - blocked by TASK-006 — GDD slice T5 must land first
 

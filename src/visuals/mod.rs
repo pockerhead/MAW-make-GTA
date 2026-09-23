@@ -8,6 +8,7 @@ mod city_gate;
 mod city_mesh;
 mod config;
 mod facade;
+mod pickups;
 mod props;
 mod sky;
 
@@ -43,7 +44,9 @@ impl Plugin for VisualsPlugin {
             city::CityVisualsPlugin,
             character::CharacterVisualsPlugin,
         ))
-        .add_observer(visualize_block);
+        .add_systems(Update, pickups::show_available_pickups)
+        .add_observer(visualize_block)
+        .add_observer(pickups::visualize_pickup);
     }
 }
 

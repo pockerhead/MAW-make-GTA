@@ -6,7 +6,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use bevy_enhanced_input::prelude::*;
-use gta_sim::{character::CharacterBody, player::Player};
+use gta_sim::{character::CharacterBody, flow::GameState, player::Player};
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -24,6 +24,7 @@ impl Plugin for CameraPlugin {
         app.register_type::<OrbitCamera>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, apply_mouse_look)
+            .add_systems(OnExit(GameState::Wasted), reset_pivot)
             .add_systems(
                 PostUpdate,
                 follow_player.before(TransformSystems::Propagate),
@@ -118,6 +119,11 @@ fn follow_player(
     }
     camera_transform.translation = shoulder + back * orbit.distance;
     camera_transform.rotation = rotation;
+}
+
+/// After the respawn teleport the pivot jumps to the new head instead of flying across the city.
+fn reset_pivot(mut camera: Single<&mut OrbitCamera>) {
+    camera.pivot = None;
 }
 
 fn enable_player_interpolation(event: On<Add, Player>, mut commands: Commands) {

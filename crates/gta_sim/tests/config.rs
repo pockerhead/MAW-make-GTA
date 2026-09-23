@@ -2,8 +2,9 @@ mod common;
 
 use common::assets_root;
 use gta_sim::{
-    character::{LOCOMOTION_CONFIG, LocomotionConfig},
+    character::{HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig},
     config::{ConfigRoot, load_config},
+    flow::{RESPAWN_CONFIG, RespawnConfig},
     world::{CITY_CONFIG, CityParams},
 };
 use std::{
@@ -102,4 +103,56 @@ fn unknown_field_names_file_and_field() {
         error.contains("locomotion.ron") && error.contains("bogus_field"),
         "{error}"
     );
+}
+
+#[test]
+fn shipped_health_config_loads() {
+    load_config::<HealthConfig>(&assets_root(), HEALTH_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn shipped_respawn_config_loads() {
+    load_config::<RespawnConfig>(&assets_root(), RESPAWN_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+/// Validation error of the shipped health.ron with `from` replaced by `to`.
+fn health_error(tag: &str, from: &str, to: &str) -> String {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_{tag}_{}_{}",
+        std::process::id(),
+        unique
+    )));
+    let file = root.path(HEALTH_CONFIG);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = fs::read_to_string(assets_root().path(HEALTH_CONFIG)).unwrap();
+    assert!(
+        original.contains(from),
+        "GATE BROKEN: shipped health.ron has no {from:?}"
+    );
+    fs::write(&file, original.replacen(from, to, 1)).unwrap();
+    let loaded = load_config::<HealthConfig>(&root, HEALTH_CONFIG);
+    fs::remove_dir_all(&root.0).unwrap();
+    loaded.unwrap().validate().unwrap_err()
+}
+
+#[test]
+fn health_regen_cap_is_validated() {
+    let error = health_error("regen_cap", "regen_cap: 0.5,", "regen_cap: 1.5,");
+    assert!(error.contains("regen_cap"), "{error}");
+}
+
+#[test]
+fn pickup_spacing_must_exceed_radius() {
+    let error = health_error("spacing", "spacing: 6.0)", "spacing: 0.5)");
+    assert!(error.contains("spacing"), "{error}");
 }
