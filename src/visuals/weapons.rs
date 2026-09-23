@@ -1,9 +1,9 @@
-//! Primitive gun and ammo boxes: pickups on the range and the gun in the player's hand.
+//! Primitive gun, ammo and bat boxes: pickups on the range and the weapon in the player's hand.
 
 use super::{CharacterVisualConfig, RenderConfig};
 use bevy::prelude::*;
 use gta_sim::{
-    combat::{Loadout, Weapon, WeaponPickup},
+    combat::{BatPickup, Loadout, MeleeWeapon, Weapon, WeaponPickup},
     player::Player,
 };
 
@@ -14,6 +14,8 @@ pub(super) struct WeaponVisualAssets {
     held: Handle<Mesh>,
     pickup: Handle<Mesh>,
     ammo_box: Handle<Mesh>,
+    bat: Handle<Mesh>,
+    bat_material: Handle<StandardMaterial>,
 }
 
 fn size((x, y, z): (f32, f32, f32)) -> Vec3 {
@@ -27,6 +29,7 @@ impl FromWorld for WeaponVisualAssets {
         let held = meshes.add(Cuboid::from_size(size(w.held_size)));
         let pickup = meshes.add(Cuboid::from_size(size(w.pickup_size)));
         let ammo_box = meshes.add(Cuboid::from_length(w.ammo_size));
+        let bat = meshes.add(Cuboid::from_size(size(w.bat_size)));
         let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
         let mut material = |(r, g, b): (f32, f32, f32)| materials.add(Color::srgb(r, g, b));
         Self {
@@ -36,6 +39,8 @@ impl FromWorld for WeaponVisualAssets {
                 material(w.shotgun_color),
             ],
             ammo: material(w.ammo_color),
+            bat_material: material(w.bat_color),
+            bat,
             held,
             pickup,
             ammo_box,
@@ -43,7 +48,7 @@ impl FromWorld for WeaponVisualAssets {
     }
 }
 
-/// The gun box in a player's hand; shows the held weapon.
+/// The weapon box in a player's hand: the held gun, or the bat when unarmed with the bat selected.
 #[derive(Component)]
 pub struct HeldGun {
     pub owner: Entity,
@@ -144,22 +149,57 @@ pub(super) fn show_held_gun(
     players: Query<&Loadout, With<Player>>,
     mut guns: Query<(
         &HeldGun,
+        &mut Mesh3d,
         &mut MeshMaterial3d<StandardMaterial>,
         &mut Visibility,
     )>,
 ) {
-    for (gun, mut material, mut visibility) in &mut guns {
+    for (gun, mut mesh, mut material, mut visibility) in &mut guns {
         let Ok(loadout) = players.get(gun.owner) else {
             continue;
         };
-        let Some(weapon) = loadout.held else {
-            visibility.set_if_neq(Visibility::Hidden);
-            continue;
+        let wanted = match (loadout.held, loadout.melee) {
+            (Some(weapon), _) => (&assets.held, &assets.guns[weapon.index()]),
+            (None, MeleeWeapon::Bat) => (&assets.bat, &assets.bat_material),
+            (None, MeleeWeapon::Fists) => {
+                visibility.set_if_neq(Visibility::Hidden);
+                continue;
+            }
         };
-        let wanted = &assets.guns[weapon.index()];
-        if material.0 != *wanted {
-            material.0 = wanted.clone();
+        if mesh.0 != *wanted.0 {
+            mesh.0 = wanted.0.clone();
+        }
+        if material.0 != *wanted.1 {
+            material.0 = wanted.1.clone();
         }
         visibility.set_if_neq(Visibility::Inherited);
+    }
+}
+
+pub(super) fn visualize_bat_pickup(
+    event: On<Add, BatPickup>,
+    config: Res<RenderConfig>,
+    assets: Res<WeaponVisualAssets>,
+    mut commands: Commands,
+) {
+    commands.entity(event.entity).insert((
+        Visibility::default(),
+        children![(
+            Mesh3d(assets.bat.clone()),
+            MeshMaterial3d(assets.bat_material.clone()),
+            Transform::from_xyz(0.0, config.pickups.lift, 0.0),
+        )],
+    ));
+}
+
+// Every frame, not `Changed<BatPickup>`: the cooldown changes every fixed tick.
+pub(super) fn show_available_bat_pickups(mut pickups: Query<(&BatPickup, &mut Visibility)>) {
+    for (pickup, mut visibility) in &mut pickups {
+        let wanted = if pickup.available() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        visibility.set_if_neq(wanted);
     }
 }

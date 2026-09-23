@@ -1,6 +1,8 @@
 use super::{CharacterSchemeConfig, Gait};
 use bevy::prelude::Resource;
-use bevy_tnua::builtins::{TnuaBuiltinJumpConfig, TnuaBuiltinWalkConfig};
+use bevy_tnua::builtins::{
+    TnuaBuiltinJumpConfig, TnuaBuiltinKnockbackConfig, TnuaBuiltinWalkConfig,
+};
 use serde::Deserialize;
 
 pub const LOCOMOTION_CONFIG: &str = "character/locomotion.ron";
@@ -99,7 +101,7 @@ impl LocomotionConfig {
         }
     }
 
-    pub fn tnua_config(&self) -> CharacterSchemeConfig {
+    pub fn tnua_config(&self, knockback: TnuaBuiltinKnockbackConfig) -> CharacterSchemeConfig {
         CharacterSchemeConfig {
             basis: TnuaBuiltinWalkConfig {
                 speed: 1.0,
@@ -118,6 +120,7 @@ impl LocomotionConfig {
                 takeoff_extra_gravity: self.jump_takeoff_extra_gravity,
                 ..Default::default()
             },
+            knockback,
         }
     }
 }

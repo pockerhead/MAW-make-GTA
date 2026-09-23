@@ -2,7 +2,7 @@ mod config;
 pub use config::{CAMERA_CONFIG, CameraConfig};
 
 use crate::input::CursorCaptured;
-use crate::juice::CameraRecoil;
+use crate::juice::{CameraRecoil, CameraShake};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -85,12 +85,13 @@ pub fn apply_mouse_look(
     );
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn follow_player(
     time: Res<Time>,
     real: Res<Time<Real>>,
     config: Res<CameraConfig>,
     recoil: Res<CameraRecoil>,
+    shake: Res<CameraShake>,
     spatial: SpatialQuery,
     player: Single<(Entity, &Transform, &CharacterBody, &mut AimIntent), With<Player>>,
     mut camera: Single<(&mut OrbitCamera, &mut Transform, &mut Projection), Without<Player>>,
@@ -148,10 +149,10 @@ pub fn follow_player(
         );
     }
     camera_transform.translation = shoulder + back * orbit.distance;
-    // The aim ray is the camera ray without recoil: the kick is visual only (GDD §4.1).
+    // The aim ray is the camera ray without recoil or shake: both are visual only (GDD §4.1).
     aim.origin = camera_transform.translation;
     aim.direction = rotation * Vec3::NEG_Z;
-    camera_transform.rotation = rotation * Quat::from_rotation_x(recoil.pitch);
+    camera_transform.rotation = rotation * Quat::from_rotation_x(recoil.pitch) * shake.rotation;
 }
 
 /// After the respawn teleport the pivot jumps to the new head instead of flying across the city.

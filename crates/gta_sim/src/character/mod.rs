@@ -11,10 +11,11 @@ pub use health::{
 pub use intent::{ActionIntent, AimIntent, Gait, MoveIntent, WeaponRequest, move_direction};
 pub use locomotion::{LOCOMOTION_CONFIG, LocomotionConfig};
 
+use crate::combat::{HitReaction, Melee, MeleeConfig};
 use crate::layers::GameLayer;
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use bevy_tnua::builtins::{TnuaBuiltinJump, TnuaBuiltinWalk};
+use bevy_tnua::builtins::{TnuaBuiltinJump, TnuaBuiltinKnockback, TnuaBuiltinWalk};
 use bevy_tnua::controller::TnuaActionFlowStatus;
 use bevy_tnua::prelude::*;
 use bevy_tnua_avian3d::prelude::*;
@@ -23,11 +24,20 @@ use bevy_tnua_avian3d::prelude::*;
 #[scheme(basis = TnuaBuiltinWalk)]
 pub enum CharacterScheme {
     Jump(TnuaBuiltinJump),
+    Knockback(TnuaBuiltinKnockback),
 }
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
-#[require(MoveIntent, AimIntent, ActionIntent, JumpBuffer, AnimState)]
+#[require(
+    MoveIntent,
+    AimIntent,
+    ActionIntent,
+    JumpBuffer,
+    AnimState,
+    HitReaction,
+    Melee
+)]
 pub struct Character;
 
 /// Head sphere sensor on the `Hitbox` layer; a hitscan ray that hits it deals headshot damage.
@@ -53,7 +63,8 @@ pub struct CharacterControlConfig(pub Handle<CharacterSchemeConfig>);
 
 impl FromWorld for CharacterControlConfig {
     fn from_world(world: &mut World) -> Self {
-        let config = world.resource::<LocomotionConfig>().tnua_config();
+        let knockback = world.resource::<MeleeConfig>().knockback_tuning.tnua();
+        let config = world.resource::<LocomotionConfig>().tnua_config(knockback);
         Self(
             world
                 .resource_mut::<Assets<CharacterSchemeConfig>>()
@@ -142,6 +153,7 @@ pub fn character_components(
 #[allow(clippy::type_complexity)]
 fn drive_characters(
     cfg: Res<LocomotionConfig>,
+    melee_cfg: Res<MeleeConfig>,
     time: Res<Time<Fixed>>,
     mut query: Query<
         (
@@ -150,12 +162,13 @@ fn drive_characters(
             &mut JumpBuffer,
             &mut TnuaController<CharacterScheme>,
             Has<Dead>,
+            (&HitReaction, &Melee),
         ),
         With<Character>,
     >,
 ) {
-    for (mut intent, aim, mut buffer, mut controller, dead) in &mut query {
-        if dead {
+    for (mut intent, aim, mut buffer, mut controller, dead, (reaction, melee)) in &mut query {
+        if dead || reaction.is_active() {
             // The walk basis persists in Tnua: without an explicit zero the body keeps walking.
             intent.jump_requested = false;
             buffer.remaining = 0.0;
@@ -186,11 +199,20 @@ fn drive_characters(
         } else {
             (intent.gait, direction)
         };
+        // A swing faces the blow and keeps `swing_move_scale` of the gait; it cannot jump.
+        let (speed, forward) = match melee.swing {
+            Some(swing) => (
+                cfg.speed(gait) * melee_cfg.swing_move_scale,
+                swing.direction,
+            ),
+            None => (cfg.speed(gait), forward),
+        };
         controller.basis = TnuaBuiltinWalk {
-            desired_motion: direction * cfg.speed(gait),
+            desired_motion: direction * speed,
             desired_forward: Dir3::new(forward).ok(),
         };
-        if intent.jump_held || new_request || buffer.remaining > 0.0 {
+        let swinging = melee.swing.is_some();
+        if !swinging && (intent.jump_held || new_request || buffer.remaining > 0.0) {
             controller.action(CharacterScheme::Jump(Default::default()));
         }
         buffer.remaining = (buffer.remaining - time.delta_secs()).max(0.0);

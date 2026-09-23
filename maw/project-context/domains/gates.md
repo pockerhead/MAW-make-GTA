@@ -58,6 +58,10 @@
   space consecutive screenshots >= 0.15 s. A visual shorter than capture latency (a 60 ms tracer) is gated
   by its mechanism (entity count around the capture), its look by the owner run.
 
+- 2026-09-23 (TASK-008) — bevy_animation 0.19.1 `AnimationPlayer::all_paused()` is true on an EMPTY player:
+  a pause gate over it is a tautology. Assert `animation(node).is_some_and(|a| a.is_paused())` on a node the
+  test started and asserted active.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

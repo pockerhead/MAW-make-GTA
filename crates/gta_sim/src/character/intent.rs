@@ -46,6 +46,7 @@ pub struct ActionIntent {
 
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WeaponRequest {
+    /// Melee slot; pressed again while unarmed, toggles fists/bat when a bat is owned.
     Unarmed,
     Gun(Weapon),
 }

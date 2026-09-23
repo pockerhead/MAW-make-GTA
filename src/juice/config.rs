@@ -13,6 +13,9 @@ pub struct JuiceConfig {
     pub recoil_deg: PerWeapon,
     /// Seconds for the camera kick to halve.
     pub recoil_half_life: f32,
+    /// Real seconds the attacker's and target's animations freeze on a melee hit.
+    pub hit_stop_seconds: f32,
+    pub shake: ShakeConfig,
     pub flash: FlashConfig,
     pub tracer: TracerConfig,
     pub damage_numbers: DamageNumbersConfig,
@@ -34,6 +37,21 @@ impl PerWeapon {
             Weapon::Shotgun => self.shotgun,
         }
     }
+}
+
+/// Trauma camera shake: rotation `max · trauma² · noise`, trauma decays on real time.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ShakeConfig {
+    /// Trauma added by a melee hit the player lands or takes (0..1].
+    pub melee_trauma: f32,
+    /// Trauma lost per real second.
+    pub decay_per_s: f32,
+    pub max_yaw_deg: f32,
+    pub max_pitch_deg: f32,
+    pub max_roll_deg: f32,
+    /// Noise lattice steps per second.
+    pub noise_hz: f32,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug)]
@@ -110,6 +128,8 @@ impl JuiceConfig {
         non_negative("recoil_deg.smg", r.smg)?;
         non_negative("recoil_deg.shotgun", r.shotgun)?;
         positive("recoil_half_life", self.recoil_half_life)?;
+        positive("hit_stop_seconds", self.hit_stop_seconds)?;
+        self.shake.validate()?;
         let f = &self.flash;
         positive("flash.seconds", f.seconds)?;
         positive("flash.size", f.size)?;
@@ -121,6 +141,23 @@ impl JuiceConfig {
         positive("tracer.width", t.width)?;
         unit_rgb("tracer.color", t.color)?;
         self.damage_numbers.validate()
+    }
+}
+
+impl ShakeConfig {
+    fn validate(&self) -> Result<(), String> {
+        positive("shake.melee_trauma", self.melee_trauma)?;
+        if self.melee_trauma > 1.0 {
+            return Err(format!(
+                "shake.melee_trauma must be <= 1, got {}",
+                self.melee_trauma
+            ));
+        }
+        positive("shake.decay_per_s", self.decay_per_s)?;
+        non_negative("shake.max_yaw_deg", self.max_yaw_deg)?;
+        non_negative("shake.max_pitch_deg", self.max_pitch_deg)?;
+        non_negative("shake.max_roll_deg", self.max_roll_deg)?;
+        positive("shake.noise_hz", self.noise_hz)
     }
 }
 
@@ -144,5 +181,31 @@ impl DamageNumbersConfig {
         }
         unit_rgb("damage_numbers.color", self.color)?;
         unit_rgb("damage_numbers.crit_color", self.crit_color)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gta_sim::config::{ConfigRoot, load_config};
+    use std::path::Path;
+
+    fn shipped() -> JuiceConfig {
+        let root = ConfigRoot(Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"));
+        load_config::<JuiceConfig>(&root, JUICE_CONFIG)
+            .unwrap_or_else(|e| panic!("GATE BROKEN: {e}"))
+    }
+
+    #[test]
+    fn shipped_juice_validates() {
+        shipped().validate().unwrap();
+    }
+
+    #[test]
+    fn hit_stop_must_be_positive() {
+        let mut cfg = shipped();
+        cfg.hit_stop_seconds = 0.0;
+        let error = cfg.validate().unwrap_err();
+        assert!(error.contains("hit_stop_seconds"), "{error}");
     }
 }

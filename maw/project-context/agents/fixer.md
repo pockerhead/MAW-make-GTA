@@ -24,4 +24,6 @@ Write only your own stage artifact. `QA_REPORT.md`, `IMPL_REVIEW.md` and plan fi
 
 Codex sandbox + windowed client (environment fact, TASK-002 and TASK-018): right after building the windowed client (`--features dev` / `dev,debug`) inside the codex sandbox, Windows stopped starting processes (`0xC0000142`) and rejected file writes, twice — the stage report was lost both times. Under the codex sandbox do NOT build or run the windowed client; build/test `-p gta_sim` and clippy only, and leave the runtime BRP scenario to QA. Write your report BEFORE any heavy build.
 
+Scratch probes (disk): build any probe crate/workspace copy with `CARGO_TARGET_DIR=D:/test-gta-like/target` — never a second target dir inside `scratch/` (five of them reached 4.4 GB by TASK-008).
+
 Sub-agent discipline: the harness launches every `Agent` call asynchronously and the report arrives later as a hand-back message. Count your launches and do not end your turn until every one has reported; state `children: N launched / N reported` before your final hand-back. A `Bash` command whose result your deliverable needs runs in the FOREGROUND — never `run_in_background=true` for it, and never end your turn waiting on a background run.

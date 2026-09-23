@@ -34,6 +34,22 @@ pub struct CharacterVisualConfig {
     pub(super) one_hand: ArmClipNames,
     /// Arm clips while holding a two-handed gun (SMG, shotgun).
     pub(super) two_hands: ArmClipNames,
+    /// Full-body clip per fist combo step, in step order (exactly 3).
+    pub(super) fists: Vec<String>,
+    /// Full-body clip of a bat swing.
+    pub(super) bat: String,
+    /// Full-body clip of a knockdown.
+    pub(super) knockdown: String,
+    /// Rest-pose layer under every other clip.
+    pub(super) rest: RestClip,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RestClip {
+    pub(super) clip: String,
+    /// Graph node weight; the other clips play at 1.
+    pub(super) weight: f32,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -62,6 +78,12 @@ pub struct CharacterClips {
     pub hold: [usize; 2],
     /// Arm shoot clip per `ArmPose`.
     pub shoot: [usize; 2],
+    /// Full-body clip per fist combo step.
+    pub melee: [usize; 3],
+    pub bat: usize,
+    pub knockdown: usize,
+    /// Rest-pose clip that keys every joint.
+    pub rest: usize,
 }
 
 impl CharacterVisualConfig {
@@ -76,6 +98,7 @@ impl CharacterVisualConfig {
             ("walk.native_speed", self.walk.native_speed),
             ("run.native_speed", self.run.native_speed),
             ("sprint.native_speed", self.sprint.native_speed),
+            ("rest.weight", self.rest.weight),
         ] {
             if !(value.is_finite() && value > 0.0) {
                 return Err(format!("{field} {value} must be finite and > 0"));
@@ -153,6 +176,21 @@ impl CharacterVisualConfig {
         let locomotion = self.clip_names().map(&mut index);
         let hold = [index(&self.one_hand.hold), index(&self.two_hands.hold)];
         let shoot = [index(&self.one_hand.shoot), index(&self.two_hands.shoot)];
+        let fists = self
+            .fists
+            .iter()
+            .map(|name| index(name))
+            .collect::<Vec<_>>();
+        let bat = index(&self.bat);
+        let knockdown = index(&self.knockdown);
+        let rest = index(&self.rest.clip);
+        let melee = <[usize; 3]>::try_from(fists).unwrap_or_else(|fists| {
+            errors.push(format!(
+                "fists must name exactly 3 clips, got {}",
+                fists.len()
+            ));
+            [0; 3]
+        });
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -160,6 +198,10 @@ impl CharacterVisualConfig {
             locomotion,
             hold,
             shoot,
+            melee,
+            bat,
+            knockdown,
+            rest,
         })
     }
 }

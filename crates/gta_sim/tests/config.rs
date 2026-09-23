@@ -3,7 +3,7 @@ mod common;
 use common::assets_root;
 use gta_sim::{
     character::{HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig},
-    combat::{AIM_CONFIG, AimConfig, WEAPONS_CONFIG, WeaponsConfig},
+    combat::{AIM_CONFIG, AimConfig, MELEE_CONFIG, MeleeConfig, WEAPONS_CONFIG, WeaponsConfig},
     config::{ConfigRoot, load_config},
     flow::{RESPAWN_CONFIG, RespawnConfig},
     world::{CITY_CONFIG, CityParams},
@@ -239,4 +239,78 @@ fn reload_must_be_positive() {
         WeaponsConfig::validate,
     );
     assert!(error.contains("pistol.reload"), "{error}");
+}
+
+#[test]
+fn shipped_melee_config_loads() {
+    load_config::<MeleeConfig>(&assets_root(), MELEE_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn melee_window_must_end_before_the_swing() {
+    // The finisher's window closes strictly after its 0.35 s swing.
+    let error = sabotaged::<MeleeConfig>(
+        MELEE_CONFIG,
+        "melee_window",
+        "active_to: 0.22, knockback: 5.0",
+        "active_to: 0.40, knockback: 5.0",
+        MeleeConfig::validate,
+    );
+    assert!(error.contains("fists.hits[2].active_to"), "{error}");
+}
+
+#[test]
+fn melee_weapon_needs_a_hit() {
+    let mut cfg = load_config::<MeleeConfig>(&assets_root(), MELEE_CONFIG).unwrap();
+    cfg.bat.hits.clear();
+    let error = cfg.validate().unwrap_err();
+    assert!(error.contains("bat.hits"), "{error}");
+}
+
+#[test]
+fn melee_cast_radius_must_be_positive() {
+    let error = sabotaged::<MeleeConfig>(
+        MELEE_CONFIG,
+        "melee_radius",
+        "cast_radius: 0.35",
+        "cast_radius: -0.35",
+        MeleeConfig::validate,
+    );
+    assert!(error.contains("cast_radius"), "{error}");
+}
+
+#[test]
+fn unknown_melee_field_names_file_and_field() {
+    let root = assets_root();
+    let original = fs::read_to_string(root.path(MELEE_CONFIG)).unwrap();
+    assert!(
+        original.contains("stagger: 0.35"),
+        "GATE BROKEN: shipped melee.ron has no stagger: 0.35"
+    );
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_melee_unknown_{}_{unique}",
+        std::process::id()
+    )));
+    let file = tmp.path(MELEE_CONFIG);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(
+        &file,
+        original.replacen("stagger: 0.35", "stagger: 0.35, bogus_field: 1.0", 1),
+    )
+    .unwrap();
+    let error = load_config::<MeleeConfig>(&tmp, MELEE_CONFIG)
+        .unwrap_err()
+        .to_string();
+    fs::remove_dir_all(&tmp.0).unwrap();
+    assert!(
+        error.contains("melee.ron") && error.contains("bogus_field"),
+        "{error}"
+    );
 }

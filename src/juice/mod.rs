@@ -2,9 +2,13 @@ mod config;
 mod damage_numbers;
 #[cfg(test)]
 mod damage_numbers_gate;
+mod hit_stop;
+mod shake;
 
 pub use config::{JUICE_CONFIG, JuiceConfig};
 pub use damage_numbers::DamageNumbersPlugin;
+pub use hit_stop::{HitStop, HitStopPlugin, HitStopSystems};
+pub use shake::CameraShake;
 
 use bevy::prelude::*;
 use gta_sim::{combat::ShotFired, player::Player};
@@ -15,14 +19,21 @@ pub struct CameraRecoil {
     pub pitch: f32,
 }
 
-/// Recoil and floating damage numbers.
+/// Recoil, floating damage numbers, melee hit-stop and camera shake.
 pub struct JuicePlugin;
 
 impl Plugin for JuicePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraRecoil>()
-            .add_plugins(DamageNumbersPlugin)
-            .add_systems(Update, kick_camera);
+            .init_resource::<CameraShake>()
+            .add_plugins((DamageNumbersPlugin, HitStopPlugin))
+            .add_systems(
+                Update,
+                (
+                    kick_camera,
+                    (shake::add_melee_trauma, shake::shake_camera).chain(),
+                ),
+            );
     }
 }
 

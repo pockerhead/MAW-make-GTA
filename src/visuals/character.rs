@@ -1,6 +1,7 @@
 //! Kenney glTF humanoid on every character body, animated from `AnimState`.
 
 use super::character_config::{CharacterClips, CharacterVisualConfig};
+use crate::juice::{HitStop, HitStopSystems};
 use avian3d::prelude::LinearVelocity;
 use bevy::{
     animation::AnimationTargetId, gltf::GltfMeshName, prelude::*,
@@ -8,7 +9,7 @@ use bevy::{
 };
 use gta_sim::{
     character::{AnimState, CharacterBody},
-    combat::{Loadout, ShotFired, Weapon},
+    combat::{HitReaction, Loadout, Melee, MeleeWeapon, ShotFired, Swing, Weapon},
 };
 use std::time::Duration;
 
@@ -40,7 +41,15 @@ impl Plugin for CharacterVisualsPlugin {
         app.register_type::<CharacterModel>()
             .init_resource::<CharacterAnimations>()
             .add_observer(spawn_character_model)
-            .add_systems(Update, drive_character_animation);
+            .add_systems(
+                Update,
+                (
+                    drive_character_animation,
+                    apply_hit_stop
+                        .after(drive_character_animation)
+                        .after(HitStopSystems),
+                ),
+            );
     }
 }
 
@@ -55,11 +64,21 @@ pub(super) struct CharacterAnimations {
     /// Arm-only clips per `ArmPose`.
     pub(super) hold: [AnimationNodeIndex; 2],
     pub(super) shoot: [AnimationNodeIndex; 2],
+    /// Full-body melee clips: fist combo steps, bat swing, knockdown.
+    pub(super) fists: [AnimationNodeIndex; 3],
+    pub(super) bat: AnimationNodeIndex,
+    pub(super) knockdown: AnimationNodeIndex,
+    /// Rest pose under every other clip, at the configured weight.
+    pub(super) rest: AnimationNodeIndex,
+    /// Clip assets of the swings, for their durations.
+    pub(super) fist_clips: [Handle<AnimationClip>; 3],
+    pub(super) bat_clip: Handle<AnimationClip>,
 }
 
 impl FromWorld for CharacterAnimations {
     fn from_world(world: &mut World) -> Self {
         let model = world.resource::<CharacterVisualConfig>().model.clone();
+        let rest_weight = world.resource::<CharacterVisualConfig>().rest.weight;
         let clips = *world.resource::<CharacterClips>();
         let asset_server = world.resource::<AssetServer>().clone();
         let clip = |index: usize| {
@@ -77,6 +96,14 @@ impl FromWorld for CharacterAnimations {
         let shoot = clips
             .shoot
             .map(|i| graph.add_clip_with_mask(clip(i), 1 << BODY_GROUP, 1.0, root));
+        let fist_clips = clips.melee.map(clip);
+        let bat_clip = clip(clips.bat);
+        let fists = fist_clips
+            .clone()
+            .map(|handle| graph.add_clip(handle, 1.0, root));
+        let bat = graph.add_clip(bat_clip.clone(), 1.0, root);
+        let knockdown = graph.add_clip(clip(clips.knockdown), 1.0, root);
+        let rest = graph.add_clip(clip(clips.rest), rest_weight, root);
         let graph = world.resource_mut::<Assets<AnimationGraph>>().add(graph);
         Self {
             graph,
@@ -84,6 +111,12 @@ impl FromWorld for CharacterAnimations {
             legs,
             hold,
             shoot,
+            fists,
+            bat,
+            knockdown,
+            rest,
+            fist_clips,
+            bat_clip,
         }
     }
 }
@@ -102,6 +135,15 @@ pub(super) struct CharacterAnimator {
     pub(super) armed: bool,
     /// The arm-layer node playing, if any.
     pub(super) arms: Option<AnimationNodeIndex>,
+    /// The full-body melee clip shown instead of locomotion, if any.
+    pub(super) action: Option<ShownAction>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ShownAction {
+    /// A swing, by its attack id.
+    Swing(u32),
+    Knockdown,
 }
 
 /// Model feet (y = 0) on the ground: the body centre floats `float_height` above it.
@@ -230,6 +272,7 @@ fn wire_player(
             shown: AnimState::Idle,
             armed: false,
             arms: None,
+            action: None,
         },
     ));
 }
@@ -261,8 +304,15 @@ fn tint_mesh(
         .insert(MeshMaterial3d(materials.add(tinted)));
 }
 
+#[allow(clippy::type_complexity)]
 fn drive_character_animation(
-    characters: Query<(&AnimState, &LinearVelocity, Option<&Loadout>)>,
+    characters: Query<(
+        &AnimState,
+        &LinearVelocity,
+        Option<&Loadout>,
+        &HitReaction,
+        &Melee,
+    )>,
     mut shots: MessageReader<ShotFired>,
     mut animators: Query<(
         &mut CharacterAnimator,
@@ -270,38 +320,106 @@ fn drive_character_animation(
         &mut AnimationTransitions,
     )>,
     animations: Res<CharacterAnimations>,
+    clips: Res<Assets<AnimationClip>>,
     config: Res<CharacterVisualConfig>,
 ) {
     let shooters = shots.read().map(|shot| shot.shooter).collect::<Vec<_>>();
+    let blend = Duration::from_secs_f32(config.blend_seconds);
     for (mut animator, mut player, mut transitions) in &mut animators {
-        let Ok((state, velocity, loadout)) = characters.get(animator.character) else {
+        let Ok((state, velocity, loadout, reaction, melee)) = characters.get(animator.character)
+        else {
             continue;
         };
-        let pose = arm_pose(loadout.and_then(|loadout| loadout.held));
+        if player.animation(animations.rest).is_none() {
+            player.start(animations.rest).repeat();
+        }
+        let knocked_down = reaction.is_knocked_down();
+        let action = if knocked_down {
+            Some(ShownAction::Knockdown)
+        } else {
+            melee.swing.map(|swing| ShownAction::Swing(swing.attack))
+        };
+        let action_ended = action.is_none() && animator.action.is_some();
+        if action != animator.action {
+            match (action, melee.swing) {
+                (Some(ShownAction::Knockdown), _) => {
+                    transitions.play(&mut player, animations.knockdown, blend);
+                }
+                (Some(ShownAction::Swing(_)), Some(swing)) => {
+                    transitions.play(&mut player, swing_node(&animations, swing), blend);
+                }
+                _ => {}
+            }
+            animator.action = action;
+        }
+        let pose = if knocked_down {
+            None
+        } else {
+            arm_pose(loadout.and_then(|loadout| loadout.held))
+        };
+        let fired = shooters.contains(&animator.character);
+        drive_arms(&mut animator, &mut player, &animations, pose, fired);
+        if let Some(swing) = melee.swing.filter(|_| !knocked_down) {
+            // Stretches the clip over the sim's swing; 1.0 until the clip asset is loaded.
+            let speed = clips
+                .get(swing_clip(&animations, swing))
+                .map_or(1.0, |clip| clip.duration() / swing.duration);
+            if let Some(active) = player.animation_mut(swing_node(&animations, swing)) {
+                active.set_speed(speed);
+            }
+        }
+        if animator.action.is_some() {
+            continue;
+        }
         let locomotion = if pose.is_some() {
             &animations.legs
         } else {
             &animations.nodes
         };
         let node = locomotion[*state as usize];
-        if (*state, pose.is_some()) != (animator.shown, animator.armed) {
-            transitions
-                .play(
-                    &mut player,
-                    node,
-                    Duration::from_secs_f32(config.blend_seconds),
-                )
-                .repeat();
+        if action_ended || (*state, pose.is_some()) != (animator.shown, animator.armed) {
+            transitions.play(&mut player, node, blend).repeat();
             animator.shown = *state;
             animator.armed = pose.is_some();
         }
-        let fired = shooters.contains(&animator.character);
-        drive_arms(&mut animator, &mut player, &animations, pose, fired);
         let Some(active) = player.animation_mut(node) else {
             continue;
         };
         let horizontal = Vec2::new(velocity.x, velocity.z).length();
         active.set_speed(playback_rate(*state, horizontal, &config));
+    }
+}
+
+fn swing_node(animations: &CharacterAnimations, swing: Swing) -> AnimationNodeIndex {
+    match swing.weapon {
+        MeleeWeapon::Fists => animations.fists[swing.step as usize % 3],
+        MeleeWeapon::Bat => animations.bat,
+    }
+}
+
+fn swing_clip(animations: &CharacterAnimations, swing: Swing) -> &Handle<AnimationClip> {
+    match swing.weapon {
+        MeleeWeapon::Fists => &animations.fist_clips[swing.step as usize % 3],
+        MeleeWeapon::Bat => &animations.bat_clip,
+    }
+}
+
+/// Freezes every clip of a character in hit-stop; `Option`: the juice plugin may be absent.
+fn apply_hit_stop(
+    stops: Query<Option<&HitStop>>,
+    mut animators: Query<(&CharacterAnimator, &mut AnimationPlayer)>,
+) {
+    for (animator, mut player) in &mut animators {
+        let frozen = stops
+            .get(animator.character)
+            .ok()
+            .flatten()
+            .is_some_and(|stop| stop.left > 0.0);
+        if frozen {
+            player.pause_all();
+        } else {
+            player.resume_all();
+        }
     }
 }
 

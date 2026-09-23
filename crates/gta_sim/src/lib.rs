@@ -15,7 +15,9 @@ use bevy_tnua_avian3d::prelude::*;
 use character::{
     CharacterPlugin, HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig,
 };
-use combat::{AIM_CONFIG, AimConfig, CombatPlugin, WEAPONS_CONFIG, WeaponsConfig};
+use combat::{
+    AIM_CONFIG, AimConfig, CombatPlugin, MELEE_CONFIG, MeleeConfig, WEAPONS_CONFIG, WeaponsConfig,
+};
 use config::{ConfigError, ConfigRoot, load_config};
 use flow::{FlowPlugin, RESPAWN_CONFIG, RespawnConfig};
 use player::PlayerPlugin;
@@ -53,6 +55,11 @@ pub fn compose_sim(
         path: root.path(AIM_CONFIG),
         message,
     })?;
+    let melee = load_config::<MeleeConfig>(&root, MELEE_CONFIG)?;
+    melee.validate().map_err(|message| ConfigError {
+        path: root.path(MELEE_CONFIG),
+        message,
+    })?;
     // A city run rolls from its own seed; the fixed test level always rolls the same sequence.
     let combat_seed = match source {
         WorldSource::City { seed } => seed,
@@ -72,6 +79,7 @@ pub fn compose_sim(
         .insert_resource(respawn)
         .insert_resource(weapons)
         .insert_resource(aim)
+        .insert_resource(melee)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),

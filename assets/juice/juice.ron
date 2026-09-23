@@ -1,6 +1,15 @@
 (
     recoil_deg: (pistol: 1.0, smg: 0.5, shotgun: 2.0),
     recoil_half_life: 0.08,
+    hit_stop_seconds: 0.05,     // s, real time: attacker and target animations freeze on a melee hit
+    shake: (
+        melee_trauma: 0.25,     // trauma added when the player lands or takes a melee hit (0..1)
+        decay_per_s: 1.2,       // trauma lost per real second
+        max_yaw_deg: 3.0,       // camera rotation at trauma 1 (scaled by trauma^2)
+        max_pitch_deg: 3.0,
+        max_roll_deg: 5.0,
+        noise_hz: 15.0,         // noise lattice steps per second
+    ),
     flash: (seconds: 0.05, size: 0.25, color: (1.0, 0.8, 0.4), light_intensity: 100000.0, light_range: 6.0),
     tracer: (seconds: 0.1, width: 0.05, color: (1.0, 0.9, 0.6)),
     damage_numbers: (

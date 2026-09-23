@@ -1,3 +1,4 @@
+use super::melee::MeleeWeapon;
 use crate::character::{ActionIntent, Character, Dead, WeaponRequest};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -230,6 +231,10 @@ pub struct Loadout {
     pub reload_left: f32,
     /// Current cone half-angle of the held gun; derived, written only by the weapon systems.
     pub spread_deg: f32,
+    /// What empty hands swing.
+    pub melee: MeleeWeapon,
+    /// A bat was picked up (survives death like the guns, GDD §3.4).
+    pub has_bat: bool,
 }
 
 impl Loadout {
@@ -347,9 +352,15 @@ fn recover_gun(slot: &mut GunSlot, stats: &WeaponStats, dt: f32) {
 fn select_weapon(loadout: &mut Loadout, action: &mut ActionIntent) {
     let owned = loadout.owned();
     let mut held = loadout.held;
+    let was_unarmed = held.is_none();
     if let Some(request) = action.select.take() {
         held = match request {
-            WeaponRequest::Unarmed => None,
+            WeaponRequest::Unarmed => {
+                if was_unarmed && loadout.has_bat {
+                    loadout.melee = loadout.melee.other();
+                }
+                None
+            }
             WeaponRequest::Gun(gun) if owned[gun.index()] => Some(gun),
             WeaponRequest::Gun(_) => held,
         };

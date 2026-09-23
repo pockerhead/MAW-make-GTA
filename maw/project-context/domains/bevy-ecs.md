@@ -77,6 +77,16 @@
   every character); per-character layers need duplicate nodes chosen per `AnimationPlayer`, mask groups from
   the runtime `AnimationTargetId`s. Anything parented to a glTF joint inherits the model scale (Kenney x2.68).
 
+- 2026-09-23 (TASK-008) — bevy-tnua 0.32 `action_interrupt` on a RUNNING action only replaces its input;
+  `TnuaBuiltinKnockback` memory stays `Pushback` and a second shove is silently dropped. Reset
+  `state.memory = TnuaBuiltinKnockbackMemory::Shove` first (gate: target velocity rises on the re-hit tick).
+- 2026-09-23 (TASK-008) — a nested tuple inside `.chain()` is NOT chained: `((a, (b, c, d).before(X), e).chain())`
+  leaves b, c, d unordered among themselves (a same-tick message writer/reader ran in random order, hits
+  landed one tick late, flaky). Write `(b, c, d).chain()`; exact-tick gates catch it.
+- 2026-09-23 (TASK-008) — a clip writes only the joints it keys; an unkeyed joint keeps its last value
+  (Kenney `die` keys root rotation, `idle` does not → a knocked-down body stayed lying). A low-weight rest-pose
+  layer under all clips fixes it (`visual.ron` `rest`).
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

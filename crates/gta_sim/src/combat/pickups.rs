@@ -1,3 +1,4 @@
+use super::melee::MeleeWeapon;
 use super::weapons::{Loadout, Weapon, WeaponsConfig, acquire};
 use crate::character::{CharacterBody, Dead, Health, HealthConfig};
 use crate::player::Player;
@@ -124,6 +125,47 @@ pub(super) fn collect_weapon_pickups(
             if gun && loadout.held.is_none() {
                 loadout.held = Some(weapon);
             }
+        }
+    }
+}
+
+/// The bat lying on the shooting range; shares the gun pickups' radius and respawn.
+#[derive(Component, Reflect, Debug, Default)]
+#[reflect(Component)]
+pub struct BatPickup {
+    /// Seconds until the pickup is available again.
+    pub cooldown: f32,
+}
+
+impl BatPickup {
+    pub fn available(&self) -> bool {
+        self.cooldown <= 0.0
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub(super) fn collect_bat_pickups(
+    cfg: Res<WeaponsConfig>,
+    time: Res<Time<Fixed>>,
+    mut pickups: Query<(&mut BatPickup, &Transform)>,
+    mut players: Query<(&Position, &CharacterBody, &mut Loadout), (With<Player>, Without<Dead>)>,
+) {
+    let dt = time.delta_secs();
+    for (mut pickup, transform) in &mut pickups {
+        pickup.cooldown = (pickup.cooldown - dt).max(0.0);
+        if !pickup.available() {
+            continue;
+        }
+        for (position, body, mut loadout) in &mut players {
+            let feet = position.0 - Vec3::Y * body.float_height;
+            if loadout.has_bat || feet.distance(transform.translation) > cfg.pickups.radius {
+                continue;
+            }
+            loadout.has_bat = true;
+            if loadout.held.is_none() {
+                loadout.melee = MeleeWeapon::Bat;
+            }
+            pickup.cooldown = cfg.pickups.respawn;
         }
     }
 }

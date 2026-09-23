@@ -175,6 +175,9 @@ pub(super) struct WeaponVisuals {
     pub(super) smg_color: Rgb,
     pub(super) shotgun_color: Rgb,
     pub(super) ammo_color: Rgb,
+    /// Bat box in the hand and on the range (x, y, z), m; z along the bat.
+    pub(super) bat_size: (f32, f32, f32),
+    pub(super) bat_color: Rgb,
 }
 
 impl PropsConfig {
@@ -384,6 +387,7 @@ impl RenderConfig {
         for (name, (x, y, z)) in [
             ("weapons.held_size", w.held_size),
             ("weapons.pickup_size", w.pickup_size),
+            ("weapons.bat_size", w.bat_size),
         ] {
             for value in [x, y, z] {
                 positive(name, value)?;
@@ -405,6 +409,7 @@ impl RenderConfig {
             ("weapons.smg_color", w.smg_color),
             ("weapons.shotgun_color", w.shotgun_color),
             ("weapons.ammo_color", w.ammo_color),
+            ("weapons.bat_color", w.bat_color),
         ] {
             for value in [r, g, b] {
                 unit(name, value)?;

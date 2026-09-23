@@ -52,13 +52,15 @@ impl Plugin for VisualsPlugin {
             (
                 pickups::show_available_pickups,
                 weapons::show_available_weapon_pickups,
+                weapons::show_available_bat_pickups,
                 weapons::attach_held_gun,
                 weapons::show_held_gun,
             ),
         )
         .add_observer(visualize_block)
         .add_observer(pickups::visualize_pickup)
-        .add_observer(weapons::visualize_weapon_pickup);
+        .add_observer(weapons::visualize_weapon_pickup)
+        .add_observer(weapons::visualize_bat_pickup);
     }
 }
 

@@ -1,4 +1,4 @@
-use super::pickups::WeaponPickup;
+use super::pickups::{BatPickup, WeaponPickup};
 use super::weapons::{Weapon, WeaponsConfig};
 use crate::character::{
     CharacterControlConfig, CharacterSchemeConfig, Dead, Health, HealthConfig, LocomotionConfig,
@@ -67,6 +67,11 @@ pub(super) fn spawn_range(
             Transform::from_translation(c + row(i, kinds.len(), r.pickup_spacing)),
         ));
     }
+    commands.spawn((
+        BatPickup::default(),
+        Name::new("Bat pickup"),
+        Transform::from_translation(c + Vec3::Z * r.pickup_spacing),
+    ));
 }
 
 #[allow(clippy::type_complexity)]

@@ -15,4 +15,10 @@
     hand_joint: "arm-right",
     one_hand: (hold: "holding-right", shoot: "holding-right-shoot"),
     two_hands: (hold: "holding-both", shoot: "holding-both-shoot"),
+    fists: ["attack-melee-right", "attack-melee-left", "attack-kick-right"],   // fist combo steps in order
+    bat: "attack-melee-right",
+    knockdown: "die",   // played once, holds the last pose until the character stands up
+    // Keys every joint under all other clips at a tiny weight, so a joint the next clip leaves
+    // unanimated (root after "die", legs after a kick) returns to rest instead of freezing.
+    rest: (clip: "static", weight: 0.01),
 )

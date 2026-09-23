@@ -18,4 +18,6 @@ Dependency cache (environment fact, 2026-09-23 TASK-002): the codex implementer/
 
 Network fact (TASK-004): kenney.nl TLS from this host is flaky with curl/schannel (handshake error, then success on retry); Python urllib worked. Asset tooling retries and accepts a local zip cache; download what the implementer needs into the task scratch yourself.
 
+Scratch probes (disk): build any probe crate/workspace copy with `CARGO_TARGET_DIR=D:/test-gta-like/target` — never a second target dir inside `scratch/` (five of them reached 4.4 GB by TASK-008).
+
 Sub-agent discipline: the harness launches every `Agent` call asynchronously and the report arrives later as a hand-back message. Count your launches and do not end your turn until every one has reported; state `children: N launched / N reported` before your final hand-back. A `Bash` command whose result your deliverable needs runs in the FOREGROUND — never `run_in_background=true` for it, and never end your turn waiting on a background run.

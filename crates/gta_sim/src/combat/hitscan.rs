@@ -1,3 +1,5 @@
+use super::AttackSerial;
+use super::melee::HitReaction;
 use super::weapons::{
     FireMode, Loadout, Weapon, WeaponsConfig, falloff_factor, roll_damage, spread_deg,
 };
@@ -74,7 +76,8 @@ pub struct BulletTrace {
 #[reflect(Message)]
 pub struct DamageDealt {
     pub shooter: Entity,
-    /// Trigger pull that dealt it: every pellet of one shotgun blast carries the same value.
+    /// Attack (trigger pull or melee swing) that dealt it: every pellet of one shotgun blast
+    /// carries the same value.
     pub shot: u32,
     pub target: Entity,
     pub point: Vec3,
@@ -134,22 +137,27 @@ pub(super) fn fire_weapons(
             &mut ActionIntent,
             &mut Loadout,
             &LinearVelocity,
+            &HitReaction,
         ),
         (With<Character>, Without<Dead>),
     >,
     colliders: Query<(&ColliderOf, Has<HeadHitbox>)>,
     dead: Query<(), With<Dead>>,
+    reactions: Query<&HitReaction>,
     mut targets: Query<&mut Health, Without<Dead>>,
     mut fired: MessageWriter<ShotFired>,
     mut traces: MessageWriter<BulletTrace>,
     mut dealt: MessageWriter<DamageDealt>,
-    mut pulls: Local<u32>,
+    mut serial: ResMut<AttackSerial>,
 ) {
     let filter =
         SpatialQueryFilter::from_mask([GameLayer::World, GameLayer::Character, GameLayer::Hitbox]);
-    for (shooter, position, aim, mut action, mut loadout, velocity) in &mut shooters {
+    for (shooter, position, aim, mut action, mut loadout, velocity, reaction) in &mut shooters {
         // A request during cooldown or reload is dropped, not buffered.
         let requested = std::mem::take(&mut action.fire_requested);
+        if reaction.is_active() {
+            continue;
+        }
         let Some(weapon) = loadout.held else {
             continue;
         };
@@ -179,11 +187,16 @@ pub(super) fn fire_weapons(
             (slot.bloom_deg + stats.spread.per_shot_deg).min(stats.spread.max_bloom_deg);
         let spread = loadout.spread_deg;
         loadout.spread_deg = spread_deg(stats, slot.bloom_deg, velocity.0);
-        *pulls = pulls.wrapping_add(1);
+        let shot = serial.next_id();
 
-        // Skips the shooter's own body and head, and the head sensor of a dead character.
+        // Skips the shooter's own body and head, and the head sensor of a dead or knocked-down character.
         let visible = |entity: Entity| match colliders.get(entity) {
-            Ok((of, head)) => of.body != shooter && !(head && dead.contains(of.body)),
+            Ok((of, head)) => {
+                of.body != shooter
+                    && !(head
+                        && (dead.contains(of.body)
+                            || reactions.get(of.body).is_ok_and(|r| r.is_knocked_down())))
+            }
             Err(_) => true,
         };
         let aim_point = spatial
@@ -249,7 +262,7 @@ pub(super) fn fire_weapons(
             let killed = health.take(damage as f32);
             dealt.write(DamageDealt {
                 shooter,
-                shot: *pulls,
+                shot,
                 target,
                 point,
                 damage,

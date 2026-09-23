@@ -8,14 +8,18 @@ use super::{
         CharacterVisualsPlugin, arm_pose, model_transform, playback_rate,
     },
 };
-use avian3d::prelude::LinearVelocity;
+use crate::juice::{HitStopPlugin, JUICE_CONFIG, JuiceConfig};
+use avian3d::prelude::{LinearVelocity, Position};
 use bevy::{
-    asset::AssetPlugin, prelude::*, state::app::StatesPlugin, time::TimeUpdateStrategy,
-    world_serialization::WorldAsset,
+    asset::AssetPlugin, ecs::message::MessageCursor, prelude::*, state::app::StatesPlugin,
+    time::TimeUpdateStrategy, world_serialization::WorldAsset,
 };
 use gta_sim::{
-    character::{AnimState, Gait, MoveIntent, move_direction},
-    combat::{Loadout, ShotFired, Weapon},
+    character::{
+        ActionIntent, AimIntent, AnimState, CharacterControlConfig, Gait, HealthConfig,
+        LocomotionConfig, MoveIntent, move_direction,
+    },
+    combat::{HitReaction, Loadout, MeleeHit, ShotFired, Weapon, dummy_bundle},
     compose_sim,
     config::{
         ConfigRoot, load_config,
@@ -48,6 +52,11 @@ fn shipped_clips() -> CharacterClips {
 
 /// Sim composition (test area) plus the production `CharacterVisualsPlugin`, updated until the player exists.
 fn character_visuals_app() -> App {
+    character_visuals_app_with(|_| {})
+}
+
+/// `character_visuals_app` with `extra` applied before `finish`/`cleanup`.
+fn character_visuals_app_with(extra: impl FnOnce(&mut App)) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -68,6 +77,7 @@ fn character_visuals_app() -> App {
     app.insert_resource(visual_config())
         .insert_resource(shipped_clips())
         .add_plugins(CharacterVisualsPlugin);
+    extra(&mut app);
     app.finish();
     app.cleanup();
     for _ in 0..10 {
@@ -108,6 +118,10 @@ fn character_visuals_reference_manifest_rig() {
             locomotion: [1, 2, 3, 3, 4, 5],
             hold: [13, 15],
             shoot: [16, 18],
+            melee: [19, 20, 21],
+            bat: 19,
+            knockdown: 9,
+            rest: 0,
         }
     );
     let order = [
@@ -264,6 +278,19 @@ fn graph_nodes_follow_manifest_clips() {
                 .chain(&animations.shoot)
                 .zip(clips.hold.into_iter().chain(clips.shoot))
                 .map(|(node, clip)| (*node, clip, body)),
+        )
+        .chain(
+            animations
+                .fists
+                .iter()
+                .chain([&animations.bat, &animations.knockdown, &animations.rest])
+                .zip(
+                    clips
+                        .melee
+                        .into_iter()
+                        .chain([clips.bat, clips.knockdown, clips.rest]),
+                )
+                .map(|(node, clip)| (*node, clip, 0)),
         );
     for (node, clip, mask) in expected {
         let Some(graph_node) = graph.get(node) else {
@@ -342,6 +369,7 @@ fn animator_follows_anim_state() {
                 shown: AnimState::Idle,
                 armed: false,
                 arms: None,
+                action: None,
             },
         ))
         .id();
@@ -415,6 +443,7 @@ fn armed_animator_layers_arm_clips() {
                 shown: AnimState::Fall,
                 armed: false,
                 arms: None,
+                action: None,
             },
         ))
         .id();
@@ -478,5 +507,191 @@ fn armed_animator_layers_arm_clips() {
             .iter()
             .any(|n| hold.contains(n) || shoot.contains(n)),
         "unarmed again: arm clip still playing"
+    );
+}
+
+/// Attacker's feet in the test area (open floor).
+const A: Vec3 = Vec3::new(-20.0, 0.0, 21.0);
+
+fn juice() -> JuiceConfig {
+    let cfg = load_config::<JuiceConfig>(&assets_root(), JUICE_CONFIG)
+        .unwrap_or_else(|e| panic!("GATE BROKEN: {e}"));
+    cfg.validate()
+        .unwrap_or_else(|e| panic!("GATE BROKEN: {JUICE_CONFIG}: {e}"));
+    cfg
+}
+
+/// The visuals app plus the production hit-stop plugin, as `JuicePlugin` adds it.
+fn hit_stop_app() -> App {
+    character_visuals_app_with(|app| {
+        app.insert_resource(juice()).add_plugins(HitStopPlugin);
+    })
+}
+
+fn spawn_dummy(app: &mut App, feet: Vec3) -> Entity {
+    let world = app.world();
+    let loco = world.resource::<LocomotionConfig>().clone();
+    let health = world.resource::<HealthConfig>().clone();
+    let handle = world.resource::<CharacterControlConfig>().0.clone();
+    app.world_mut()
+        .spawn(dummy_bundle(&loco, handle, &health, feet))
+        .id()
+}
+
+/// A hand-built animator of `character` with the idle node already playing.
+fn spawn_animator(app: &mut App, character: Entity) -> Entity {
+    let idle = app.world().resource::<CharacterAnimations>().nodes[AnimState::Idle as usize];
+    let mut player = AnimationPlayer::default();
+    let mut transitions = AnimationTransitions::new();
+    transitions
+        .play(&mut player, idle, std::time::Duration::ZERO)
+        .repeat();
+    app.world_mut()
+        .spawn((
+            player,
+            transitions,
+            CharacterAnimator {
+                character,
+                shown: AnimState::Idle,
+                armed: false,
+                arms: None,
+                action: None,
+            },
+        ))
+        .id()
+}
+
+/// Player at `A`, a target dummy at `A - Z`, a bystander 4 m away; one animator each.
+fn melee_scene(app: &mut App) -> [(Entity, Entity); 3] {
+    let player = player(app);
+    let at = A + Vec3::Y * app.world().resource::<LocomotionConfig>().float_height;
+    app.world_mut().get_mut::<Position>(player).unwrap().0 = at;
+    app.world_mut()
+        .get_mut::<Transform>(player)
+        .unwrap()
+        .translation = at;
+    let target = spawn_dummy(app, A + Vec3::NEG_Z);
+    let bystander = spawn_dummy(app, A + Vec3::X * 4.0);
+    for _ in 0..8 {
+        app.update();
+    }
+    let origin = app.world().get::<Position>(player).unwrap().0;
+    let mut aim = app.world_mut().get_mut::<AimIntent>(player).unwrap();
+    aim.origin = origin;
+    aim.direction = (A + Vec3::NEG_Z + Vec3::Y - origin).normalize();
+    [player, target, bystander].map(|character| (character, spawn_animator(app, character)))
+}
+
+fn click(app: &mut App, player: Entity) {
+    app.world_mut()
+        .get_mut::<ActionIntent>(player)
+        .unwrap()
+        .fire_requested = true;
+}
+
+/// (active animations, how many of them are paused).
+fn paused(app: &App, animator: Entity) -> (usize, usize) {
+    let player = app.world().get::<AnimationPlayer>(animator).unwrap();
+    let all = player.playing_animations().count();
+    let paused = player
+        .playing_animations()
+        .filter(|(_, a)| a.is_paused())
+        .count();
+    (all, paused)
+}
+
+type Frame = (bool, (usize, usize), (usize, usize), (usize, usize));
+
+/// Hit-stop freezes the animations of the attacker and the target for `hit_stop_seconds` of real
+/// time and nothing else: `Time<Virtual>` and the fixed tick run on unchanged.
+#[test]
+fn hit_stop_freezes_only_the_pair_and_not_time() {
+    let mut app = hit_stop_app();
+    let [(player, attacker), (_, target), (_, bystander)] = melee_scene(&mut app);
+    let mut hits: MessageCursor<MeleeHit> = app
+        .world()
+        .resource::<Messages<MeleeHit>>()
+        .get_cursor_current();
+    let step = app.world().resource::<Time<Fixed>>().timestep();
+    click(&mut app, player);
+    // Per update: (MeleeHit seen, attacker, target, bystander) as (active, paused).
+    let mut log: Vec<Frame> = Vec::new();
+    for _ in 0..40 {
+        let fixed = app.world().resource::<Time<Fixed>>().elapsed();
+        app.update();
+        let world = app.world();
+        let virt = world.resource::<Time<Virtual>>();
+        assert_eq!(virt.relative_speed(), 1.0, "hit-stop scaled Time<Virtual>");
+        assert!(!virt.is_paused(), "hit-stop paused Time<Virtual>");
+        assert_eq!(
+            world.resource::<Time<Fixed>>().elapsed() - fixed,
+            step,
+            "the fixed tick did not advance by exactly one step"
+        );
+        let hit = hits.read(world.resource::<Messages<MeleeHit>>()).count() > 0;
+        log.push((
+            hit,
+            paused(&app, attacker),
+            paused(&app, target),
+            paused(&app, bystander),
+        ));
+        if log.len() > 5 && log[log.len() - 6].0 {
+            break;
+        }
+    }
+    let u = log
+        .iter()
+        .position(|(hit, ..)| *hit)
+        .expect("GATE BROKEN: the punch never landed");
+    assert!(u >= 1 && log.len() >= u + 5, "GATE BROKEN: {log:?}");
+    for (k, (_, attacker, target, bystander)) in log.iter().enumerate().skip(u - 1).take(6) {
+        let frozen = (u..u + 4).contains(&k);
+        for (name, (all, paused)) in [("attacker", attacker), ("target", target)] {
+            assert!(*all > 0, "GATE BROKEN: {name} has no active animation");
+            let expected = if frozen { *all } else { 0 };
+            assert_eq!(
+                *paused,
+                expected,
+                "{name} at U{:+}: {log:?}",
+                k as i64 - u as i64
+            );
+        }
+        assert!(
+            bystander.0 > 0,
+            "GATE BROKEN: bystander has no active animation"
+        );
+        assert_eq!(bystander.1, 0, "the bystander froze: {log:?}");
+    }
+}
+
+/// Liveness: a swing and a knockdown replace locomotion with their full-body clips, and
+/// locomotion comes back when they end.
+#[test]
+fn melee_actions_drive_full_body_clips() {
+    let mut app = hit_stop_app();
+    let [(player, attacker), _, (bystander, watcher)] = melee_scene(&mut app);
+    let (nodes, fists, knockdown) = {
+        let a = app.world().resource::<CharacterAnimations>();
+        (a.nodes, a.fists, a.knockdown)
+    };
+    let main = |app: &App, animator: Entity| {
+        app.world()
+            .get::<AnimationTransitions>(animator)
+            .unwrap()
+            .get_main_animation()
+    };
+    click(&mut app, player);
+    app.update();
+    assert_eq!(main(&app, attacker), Some(fists[0]), "swing clip");
+    *app.world_mut().get_mut::<HitReaction>(bystander).unwrap() =
+        HitReaction::KnockedDown { left: 1.0 };
+    app.update();
+    assert_eq!(main(&app, watcher), Some(knockdown), "knockdown clip");
+    *app.world_mut().get_mut::<HitReaction>(bystander).unwrap() = HitReaction::Steady;
+    app.update();
+    assert_eq!(
+        main(&app, watcher),
+        Some(nodes[AnimState::Idle as usize]),
+        "locomotion after the knockdown"
     );
 }
