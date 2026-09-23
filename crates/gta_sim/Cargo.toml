@@ -16,3 +16,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["debug"] }
+sha2 = "=0.10.9"

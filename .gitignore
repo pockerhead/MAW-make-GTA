@@ -59,3 +59,7 @@ maw/tasks/**/transcripts/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Third-party packs: fetched by tools/fetch_assets.py, never committed; only the manifest is tracked
+/assets/third_party/*
+!/assets/third_party/manifest.ron

@@ -25,6 +25,11 @@
 - Say which class a gate is: liveness ("the feature ran") is not correctness ("the output is right").
   Name the gate carrying each claim separately.
 
+- **Presentation gates live in the client crate.** A gate over presentation ECS state (`Mesh3d`,
+  materials, `VisibilityRange`) runs in a headless `App` inside `cargo test -p gta_like`, built from the
+  production presentation plugin plus `init_asset` stand-ins for render assets. It can never live in
+  `gta_sim` (no `bevy_render` there by law). Counting sim-side entities proves nothing about meshes (TASK-004).
+
 ## Risk lessons
 
 - 2026-09-23 (TASK-002) — a headless test that drives `app.update()` by hand calls `app.finish();
@@ -35,6 +40,11 @@
 - 2026-09-23 (inherited from the owner's previous project, 60-entry calibration ledger) — half of all review findings were
   about the checking apparatus, not the game, and 5 of 6 concrete "fix the gate this way" prescriptions
   were wrong while their diagnoses were right. Act on a reviewer's diagnosis; recompute its prescription.
+
+- 2026-09-23 (TASK-004) — to track one file inside an ignored directory, ignore the directory's
+  CHILDREN (`/assets/third_party/*`) and negate the file (`!/assets/third_party/manifest.ron`); ignoring the
+  directory itself silently ignores the negated file too. Verify ignore rules with `git add -A --dry-run` /
+  `git check-ignore -v`, never by reading them.
 
 ## Pointers
 

@@ -8,7 +8,7 @@ use gta_sim::{
     config::ConfigRoot,
     flow::GameState,
     player::Player,
-    world::{CityParams, CityParamsRes, WorldSource},
+    world::{CityParams, CityParamsRes, PlayerSpawn, WorldSource},
 };
 use std::{
     path::Path,
@@ -118,7 +118,8 @@ pub fn position(app: &mut App) -> Vec3 {
 pub fn settle(app: &mut App) {
     run_ticks(app, 64);
     let y = position(app).y;
-    let expected = app.world().resource::<LocomotionConfig>().float_height;
+    let expected = app.world().resource::<PlayerSpawn>().0.y
+        + app.world().resource::<LocomotionConfig>().float_height;
     assert!(
         (y - expected).abs() < 0.05,
         "GATE BROKEN: player not resting on floor at spawn, y={y}"

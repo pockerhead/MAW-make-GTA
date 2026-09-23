@@ -15,6 +15,15 @@ pub struct CityLayout {
     pub sidewalks: WalkGraph,
     pub lanes: LaneGraph,
     pub player_spawn: Vec2,
+    pub landmarks: Landmarks,
+}
+
+/// Landmark indices: `plaza` and `park` are blocks, `tower` is a building.
+#[derive(Clone, Copy, Debug)]
+pub struct Landmarks {
+    pub plaza: u32,
+    pub park: u32,
+    pub tower: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +71,14 @@ pub struct Building {
     pub half_extents: Vec2,
     pub height: f32,
     pub kind: BuildingKind,
+    /// Setback tiers above the base footprint, bottom-up; tier `k` spans from its `bottom` to the
+    /// next tier's `bottom` (the last one to `height`).
+    pub upper_tiers: Vec<Tier>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Tier {
+    pub bottom: f32,
+    pub half_extents: Vec2,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildingKind {
@@ -69,6 +86,7 @@ pub enum BuildingKind {
     Hospital,
     PoliceStation,
     GangHq(u8),
+    Tower,
 }
 #[derive(Clone, Debug)]
 pub struct WalkGraph {
@@ -97,6 +115,7 @@ pub struct Connector {
 pub enum GenError {
     NotEnoughGangDistricts { found: u32 },
     NoPoiCandidate { poi: &'static str },
+    NoLandmarkCandidate { landmark: &'static str },
 }
 impl fmt::Display for GenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -105,6 +124,9 @@ impl fmt::Display for GenError {
                 write!(f, "need two gang districts with buildings; found {found}")
             }
             Self::NoPoiCandidate { poi } => write!(f, "no building candidate for {poi}"),
+            Self::NoLandmarkCandidate { landmark } => {
+                write!(f, "no block candidate for landmark {landmark}")
+            }
         }
     }
 }

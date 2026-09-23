@@ -14,6 +14,8 @@ scope law: its data files (§12), crate/plugin boundaries and verified crate ver
 
 Goal (GDD §13): здоровье/броня, регенерация до 50%, `GameState::Wasted`, slow-mo в `flow`, экран "ПОТРАЧЕНО" из `strings.ron`, возрождение у больницы, HUD здоровья и брони, пикапы аптечки и брони, сообщение `DebugDamage` (для отладки и BRP `world.write_message`).
 
+Known hazard from TASK-004 QA: city visuals and colliders are spawned on `OnEnter(GameState::Playing)`. This slice adds `Wasted` and a return to `Playing` — re-entering `Playing` must NOT spawn the city a second time (make city spawning one-shot / keyed to the loaded layout, and gate it: die, respawn, count city chunks and building colliders unchanged).
+
 ## Dependencies
 - blocked by TASK-003 — GDD slice T2 must land first
 - blocked by TASK-005 — GDD slice T4 must land first

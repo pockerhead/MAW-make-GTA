@@ -5,6 +5,7 @@ mod geom;
 mod graphs;
 mod grid;
 mod hash;
+mod landmarks;
 mod layout;
 mod lots;
 mod params;
@@ -12,7 +13,7 @@ mod pois;
 mod rng;
 mod roads;
 
-pub use geom::{contains_convex, convex_overlap, dist_point_segment};
+pub use geom::{centroid, contains_convex, convex_overlap, dist_point_segment};
 pub use glam::Vec2;
 pub use hash::layout_hash;
 pub use layout::*;
@@ -24,7 +25,8 @@ pub fn generate(seed: u64, params: &CityParams) -> Result<CityLayout, GenError> 
     let lines = grid::build(seed, params);
     let (roads, mut blocks) = roads::build(seed, params, &lines);
     let districts = districts::assign(seed, params, &roads, &mut blocks)?;
-    let (lots, mut buildings) = lots::build(seed, params, &mut blocks, &districts, &roads);
+    let (lots, mut buildings, landmarks) =
+        lots::build(seed, params, &mut blocks, &districts, &roads)?;
     let gang_districts = pois::assign(
         seed,
         &params.pois,
@@ -47,5 +49,6 @@ pub fn generate(seed: u64, params: &CityParams) -> Result<CityLayout, GenError> 
         sidewalks,
         lanes,
         player_spawn,
+        landmarks,
     })
 }

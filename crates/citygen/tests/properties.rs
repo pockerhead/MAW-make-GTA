@@ -1,7 +1,7 @@
 mod common;
 
 use citygen::{
-    BuildingKind, CityLayout, CityParams, DistrictKind, RoadClass, Vec2, contains_convex,
+    BuildingKind, CityLayout, CityParams, DistrictKind, RoadClass, Vec2, centroid, contains_convex,
     convex_overlap, dist_point_segment, generate,
 };
 use common::{layouts, shipped_params};
@@ -300,4 +300,109 @@ fn gang_guarantee_recolors() {
     params.districts.weights.industrial = 0.0;
     let layout = generate(1, &params).unwrap_or_else(|e| panic!("commercial-only weights: {e}"));
     check_pois(1, &params, &layout);
+}
+
+#[test]
+fn landmarks_exist() {
+    let params = shipped_params();
+    for (seed, layout) in layouts() {
+        let lm = layout.landmarks;
+        let tower = &layout.buildings[lm.tower as usize];
+        assert_eq!(tower.kind, BuildingKind::Tower, "seed {seed}: tower kind");
+        let towers = layout
+            .buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::Tower)
+            .count();
+        assert_eq!(towers, 1, "seed {seed}: tower count");
+        for (i, b) in layout.buildings.iter().enumerate() {
+            assert!(
+                i == lm.tower as usize || b.height < tower.height,
+                "seed {seed}: building {i} height {} not below tower {}",
+                b.height,
+                tower.height
+            );
+        }
+        let plaza_lots = (0..layout.lots.len())
+            .filter(|&l| layout.lots[l].block == lm.plaza)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plaza_lots.len(),
+            1,
+            "seed {seed}: plaza lots {plaza_lots:?}"
+        );
+        let on_plaza = (0..layout.buildings.len())
+            .filter(|&b| layout.buildings[b].lot as usize == plaza_lots[0])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            on_plaza,
+            [lm.tower as usize],
+            "seed {seed}: plaza buildings"
+        );
+        let park = &layout.blocks[lm.park as usize];
+        assert!(park.is_park, "seed {seed}: park block not a park");
+        assert_ne!(lm.park, lm.plaza, "seed {seed}: park == plaza");
+        let r = centroid(&park.inner).length();
+        assert!(
+            r <= params.landmarks.park_radius,
+            "seed {seed}: park at {r} m from the centre"
+        );
+    }
+}
+
+#[test]
+fn setback_tiers_nested() {
+    let params = shipped_params();
+    let m = &params.massing;
+    let mut tiered_non_tower_on_seed_1 = false;
+    for (seed, layout) in layouts() {
+        for (i, b) in layout.buildings.iter().enumerate() {
+            let floor_h = if b.kind == BuildingKind::Tower {
+                params.districts.downtown.floor_height
+            } else {
+                params
+                    .district(layout.districts[district_of_building(layout, i) as usize].kind)
+                    .floor_height
+            };
+            if ((b.height / floor_h).round() as u32) < m.setback_min_floors {
+                assert!(
+                    b.upper_tiers.is_empty(),
+                    "seed {seed}: low building {i} has tiers"
+                );
+                continue;
+            }
+            let (mut prev_bottom, mut prev_half) = (0.0, b.half_extents);
+            for (k, tier) in b.upper_tiers.iter().enumerate() {
+                assert!(
+                    tier.bottom > prev_bottom && tier.bottom < b.height,
+                    "seed {seed}: building {i} tier {k} bottom {}",
+                    tier.bottom
+                );
+                let floors = tier.bottom / floor_h;
+                assert!(
+                    (floors - floors.round()).abs() < 1e-3,
+                    "seed {seed}: building {i} tier {k} bottom {} is not on a floor",
+                    tier.bottom
+                );
+                let expected = prev_half - Vec2::splat(m.setback_inset);
+                assert!(
+                    (tier.half_extents - expected).length() < 1e-4,
+                    "seed {seed}: building {i} tier {k} half {} expected {expected}",
+                    tier.half_extents
+                );
+                assert!(
+                    tier.half_extents.min_element() >= m.setback_min_half,
+                    "seed {seed}: building {i} tier {k} too thin"
+                );
+                (prev_bottom, prev_half) = (tier.bottom, tier.half_extents);
+            }
+            if *seed == 1 && b.kind != BuildingKind::Tower && !b.upper_tiers.is_empty() {
+                tiered_non_tower_on_seed_1 = true;
+            }
+        }
+    }
+    assert!(
+        tiered_non_tower_on_seed_1,
+        "seed 1: no building besides the tower has setback tiers"
+    );
 }

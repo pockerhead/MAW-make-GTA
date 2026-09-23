@@ -11,7 +11,10 @@ use bevy::{asset::io::file::FileAssetReader, prelude::*};
 use camera::{CAMERA_CONFIG, CameraConfig, CameraPlugin};
 use gta_sim::{
     compose_sim,
-    config::{ConfigRoot, load_config},
+    config::{
+        ConfigRoot, load_config,
+        manifest::{THIRD_PARTY_MANIFEST, ThirdPartyManifest},
+    },
     world::WorldSource,
 };
 use input::PlayerInputPlugin;
@@ -36,6 +39,44 @@ fn parse_seed() -> Result<u64, String> {
         .map_err(|err| err.to_string())?
         .as_nanos();
     Ok(nanos as u64)
+}
+
+/// Checks the render config and that every third-party asset it names is listed and present.
+fn preflight(root: &ConfigRoot, render_config: &RenderConfig) -> Result<(), Vec<String>> {
+    render_config
+        .validate()
+        .map_err(|message| vec![format!("{}: {message}", root.path(RENDER_CONFIG).display())])?;
+    let manifest = load_config::<ThirdPartyManifest>(root, THIRD_PARTY_MANIFEST)
+        .map_err(|error| vec![error.to_string()])?;
+    manifest.validate().map_err(|message| {
+        vec![format!(
+            "{}: {message}",
+            root.path(THIRD_PARTY_MANIFEST).display()
+        )]
+    })?;
+    let unlisted = render_config
+        .prop_asset_paths()
+        .filter(|path| !manifest.contains_asset(path))
+        .map(|path| {
+            format!("{RENDER_CONFIG}: prop asset {path} is not listed in {THIRD_PARTY_MANIFEST}")
+        })
+        .collect::<Vec<_>>();
+    if !unlisted.is_empty() {
+        return Err(unlisted);
+    }
+    let missing = manifest.missing_files(root);
+    if !missing.is_empty() {
+        return Err(missing
+            .iter()
+            .map(|path| {
+                format!(
+                    "missing third-party asset {}; run `python tools/fetch_assets.py`",
+                    path.display()
+                )
+            })
+            .collect());
+    }
+    Ok(())
 }
 
 fn main() -> AppExit {
@@ -74,6 +115,12 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
+    if let Err(errors) = preflight(&root, &render_config) {
+        for error in errors {
+            eprintln!("{error}");
+        }
+        return AppExit::error();
+    }
     app.insert_resource(camera_config)
         .insert_resource(render_config)
         .add_plugins((

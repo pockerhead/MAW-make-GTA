@@ -2,9 +2,13 @@ mod city;
 mod test_area;
 
 pub use city::{
-    City, CityBuilding, CityEdgeWall, CityGround, CityLayoutHash, CityParamsRes, CitySeed,
+    City, CityBlock, CityBuilding, CityEdgeWall, CityGround, CityLandmarks, CityLayoutHash,
+    CityParamsRes, CitySeed,
 };
-pub use citygen::{BuildingKind, CityLayout, CityParams, DistrictKind, RoadClass};
+pub use citygen::{
+    BuildingKind, CityLayout, CityParams, DistrictKind, Landmarks, RoadClass, Tier, centroid,
+    contains_convex,
+};
 
 use crate::flow::GameState;
 use bevy::prelude::*;
@@ -56,6 +60,7 @@ impl Plugin for WorldPlugin {
                 app.insert_resource(CitySeed(seed))
                     .register_type::<CitySeed>()
                     .register_type::<CityLayoutHash>()
+                    .register_type::<CityLandmarks>()
                     .configure_sets(
                         Update,
                         WorldSystems::Generation.run_if(in_state(GameState::Loading)),

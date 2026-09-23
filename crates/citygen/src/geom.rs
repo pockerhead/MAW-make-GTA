@@ -12,7 +12,8 @@ pub(crate) fn signed_area(poly: &[Vec2]) -> f32 {
         / 2.0
 }
 
-pub(crate) fn centroid(poly: &[Vec2]) -> Vec2 {
+/// Vertex average of `poly`.
+pub fn centroid(poly: &[Vec2]) -> Vec2 {
     poly.iter().copied().sum::<Vec2>() / poly.len() as f32
 }
 

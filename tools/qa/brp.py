@@ -13,8 +13,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 class Game:
-    def __init__(self, features=("dev",), args=(), port=15702):
+    def __init__(self, features=("dev",), args=(), port=15702, release=False):
         self.features = features
+        self.release = release
         self.args = args
         self.port = port
         self.process = None
@@ -33,14 +34,14 @@ class Game:
         self.stop()
 
     def start(self):
-        subprocess.run(
-            ["cargo", "build", "-p", "gta_like", "--bin", "gta_like", "-j", "4", "--features", ",".join(self.features)],
-            cwd=REPO, check=True, timeout=1800,
-        )
+        command = ["cargo", "build", "-p", "gta_like", "--bin", "gta_like", "-j", "4", "--features", ",".join(self.features)]
+        if self.release:
+            command.append("--release")
+        subprocess.run(command, cwd=REPO, check=True, timeout=1800)
         metadata = json.loads(subprocess.check_output(
             ["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=REPO,
         ))
-        executable = Path(metadata["target_directory"]) / "debug" / ("gta_like.exe" if os.name == "nt" else "gta_like")
+        executable = Path(metadata["target_directory"]) / ("release" if self.release else "debug") / ("gta_like.exe" if os.name == "nt" else "gta_like")
         log_path = REPO / "target" / "qa" / "game.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_file = log_path.open("wb")

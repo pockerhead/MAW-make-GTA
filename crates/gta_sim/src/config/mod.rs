@@ -1,3 +1,5 @@
+pub mod manifest;
+
 use bevy::prelude::Resource;
 use serde::de::DeserializeOwned;
 use std::{fmt, fs, path::PathBuf};

@@ -1,132 +1,113 @@
-use super::RenderConfig;
-use bevy::{asset::RenderAssetUsages, mesh::Indices, mesh::PrimitiveTopology, prelude::*};
+use super::{
+    RenderConfig,
+    city_mesh::{ChunkMesh, build_city_meshes},
+    facade::{FacadeMaterial, facade_material},
+    props::{CityProp, PropAssets, PropPlacement, load_prop_assets, place_props, prop_bundle},
+};
+use bevy::{
+    prelude::*,
+    tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
+};
 use gta_sim::{
     flow::GameState,
-    world::{BuildingKind, City, CityBuilding, DistrictKind},
+    world::{City, CityParamsRes},
 };
 
+/// Owns all city geometry on the render side: merged chunk meshes and props.
 pub struct CityVisualsPlugin;
 
 impl Plugin for CityVisualsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_city_palette)
-            .add_systems(OnEnter(GameState::Playing), spawn_city_surfaces)
-            .add_observer(visualize_city_building);
+        app.register_type::<CityChunk>()
+            .register_type::<CityProp>()
+            .add_systems(Startup, (create_facade_material, load_prop_assets))
+            .add_systems(OnEnter(GameState::Playing), start_city_mesh_build)
+            .add_systems(
+                Update,
+                (
+                    poll_city_mesh_build.run_if(resource_exists::<CityMeshTask>),
+                    apply_city_spawn.run_if(resource_exists::<PendingCitySpawn>),
+                )
+                    .chain(),
+            );
     }
 }
 
-/// One shared material per city colour.
-#[derive(Resource)]
-struct CityPalette {
-    downtown: Handle<StandardMaterial>,
-    commercial: Handle<StandardMaterial>,
-    residential: Handle<StandardMaterial>,
-    industrial: Handle<StandardMaterial>,
-    hospital: Handle<StandardMaterial>,
-    police: Handle<StandardMaterial>,
-    gang_hq: Handle<StandardMaterial>,
-    road: Handle<StandardMaterial>,
-    sidewalk: Handle<StandardMaterial>,
-    park: Handle<StandardMaterial>,
+/// One merged mesh of city geometry (ground, blocks, buildings, markings) per render chunk.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct CityChunk {
+    pub coord: UVec2,
 }
 
-fn setup_city_palette(
+#[derive(Resource)]
+pub(super) struct CityMeshTask(Task<(Vec<ChunkMesh>, Vec<PropPlacement>)>);
+
+/// Built geometry waiting to be spawned within the per-frame budget.
+#[derive(Resource)]
+pub(super) struct PendingCitySpawn {
+    chunks: Vec<ChunkMesh>,
+    props: Vec<PropPlacement>,
+}
+
+#[derive(Resource)]
+struct CityFacade(Handle<FacadeMaterial>);
+
+fn create_facade_material(
     mut commands: Commands,
     config: Res<RenderConfig>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<FacadeMaterial>>,
 ) {
-    let mut add = |(r, g, b): (f32, f32, f32)| materials.add(Color::srgb(r, g, b));
-    let colors = &config.district_colors;
-    commands.insert_resource(CityPalette {
-        downtown: add(colors.downtown),
-        commercial: add(colors.commercial),
-        residential: add(colors.residential),
-        industrial: add(colors.industrial),
-        hospital: add(config.hospital_color),
-        police: add(config.police_color),
-        gang_hq: add(config.gang_hq_color),
-        road: add(config.road_color),
-        sidewalk: add(config.sidewalk_color),
-        park: add(config.park_color),
-    });
+    commands.insert_resource(CityFacade(materials.add(facade_material(&config))));
 }
 
-fn visualize_city_building(
-    event: On<Add, CityBuilding>,
-    buildings: Query<&CityBuilding>,
-    palette: Res<CityPalette>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let Ok(building) = buildings.get(event.entity) else {
-        return;
-    };
-    let material = match (building.kind, building.district) {
-        (BuildingKind::Hospital, _) => &palette.hospital,
-        (BuildingKind::PoliceStation, _) => &palette.police,
-        (BuildingKind::GangHq(_), _) => &palette.gang_hq,
-        (BuildingKind::Generic, DistrictKind::Downtown) => &palette.downtown,
-        (BuildingKind::Generic, DistrictKind::Commercial) => &palette.commercial,
-        (BuildingKind::Generic, DistrictKind::Residential) => &palette.residential,
-        (BuildingKind::Generic, DistrictKind::Industrial) => &palette.industrial,
-    };
-    commands.entity(event.entity).insert((
-        Mesh3d(meshes.add(Cuboid::from_size(building.size))),
-        MeshMaterial3d(material.clone()),
-    ));
-}
-
-fn spawn_city_surfaces(
+fn start_city_mesh_build(
     mut commands: Commands,
     city: Res<City>,
+    params: Res<CityParamsRes>,
     config: Res<RenderConfig>,
-    palette: Res<CityPalette>,
-    mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let layout = &city.0;
-    let half = layout.ground_size / 2.0;
-    let ground = [
-        Vec2::new(-half, -half),
-        Vec2::new(half, -half),
-        Vec2::new(half, half),
-        Vec2::new(-half, half),
-    ];
-    let step = config.surface_layer_step;
-    let curbs = layout.blocks.iter().map(|b| b.curb.as_slice());
-    let parks = layout.blocks.iter().filter(|b| b.is_park).map(|b| {
-        if b.inner.is_empty() {
-            b.curb.as_slice()
-        } else {
-            b.inner.as_slice()
-        }
+    let (layout, params, config) = (city.0.clone(), params.0.clone(), config.clone());
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        (
+            build_city_meshes(&layout, &params, &config),
+            place_props(&layout, &params, &config),
+        )
     });
-    for (mesh, material) in [
-        (flat_mesh(std::iter::once(&ground[..]), 0.0), &palette.road),
-        (flat_mesh(curbs, step), &palette.sidewalk),
-        (flat_mesh(parks, 2.0 * step), &palette.park),
-    ] {
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone())));
-    }
+    commands.insert_resource(CityMeshTask(task));
 }
 
-/// Horizontal mesh of counter-clockwise (positive-area in (x, z)) convex polygons at height `y`.
-fn flat_mesh<'a>(polys: impl Iterator<Item = &'a [Vec2]>, y: f32) -> Mesh {
-    let mut positions = Vec::new();
-    let mut indices = Vec::new();
-    for poly in polys.filter(|p| p.len() >= 3) {
-        let base = positions.len() as u32;
-        positions.extend(poly.iter().map(|p| [p.x, y, p.y]));
-        // Positive area in (x, z) is clockwise seen from +Y, so the fan is (0, i + 1, i).
-        for i in 1..poly.len() as u32 - 1 {
-            indices.extend([base, base + i + 1, base + i]);
-        }
+fn poll_city_mesh_build(mut commands: Commands, mut task: ResMut<CityMeshTask>) {
+    let Some((chunks, props)) = block_on(poll_once(&mut task.0)) else {
+        return;
+    };
+    commands.remove_resource::<CityMeshTask>();
+    commands.insert_resource(PendingCitySpawn { chunks, props });
+}
+
+fn apply_city_spawn(
+    mut commands: Commands,
+    mut pending: ResMut<PendingCitySpawn>,
+    config: Res<RenderConfig>,
+    facade: Res<CityFacade>,
+    props: Res<PropAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let budget = &config.spawn_budget;
+    let take = pending.chunks.len().saturating_sub(budget.chunks_per_frame);
+    for chunk in pending.chunks.drain(take..) {
+        commands.spawn((
+            CityChunk { coord: chunk.coord },
+            Mesh3d(meshes.add(chunk.mesh)),
+            MeshMaterial3d(facade.0.clone()),
+            Transform::IDENTITY,
+        ));
     }
-    let normals = vec![[0.0, 1.0, 0.0]; positions.len()];
-    Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_indices(Indices::U32(indices))
+    let take = pending.props.len().saturating_sub(budget.props_per_frame);
+    for prop in pending.props.drain(take..) {
+        commands.spawn(prop_bundle(&props, &config, prop));
+    }
+    if pending.chunks.is_empty() && pending.props.is_empty() {
+        commands.remove_resource::<PendingCitySpawn>();
+    }
 }

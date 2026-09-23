@@ -1,0 +1,50 @@
+// Third-party assets: fetched by tools/fetch_assets.py, validated by crates/gta_sim/tests/asset_manifest.rs.
+(
+    packs: [
+        (
+            name: "city-kit-roads",
+            version: "2.1",
+            page: "https://kenney.nl/assets/city-kit-roads",
+            url: "https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1787042796/kenney_city-kit-roads.zip",
+            archive_sha256: "22058af3d68173a7cf9bda9f0e243a8cef6bd68168c302ebc76327063849674e",
+            license: CC0,
+            license_file: "License.txt",
+            files: [
+                (archive: "Models/GLB format/light-square.glb", path: "light-square.glb", sha256: "6230d136c8883d7f9bc1b86f0309077e452e26e5e1e587ef1b77abef3c5f047c"),
+                (archive: "Models/GLB format/traffic-light.glb", path: "traffic-light.glb", sha256: "6c9ee253b7370e1043168493b2e662b349484a0cdd02100cff04d9d8d1bd9abb"),
+                (archive: "Models/GLB format/Textures/colormap.png", path: "Textures/colormap.png", sha256: "a48e2962661ae44368ffddf3054f80ed8491d082b757dcc3011184cd9a98b185"),
+                (archive: "License.txt", path: "License.txt", sha256: "87b9404aef5dff6162ae1e53a27bc6427fe1cdd2e2dd5ec05fdd25f17da10498"),
+            ],
+        ),
+        (
+            name: "city-kit-suburban",
+            version: "2.0",
+            page: "https://kenney.nl/assets/city-kit-suburban",
+            url: "https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip",
+            archive_sha256: "5869c35cf30b1c87bdb2d197b6d325eebadd2ef08ea27f04797e8e08d77a9a39",
+            license: CC0,
+            license_file: "License.txt",
+            files: [
+                (archive: "Models/GLB format/tree-large.glb", path: "tree-large.glb", sha256: "16d1f95c149bc727a953a473cf20bf21de9bf1a88747c4f9d2eeb4ac7d43e291"),
+                (archive: "Models/GLB format/tree-small.glb", path: "tree-small.glb", sha256: "5f63359e5f392609d7617cc98070855ca1ffd4f4b4bc3978a5ff56ece88a58d6"),
+                (archive: "Models/GLB format/Textures/colormap.png", path: "Textures/colormap.png", sha256: "9b5de86078c25ef02351a80d35ff3c978693a1044565b73eedd9ae9b5b80665d"),
+                (archive: "License.txt", path: "License.txt", sha256: "d778fa769a89a7d9f167bc337fdf8fc2144e47d9abb0c35eb6ad897c0ee24d0a"),
+            ],
+        ),
+        (
+            name: "city-kit-industrial",
+            version: "2.0",
+            page: "https://kenney.nl/assets/city-kit-industrial",
+            url: "https://kenney.nl/media/pages/assets/city-kit-industrial/0ec35b139d-1788171848/kenney_city-kit-industrial_2.0.zip",
+            archive_sha256: "5b381164e5760f3830a2dbee43b972deee38b2a695d091b56e238ab2910c96d2",
+            license: CC0,
+            license_file: "License.txt",
+            files: [
+                (archive: "Models/GLB format/shipping-container-a.glb", path: "shipping-container-a.glb", sha256: "7b2d5ca874c8e659ee6cfd1614f0470b70410b2ddc7620ac83b8954dedeb861d"),
+                (archive: "Models/GLB format/shipping-container-c.glb", path: "shipping-container-c.glb", sha256: "6a272420c37ccf4b354565d75c5d1fd889cd568297c215c681fcf11ef8c8ae13"),
+                (archive: "Models/GLB format/Textures/colormap.png", path: "Textures/colormap.png", sha256: "950f4f891ebd05a2affac810e6eeb0fea1511bc39039b65a3cbf2e17d17bc6a2"),
+                (archive: "License.txt", path: "License.txt", sha256: "60a8c5c31191256ec9779dc18745dea6d69c46f4b29703459ce064c1765a59ea"),
+            ],
+        ),
+    ],
+)

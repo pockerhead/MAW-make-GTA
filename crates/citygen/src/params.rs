@@ -15,6 +15,8 @@ pub struct CityParams {
     pub split_jitter: f32,
     pub min_building_area: f32,
     pub pois: PoiParams,
+    pub massing: MassingParams,
+    pub landmarks: LandmarkParams,
 }
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
@@ -38,6 +40,7 @@ pub struct RoadParams {
     pub avenue: RoadClassParams,
     pub street: RoadClassParams,
     pub alley_width: f32,
+    pub curb_height: f32,
 }
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +82,23 @@ pub struct PoiParams {
     pub hospital_districts: Vec<DistrictKind>,
     pub police_districts: Vec<DistrictKind>,
     pub police_stations: u32,
+}
+/// Setback tiers of tall buildings: a tier every `setback_tier_floors` floors from
+/// `setback_min_floors` up, each inset by `setback_inset` until a half extent drops below `setback_min_half`.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct MassingParams {
+    pub setback_min_floors: u32,
+    pub setback_tier_floors: u32,
+    pub setback_inset: f32,
+    pub setback_min_half: f32,
+}
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LandmarkParams {
+    pub tower_floors: u32,
+    pub tower_footprint: f32,
+    pub park_radius: f32,
 }
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DistrictKind {
@@ -173,6 +193,7 @@ impl CityParams {
         }
         positive("roads.lane_width", self.roads.lane_width)?;
         positive("roads.alley_width", self.roads.alley_width)?;
+        positive("roads.curb_height", self.roads.curb_height)?;
         for (name, road) in [
             ("avenue", &self.roads.avenue),
             ("street", &self.roads.street),
@@ -241,6 +262,32 @@ impl CityParams {
         if !(1..=2).contains(&self.pois.police_stations) {
             return Err("pois.police_stations must be 1 or 2".into());
         }
+        let m = &self.massing;
+        if m.setback_min_floors == 0 || m.setback_tier_floors == 0 {
+            return Err(
+                "massing.setback_min_floors and setback_tier_floors must be at least 1".into(),
+            );
+        }
+        positive("massing.setback_inset", m.setback_inset)?;
+        positive("massing.setback_min_half", m.setback_min_half)?;
+        let l = &self.landmarks;
+        positive("landmarks.tower_footprint", l.tower_footprint)?;
+        positive("landmarks.park_radius", l.park_radius)?;
+        let tallest = [
+            DistrictKind::Downtown,
+            DistrictKind::Commercial,
+            DistrictKind::Residential,
+            DistrictKind::Industrial,
+        ]
+        .into_iter()
+        .map(|kind| {
+            let d = self.district(kind);
+            d.floors.1 as f32 * d.floor_height
+        })
+        .fold(0.0, f32::max);
+        if l.tower_floors as f32 * self.districts.downtown.floor_height <= tallest {
+            return Err("landmarks.tower_floors must make the tower the tallest building".into());
+        }
         Ok(())
     }
 }
@@ -279,5 +326,9 @@ mod tests {
         let mut p = shipped();
         p.districts.grid = 4;
         assert!(p.validate().unwrap_err().contains("districts.grid"));
+
+        let mut p = shipped();
+        p.landmarks.tower_floors = 30;
+        assert!(p.validate().unwrap_err().contains("landmarks.tower_floors"));
     }
 }

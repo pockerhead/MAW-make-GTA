@@ -1,7 +1,7 @@
 use crate::{BuildingKind, CityLayout, DistrictKind, RoadClass, Vec2, rng::fnv1a64};
 
 // Bumped on any change of the canonical encoding below.
-const HASH_SCHEMA_VERSION: u32 = 1;
+const HASH_SCHEMA_VERSION: u32 = 2;
 // Floats are hashed at 1 mm resolution so sub-millimetre noise does not count as a layout change.
 const QUANTUM_PER_METRE: f32 = 1000.0;
 
@@ -65,6 +65,7 @@ fn building_kind(kind: BuildingKind) -> (u8, u8) {
         BuildingKind::Hospital => (1, 0),
         BuildingKind::PoliceStation => (2, 0),
         BuildingKind::GangHq(i) => (3, i),
+        BuildingKind::Tower => (4, 0),
     }
 }
 
@@ -114,6 +115,11 @@ pub fn layout_hash(layout: &CityLayout) -> u64 {
         w.vec2(b.axis);
         w.vec2(b.half_extents);
         w.f32(b.height);
+        w.len(b.upper_tiers.len());
+        for tier in &b.upper_tiers {
+            w.f32(tier.bottom);
+            w.vec2(tier.half_extents);
+        }
         let (code, gang) = building_kind(b.kind);
         w.u8(code);
         w.u8(gang);
@@ -121,6 +127,9 @@ pub fn layout_hash(layout: &CityLayout) -> u64 {
 
     w.u32(layout.gang_districts[0]);
     w.u32(layout.gang_districts[1]);
+    w.u32(layout.landmarks.plaza);
+    w.u32(layout.landmarks.park);
+    w.u32(layout.landmarks.tower);
 
     w.vec2s(&layout.sidewalks.nodes);
     w.len(layout.sidewalks.edges.len());

@@ -7,7 +7,7 @@
     roads: (lane_width: 3.25,
             avenue: (lanes_per_direction: 2, sidewalk: 4.0),
             street: (lanes_per_direction: 1, sidewalk: 3.0),
-            alley_width: 4.5),
+            alley_width: 4.5, curb_height: 0.15),
     superblock_chance: 0.08,
     alley_chance: 0.08,
     districts: (
@@ -23,4 +23,6 @@
     min_building_area: 60.0,
     pois: (hospital_districts: [Commercial, Residential], police_districts: [Residential, Commercial],
            police_stations: 1),
+    massing: (setback_min_floors: 12, setback_tier_floors: 8, setback_inset: 3.0, setback_min_half: 6.0),
+    landmarks: (tower_floors: 40, tower_footprint: 32.0, park_radius: 300.0),
 )

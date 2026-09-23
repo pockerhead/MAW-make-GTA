@@ -11,7 +11,7 @@ Loop:
 ## Runtime QA (Bevy Remote Protocol)
 
 - Build with `cargo build --features dev` (enables `bevy_remote` + `bevy_brp_extras`, JSON-RPC on `http://127.0.0.1:15702`).
-- Preferred driver: `python tools/qa/brp.py --help` (launch, wait-ready, keys, mouse, screenshot, diagnostics, query, shutdown) and the slice's scenario `tools/qa/scenarios/<slice>.py`. If the driver does not exist yet, call JSON-RPC directly, e.g.
+- Preferred driver: the `Game` class in `tools/qa/brp.py` (read its source — it has no `--help`; running the file launches the game): launch, wait-ready, keys, mouse, screenshot, diagnostics, query, mutate, shutdown and the slice's scenario `tools/qa/scenarios/<slice>.py`. If the driver does not exist yet, call JSON-RPC directly, e.g.
   `curl -s -X POST http://127.0.0.1:15702 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"brp_extras/screenshot","params":{"path":"<abs path>.png"}}'`.
   Methods: `rpc.discover` (list all), `world.query`, `world.get_components`, `world.mutate_components`, `brp_extras/screenshot`, `brp_extras/send_keys`, `brp_extras/move_mouse`, `brp_extras/click_mouse`, `brp_extras/get_diagnostics`, `brp_extras/shutdown`. Confirm params with `rpc.discover` — do not guess them.
 - Screenshots and scenario output go to the task's `scratch/qa/`; cite them in QA_REPORT.md by path, with what you saw in each.
