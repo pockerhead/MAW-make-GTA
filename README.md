@@ -108,6 +108,9 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
 - TASK-009 (T8): готов — мирные жители: 6 моделей Kenney гуляют по графу тротуаров, слышат выстрелы, видят трупы
   и наведённый ствол, разбегаются, приседают или звонят в полицию (над звонящим растёт полоска, его можно
   остановить). Население живёт в пузыре вокруг игрока, до 40 человек.
+  <!-- SHOWCASE:civilians:START -->
+  <img src="https://raw.githubusercontent.com/pockerhead/MAW-make-GTA/media/civilians.gif?v=94698a82" width="480" alt="Мирные жители: гуляют по тротуарам, после выстрела в воздух разбегаются и прячутся"><br><sub>Мирные жители: гуляют по тротуарам, после выстрела в воздух разбегаются и прячутся</sub>
+  <!-- SHOWCASE:civilians:END -->
 - Следующий: TASK-022 — живая улица (мирные появляются из-за угла и впереди, а не только за спиной), потом TASK-010 (T9) банды.
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
 
