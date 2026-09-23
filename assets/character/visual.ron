@@ -11,4 +11,8 @@
     walk: (clip: "walk", native_speed: 1.28),
     run: (clip: "sprint", native_speed: 2.66),
     sprint: (clip: "sprint", native_speed: 2.66),
+    arm_joints: ["arm-left", "arm-right"],
+    hand_joint: "arm-right",
+    one_hand: (hold: "holding-right", shoot: "holding-right-shoot"),
+    two_hands: (hold: "holding-both", shoot: "holding-both-shoot"),
 )

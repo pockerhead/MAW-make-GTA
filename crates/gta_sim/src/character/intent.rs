@@ -1,6 +1,9 @@
+use crate::combat::Weapon;
 use bevy::prelude::*;
+use serde::Deserialize;
 
-#[derive(Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
+/// Variant order is the speed order: `Walk < Run < Sprint` (the aiming cap relies on it).
+#[derive(Reflect, Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[reflect(Default)]
 pub enum Gait {
     Walk,
@@ -17,6 +20,34 @@ pub struct MoveIntent {
     pub gait: Gait,
     pub jump_held: bool,
     pub jump_requested: bool,
+}
+
+/// Where the character aims; written by the client (camera ray), read by the fixed-tick weapons.
+#[derive(Component, Reflect, Default, Clone, Debug)]
+#[reflect(Component, Default)]
+pub struct AimIntent {
+    pub origin: Vec3,
+    pub direction: Vec3,
+    /// Aim mode (RMB): the body faces the aim yaw and speed is capped at `aim_max_gait`.
+    pub aiming: bool,
+}
+
+/// Weapon actions; the client raises the `*_requested` latches, the fixed tick clears them.
+#[derive(Component, Reflect, Default, Clone, Debug)]
+#[reflect(Component, Default)]
+pub struct ActionIntent {
+    pub fire_held: bool,
+    pub fire_requested: bool,
+    pub reload_requested: bool,
+    pub select: Option<WeaponRequest>,
+    /// Weapon wheel steps since the last tick (+ next, − previous).
+    pub cycle: i32,
+}
+
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WeaponRequest {
+    Unarmed,
+    Gun(Weapon),
 }
 
 pub fn move_direction(axis: Vec2, yaw: f32) -> Vec3 {

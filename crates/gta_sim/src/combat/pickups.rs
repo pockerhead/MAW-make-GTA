@@ -1,3 +1,4 @@
+use super::weapons::{Loadout, Weapon, WeaponsConfig, acquire};
 use crate::character::{CharacterBody, Dead, Health, HealthConfig};
 use crate::player::Player;
 use crate::world::HospitalSpawn;
@@ -75,6 +76,53 @@ pub(super) fn collect_pickups(
                     pickup.cooldown = p.respawn;
                 }
                 _ => {}
+            }
+        }
+    }
+}
+
+/// A gun (or only its ammo) lying on the shooting range.
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+pub struct WeaponPickup {
+    pub weapon: Weapon,
+    pub ammo_only: bool,
+    /// Seconds until the pickup is available again.
+    pub cooldown: f32,
+}
+
+impl WeaponPickup {
+    pub fn available(&self) -> bool {
+        self.cooldown <= 0.0
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub(super) fn collect_weapon_pickups(
+    cfg: Res<WeaponsConfig>,
+    time: Res<Time<Fixed>>,
+    mut pickups: Query<(&mut WeaponPickup, &Transform)>,
+    mut players: Query<(&Position, &CharacterBody, &mut Loadout), (With<Player>, Without<Dead>)>,
+) {
+    let dt = time.delta_secs();
+    for (mut pickup, transform) in &mut pickups {
+        pickup.cooldown = (pickup.cooldown - dt).max(0.0);
+        if !pickup.available() {
+            continue;
+        }
+        for (position, body, mut loadout) in &mut players {
+            let feet = position.0 - Vec3::Y * body.float_height;
+            if feet.distance(transform.translation) > cfg.pickups.radius {
+                continue;
+            }
+            let weapon = pickup.weapon;
+            let gun = !pickup.ammo_only;
+            if !acquire(&mut loadout.guns[weapon.index()], cfg.stats(weapon), gun) {
+                continue;
+            }
+            pickup.cooldown = cfg.pickups.respawn;
+            if gun && loadout.held.is_none() {
+                loadout.held = Some(weapon);
             }
         }
     }

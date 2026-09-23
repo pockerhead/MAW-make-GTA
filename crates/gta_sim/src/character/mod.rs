@@ -8,9 +8,10 @@ pub use health::{
     Dead, HEALTH_CONFIG, Health, HealthConfig, HealthSystems, PickupConfig, apply_damage,
     regenerate,
 };
-pub use intent::{Gait, MoveIntent, move_direction};
+pub use intent::{ActionIntent, AimIntent, Gait, MoveIntent, WeaponRequest, move_direction};
 pub use locomotion::{LOCOMOTION_CONFIG, LocomotionConfig};
 
+use crate::layers::GameLayer;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy_tnua::builtins::{TnuaBuiltinJump, TnuaBuiltinWalk};
@@ -26,8 +27,13 @@ pub enum CharacterScheme {
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
-#[require(MoveIntent, JumpBuffer, AnimState)]
+#[require(MoveIntent, AimIntent, ActionIntent, JumpBuffer, AnimState)]
 pub struct Character;
+
+/// Head sphere sensor on the `Hitbox` layer; a hitscan ray that hits it deals headshot damage.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct HeadHitbox;
 
 #[derive(Component, Default)]
 struct JumpBuffer {
@@ -65,6 +71,9 @@ impl Plugin for CharacterPlugin {
             .register_type::<Character>()
             .register_type::<CharacterBody>()
             .register_type::<MoveIntent>()
+            .register_type::<AimIntent>()
+            .register_type::<ActionIntent>()
+            .register_type::<HeadHitbox>()
             .register_type::<AnimState>()
             .register_type::<Health>()
             .register_type::<Dead>()
@@ -92,6 +101,18 @@ impl Plugin for CharacterPlugin {
 
 const SENSOR_INSET: f32 = 0.01;
 
+/// Child of a character body: a sensor that neither collides nor is seen by Tnua's ground sensor.
+pub fn head_hitbox(cfg: &LocomotionConfig) -> impl Bundle {
+    (
+        HeadHitbox,
+        Name::new("Head hitbox"),
+        Collider::sphere(cfg.head_radius),
+        Sensor,
+        CollisionLayers::new(GameLayer::Hitbox, LayerMask::NONE),
+        Transform::from_xyz(0.0, cfg.head_height - cfg.float_height, 0.0),
+    )
+}
+
 pub fn character_components(
     cfg: &LocomotionConfig,
     handle: Handle<CharacterSchemeConfig>,
@@ -113,6 +134,8 @@ pub fn character_components(
         TnuaConfig::<CharacterScheme>(handle),
         // A narrower sensor avoids snagging on walls beside the capsule.
         TnuaAvian3dSensorShape(Collider::cylinder(cfg.capsule_radius - SENSOR_INSET, 0.0)),
+        CollisionLayers::new(GameLayer::Character, LayerMask::ALL),
+        children![head_hitbox(cfg)],
     )
 }
 
@@ -123,6 +146,7 @@ fn drive_characters(
     mut query: Query<
         (
             &mut MoveIntent,
+            &AimIntent,
             &mut JumpBuffer,
             &mut TnuaController<CharacterScheme>,
             Has<Dead>,
@@ -130,7 +154,7 @@ fn drive_characters(
         With<Character>,
     >,
 ) {
-    for (mut intent, mut buffer, mut controller, dead) in &mut query {
+    for (mut intent, aim, mut buffer, mut controller, dead) in &mut query {
         if dead {
             // The walk basis persists in Tnua: without an explicit zero the body keeps walking.
             intent.jump_requested = false;
@@ -156,9 +180,15 @@ fn drive_characters(
         }
         controller.initiate_action_feeding();
         let direction = move_direction(intent.axis, intent.yaw);
+        let (gait, forward) = if aim.aiming {
+            let aim_flat = Vec3::new(aim.direction.x, 0.0, aim.direction.z);
+            (intent.gait.min(cfg.aim_max_gait), aim_flat)
+        } else {
+            (intent.gait, direction)
+        };
         controller.basis = TnuaBuiltinWalk {
-            desired_motion: direction * cfg.speed(intent.gait),
-            desired_forward: Dir3::new(direction).ok(),
+            desired_motion: direction * cfg.speed(gait),
+            desired_forward: Dir3::new(forward).ok(),
         };
         if intent.jump_held || new_request || buffer.remaining > 0.0 {
             controller.action(CharacterScheme::Jump(Default::default()));

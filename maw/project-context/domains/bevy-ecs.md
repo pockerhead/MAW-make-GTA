@@ -69,6 +69,14 @@
   (`bevy::world_serialization::WorldInstanceReady`), and `InstanceId::new` is private: a headless test cannot
   trigger `WorldInstanceReady` by hand. Gate such handlers via a real `WorldAsset` spawn or runtime BRP QA.
 
+- 2026-09-23 (TASK-006/007) — a `MessageReader` in a state-gated set does not consume while the state is
+  off: the messages stay buffered and are read in the FIRST fixed tick after re-entry, after `OnExit` has
+  already respawned the player. A read-time state check cannot catch it. Pattern: `Messages<T>::clear()`
+  and reset of intent latches on `OnExit` of the state that must not leak (`flow/wasted.rs`).
+- 2026-09-23 (TASK-007) — `AnimationGraph` node masks live in the shared graph asset (toggling one changes
+  every character); per-character layers need duplicate nodes chosen per `AnimationPlayer`, mask groups from
+  the runtime `AnimationTargetId`s. Anything parented to a glTF joint inherits the model scale (Kenney x2.68).
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

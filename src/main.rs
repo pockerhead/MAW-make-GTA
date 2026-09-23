@@ -1,13 +1,17 @@
+mod audio;
 mod camera;
 #[cfg(feature = "debug")]
 mod debug;
 mod hud;
 mod input;
+mod juice;
 mod menu;
 #[cfg(feature = "dev")]
 mod remote;
+mod vfx;
 mod visuals;
 
+use audio::{MIX_CONFIG, MixConfig, ShotAudioPlugin};
 use bevy::{asset::io::file::FileAssetReader, prelude::*};
 use camera::{CAMERA_CONFIG, CameraConfig, CameraPlugin};
 use gta_sim::{
@@ -19,6 +23,7 @@ use gta_sim::{
     world::WorldSource,
 };
 use input::PlayerInputPlugin;
+use juice::{JUICE_CONFIG, JuiceConfig, JuicePlugin};
 use menu::{MenuPlugin, UI_CONFIG, UiConfig};
 use std::time::{SystemTime, UNIX_EPOCH};
 use visuals::{
@@ -52,7 +57,16 @@ fn preflight(
     render_config: &RenderConfig,
     character_config: &CharacterVisualConfig,
     ui_config: &UiConfig,
+    feedback: (&CameraConfig, &JuiceConfig, &MixConfig),
 ) -> Result<CharacterClips, Vec<String>> {
+    let (camera_config, juice_config, mix_config) = feedback;
+    for (path, result) in [
+        (CAMERA_CONFIG, camera_config.validate()),
+        (JUICE_CONFIG, juice_config.validate()),
+        (MIX_CONFIG, mix_config.validate()),
+    ] {
+        result.map_err(|message| vec![format!("{}: {message}", root.path(path).display())])?;
+    }
     render_config
         .validate()
         .map_err(|message| vec![format!("{}: {message}", root.path(RENDER_CONFIG).display())])?;
@@ -168,7 +182,28 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
-    let clips = match preflight(&root, &render_config, &character_config, &ui_config) {
+    let juice_config = match load_config::<JuiceConfig>(&root, JUICE_CONFIG) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
+    let mix_config = match load_config::<MixConfig>(&root, MIX_CONFIG) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
+    let feedback = (&camera_config, &juice_config, &mix_config);
+    let clips = match preflight(
+        &root,
+        &render_config,
+        &character_config,
+        &ui_config,
+        feedback,
+    ) {
         Ok(clips) => clips,
         Err(errors) => {
             for error in errors {
@@ -183,6 +218,8 @@ fn main() -> AppExit {
         .insert_resource(character_config)
         .insert_resource(clips)
         .insert_resource(ui_config)
+        .insert_resource(juice_config)
+        .insert_resource(mix_config)
         .add_plugins((
             bevy_enhanced_input::prelude::EnhancedInputPlugin,
             PlayerInputPlugin,
@@ -190,6 +227,9 @@ fn main() -> AppExit {
             VisualsPlugin,
             MenuPlugin,
             hud::HudPlugin,
+            JuicePlugin,
+            vfx::VfxPlugin,
+            ShotAudioPlugin,
         ));
     #[cfg(feature = "dev")]
     app.add_plugins(remote::QaRemotePlugin);

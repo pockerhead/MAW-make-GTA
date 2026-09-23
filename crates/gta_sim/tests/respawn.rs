@@ -3,17 +3,13 @@ mod common;
 use bevy::prelude::*;
 use common::*;
 use gta_sim::{
-    character::{Dead, HealthConfig, LocomotionConfig},
-    combat::Pickup,
+    character::{Dead, HealthConfig, LocomotionConfig, WeaponRequest},
+    combat::{Dummy, GunSlot, Loadout, Pickup, Weapon, WeaponPickup, WeaponsConfig},
     flow::{GameState, RespawnConfig, WastedPhase},
     player::Player,
     wanted::WantedLevel,
     world::{CityBlock, CityBuilding, CityEdgeWall, CityGround, HospitalSpawn},
 };
-
-/// Stand-in for weapons: T6 keeps the loadout as components on the player entity.
-#[derive(Component, Debug, PartialEq)]
-struct Loadout(u32);
 
 fn fixed_ticks(app: &App) -> u128 {
     let time = app.world().resource::<Time<Fixed>>();
@@ -87,7 +83,17 @@ fn death_wasted_respawn_at_hospital() {
     let mut app = city_app(1);
     settle(&mut app);
     let entity = player(&mut app);
-    app.world_mut().entity_mut(entity).insert(Loadout(7));
+    let mut armed = Loadout {
+        held: Some(Weapon::Pistol),
+        ..default()
+    };
+    armed.guns[Weapon::Pistol.index()] = GunSlot {
+        owned: true,
+        magazine: 7,
+        reserve: 20,
+        ..default()
+    };
+    app.world_mut().entity_mut(entity).insert(armed.clone());
     app.world_mut().resource_mut::<WantedLevel>().stars = 3;
     let scale = app.world().resource::<RespawnConfig>().wasted_time_scale;
 
@@ -123,7 +129,12 @@ fn death_wasted_respawn_at_hospital() {
 
     assert_eq!(speed(&app), 1.0);
     assert_eq!(player(&mut app), entity, "respawn keeps the player entity");
-    assert_eq!(app.world().get::<Loadout>(entity), Some(&Loadout(7)));
+    let kept = app.world().get::<Loadout>(entity).unwrap();
+    assert_eq!(
+        (kept.held, kept.guns),
+        (armed.held, armed.guns),
+        "the loadout survives death"
+    );
     assert!(app.world().get::<Dead>(entity).is_none());
     let health = health(&mut app);
     let max = app.world().resource::<HealthConfig>().max_health;
@@ -185,7 +196,7 @@ fn wasted_abort_from_slowmo_restores_time() {
     assert!(horizontal(at, spawn) < 0.05, "respawned at {at}");
 }
 
-fn world_counts(app: &mut App) -> [usize; 6] {
+fn world_counts(app: &mut App) -> [usize; 8] {
     [
         count::<With<Player>>(app),
         count::<With<CityBuilding>>(app),
@@ -193,6 +204,8 @@ fn world_counts(app: &mut App) -> [usize; 6] {
         count::<With<CityGround>>(app),
         count::<With<CityEdgeWall>>(app),
         count::<With<Pickup>>(app),
+        count::<With<Dummy>>(app),
+        count::<With<WeaponPickup>>(app),
     ]
 }
 
@@ -202,12 +215,97 @@ fn respawn_keeps_world_one_shot() {
     settle(&mut app);
     let before = world_counts(&mut app);
     assert_eq!((before[0], before[5]), (1, 2));
+    let range = app.world().resource::<WeaponsConfig>().range;
+    assert_eq!((before[6], before[7]), (range.dummies as usize, 6));
     let u1_ticks = kill(&mut app);
     run_wasted(&mut app, u1_ticks);
     run_ticks(&mut app, 64);
     assert_eq!(
         world_counts(&mut app),
         before,
-        "[Player, CityBuilding, CityBlock, CityGround, CityEdgeWall, Pickup] changed across respawn"
+        "[Player, CityBuilding, CityBlock, CityGround, CityEdgeWall, Pickup, Dummy, WeaponPickup] \
+         changed across respawn"
+    );
+}
+
+/// B1: a damage message written in the last frame of `Wasted` must not reach the respawned player.
+#[test]
+fn damage_queued_during_wasted_is_dropped() {
+    let mut app = headless_app();
+    settle(&mut app);
+    kill(&mut app);
+    // The clock is deterministic: a second app on the same timeline gives the number of updates.
+    let mut probe = headless_app();
+    settle(&mut probe);
+    let probe_u1 = kill(&mut probe);
+    let updates = run_wasted(&mut probe, probe_u1).playing_at;
+    assert!(updates > 1, "GATE BROKEN: Wasted lasted {updates} updates");
+    for k in 1..updates {
+        assert_eq!(
+            game_state(&app),
+            GameState::Wasted,
+            "k={k}: left Wasted early"
+        );
+        app.update();
+    }
+    assert_eq!(
+        game_state(&app),
+        GameState::Wasted,
+        "GATE BROKEN: timeline drifted"
+    );
+    write_damage(&mut app, 30.0);
+    app.update();
+    assert_eq!(
+        game_state(&app),
+        GameState::Playing,
+        "GATE BROKEN: not back in Playing"
+    );
+    let max = app.world().resource::<HealthConfig>().max_health;
+    let h = health(&mut app);
+    assert_eq!((h.current, h.armor), (max, 0.0), "right after respawn");
+    run_ticks(&mut app, 4);
+    let h = health(&mut app);
+    assert_eq!(
+        (h.current, h.armor),
+        (max, 0.0),
+        "queued damage hit the respawned player"
+    );
+}
+
+/// A trigger pull, reload or weapon switch given on the Wasted screen must not act after respawn.
+#[test]
+fn input_raised_during_wasted_is_dropped() {
+    let mut app = headless_app();
+    settle(&mut app);
+    set_loadout(&mut app, |l| {
+        l.held = Some(Weapon::Pistol);
+        l.guns[Weapon::Pistol.index()] = GunSlot {
+            owned: true,
+            magazine: 10,
+            reserve: 20,
+            ..default()
+        };
+    });
+    kill(&mut app);
+    let origin = position(&mut app);
+    set_aim(&mut app, origin, origin + Vec3::NEG_Z * 10.0);
+    set_action(&mut app, |a| {
+        a.fire_requested = true;
+        a.reload_requested = true;
+        a.select = Some(WeaponRequest::Unarmed);
+    });
+    let mut updates = 0;
+    while game_state(&app) != GameState::Playing {
+        app.update();
+        updates += 1;
+        assert!(updates < 2000, "GATE BROKEN: Wasted never ended");
+    }
+    run_ticks(&mut app, 8);
+    let l = loadout(&mut app);
+    let slot = l.guns[Weapon::Pistol.index()];
+    assert_eq!(
+        (l.held, slot.magazine, slot.reserve, l.reload_left),
+        (Some(Weapon::Pistol), 10, 20, 0.0),
+        "input from the Wasted screen acted after respawn"
     );
 }

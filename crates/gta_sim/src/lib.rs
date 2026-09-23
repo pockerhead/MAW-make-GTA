@@ -4,6 +4,7 @@ pub mod character;
 pub mod combat;
 pub mod config;
 pub mod flow;
+pub mod layers;
 pub mod player;
 pub mod wanted;
 pub mod world;
@@ -14,7 +15,7 @@ use bevy_tnua_avian3d::prelude::*;
 use character::{
     CharacterPlugin, HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig,
 };
-use combat::CombatPlugin;
+use combat::{AIM_CONFIG, AimConfig, CombatPlugin, WEAPONS_CONFIG, WeaponsConfig};
 use config::{ConfigError, ConfigRoot, load_config};
 use flow::{FlowPlugin, RESPAWN_CONFIG, RespawnConfig};
 use player::PlayerPlugin;
@@ -42,6 +43,21 @@ pub fn compose_sim(
         path: root.path(RESPAWN_CONFIG),
         message,
     })?;
+    let weapons = load_config::<WeaponsConfig>(&root, WEAPONS_CONFIG)?;
+    weapons.validate().map_err(|message| ConfigError {
+        path: root.path(WEAPONS_CONFIG),
+        message,
+    })?;
+    let aim = load_config::<AimConfig>(&root, AIM_CONFIG)?;
+    aim.validate().map_err(|message| ConfigError {
+        path: root.path(AIM_CONFIG),
+        message,
+    })?;
+    // A city run rolls from its own seed; the fixed test level always rolls the same sequence.
+    let combat_seed = match source {
+        WorldSource::City { seed } => seed,
+        WorldSource::TestArea => 0,
+    };
     if let WorldSource::City { .. } = source {
         let params = load_config::<CityParams>(&root, CITY_CONFIG)?;
         params.validate().map_err(|message| ConfigError {
@@ -54,6 +70,8 @@ pub fn compose_sim(
         .insert_resource(cfg)
         .insert_resource(health)
         .insert_resource(respawn)
+        .insert_resource(weapons)
+        .insert_resource(aim)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),
@@ -61,7 +79,7 @@ pub fn compose_sim(
             CharacterPlugin,
             WorldPlugin { source },
             PlayerPlugin,
-            CombatPlugin,
+            CombatPlugin { seed: combat_seed },
             WantedPlugin,
         ));
     Ok(())

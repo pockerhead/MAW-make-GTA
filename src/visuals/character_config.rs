@@ -26,6 +26,23 @@ pub struct CharacterVisualConfig {
     pub(super) walk: LocomotionClip,
     pub(super) run: LocomotionClip,
     pub(super) sprint: LocomotionClip,
+    /// Rig joints the armed arm layer animates; locomotion keeps every other joint.
+    pub(super) arm_joints: Vec<String>,
+    /// Joint the held gun is attached to.
+    pub(super) hand_joint: String,
+    /// Arm clips while holding a one-handed gun (pistol).
+    pub(super) one_hand: ArmClipNames,
+    /// Arm clips while holding a two-handed gun (SMG, shotgun).
+    pub(super) two_hands: ArmClipNames,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ArmClipNames {
+    /// Looped while the gun is held.
+    pub(super) hold: String,
+    /// Played once per shot.
+    pub(super) shoot: String,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -36,9 +53,16 @@ pub(super) struct LocomotionClip {
     pub(super) native_speed: f32,
 }
 
-/// glTF animation indices of the clips shown for each `AnimState`, in `AnimState` declaration order.
+/// glTF animation indices of the character clips.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CharacterClips(pub [usize; 6]);
+pub struct CharacterClips {
+    /// Clip of each `AnimState`, in `AnimState` declaration order.
+    pub locomotion: [usize; 6],
+    /// Arm hold clip per `ArmPose` (one hand, two hands).
+    pub hold: [usize; 2],
+    /// Arm shoot clip per `ArmPose`.
+    pub shoot: [usize; 2],
+}
 
 impl CharacterVisualConfig {
     pub(super) fn scale(&self) -> f32 {
@@ -115,15 +139,27 @@ impl CharacterVisualConfig {
                 self.tinted_mesh
             ));
         }
-        let indices = self.clip_names().map(|name| {
+        for joint in self.arm_joints.iter().chain([&self.hand_joint]) {
+            if !rig.joints.contains(joint) {
+                errors.push(format!("joint {joint:?} is not in the rig of {model}"));
+            }
+        }
+        let mut index = |name: &str| {
             rig.clip_index(name).unwrap_or_else(|| {
                 errors.push(format!("clip {name:?} is not in the rig of {model}"));
                 0
             })
-        });
+        };
+        let locomotion = self.clip_names().map(&mut index);
+        let hold = [index(&self.one_hand.hold), index(&self.two_hands.hold)];
+        let shoot = [index(&self.one_hand.shoot), index(&self.two_hands.shoot)];
         if !errors.is_empty() {
             return Err(errors);
         }
-        Ok(CharacterClips(indices))
+        Ok(CharacterClips {
+            locomotion,
+            hold,
+            shoot,
+        })
     }
 }

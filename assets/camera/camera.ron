@@ -1,6 +1,6 @@
 (
     pivot_height: 1.55,
-    shoulder_offset: 0.45,
+    shoulder_offset: 0.8,
     distance: 3.8,
     fov_deg: 70.0,
     pitch_min_deg: -70.0,
@@ -9,4 +9,9 @@
     follow_half_life: 0.05,
     collision_radius: 0.25,
     collision_release_half_life: 0.25,
+    aim_shoulder_offset: 1.0,
+    aim_distance: 2.6,
+    aim_fov_deg: 55.0,
+    aim_transition: 0.15,
+    aim_sensitivity_scale: 0.7,
 )

@@ -15,4 +15,7 @@
     ground_sensor_cling_distance: 1.0,
     ground_spring_strength: 400.0,
     ground_spring_dampening: 1.2,
+    head_height: 1.6,
+    head_radius: 0.35,
+    aim_max_gait: Run,
 )

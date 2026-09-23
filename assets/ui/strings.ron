@@ -8,6 +8,10 @@
     wasted_color: (0.78, 0.08, 0.08),
     wasted_backdrop: (0.0, 0.0, 0.0, 0.35),
     wasted_saturation: 0.0,
+    damage_crit: "{damage} CRIT",
     hud: (margin: 24.0, bar_width: 200.0, bar_height: 12.0, bar_gap: 6.0,
-          health_color: (0.80, 0.15, 0.15), armor_color: (0.25, 0.45, 0.90), back_color: (0.0, 0.0, 0.0, 0.55)),
+          health_color: (0.80, 0.15, 0.15), armor_color: (0.25, 0.45, 0.90), back_color: (0.0, 0.0, 0.0, 0.55),
+          ammo_size: 22.0, ammo_color: (1.0, 1.0, 1.0), crosshair_dot: 4.0, crosshair_arm: 8.0,
+          crosshair_thickness: 2.0, crosshair_color: (1.0, 1.0, 1.0, 0.9), hit_marker_size: 28.0, hit_marker_seconds: 0.1,
+          hit_marker_color: (1.0, 1.0, 1.0), kill_marker_color: (0.9, 0.1, 0.1)),
 )

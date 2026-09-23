@@ -1,6 +1,6 @@
 use super::{GameState, WastedPhase};
-use crate::character::{CharacterBody, Dead, Health, HealthConfig};
-use crate::player::Player;
+use crate::character::{ActionIntent, CharacterBody, Dead, Health, HealthConfig};
+use crate::player::{DebugDamage, Player};
 use crate::world::HospitalSpawn;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -119,5 +119,17 @@ pub(super) fn respawn_player(
         velocity.0 = Vec3::ZERO;
         *health = Health::full(&cfg);
         commands.entity(entity).try_remove::<Dead>();
+    }
+}
+
+// The damage reader runs only in PlayingSystems: a message left from Wasted would hit the respawned player.
+pub(super) fn drop_queued_damage(mut queued: ResMut<Messages<DebugDamage>>) {
+    queued.clear();
+}
+
+// Weapon systems skip a Dead player: a trigger/reload/weapon latch from Wasted would act at the hospital.
+pub(super) fn drop_queued_input(mut players: Query<&mut ActionIntent, With<Player>>) {
+    for mut action in &mut players {
+        *action = ActionIntent::default();
     }
 }

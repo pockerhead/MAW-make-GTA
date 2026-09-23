@@ -23,6 +23,8 @@ pub struct UiConfig {
     pub wasted_backdrop: Rgba,
     /// Colour grading post-saturation of the 3D view while wasted.
     pub wasted_saturation: f32,
+    /// Label of a headshot damage number; `{damage}` is replaced with the value.
+    pub damage_crit: String,
     pub hud: HudLayout,
 }
 
@@ -36,6 +38,18 @@ pub struct HudLayout {
     pub health_color: Rgb,
     pub armor_color: Rgb,
     pub back_color: Rgba,
+    pub ammo_size: f32,
+    pub ammo_color: Rgb,
+    /// Crosshair dot edge, arm length and thickness, px.
+    pub crosshair_dot: f32,
+    pub crosshair_arm: f32,
+    pub crosshair_thickness: f32,
+    pub crosshair_color: Rgba,
+    pub hit_marker_size: f32,
+    /// Real seconds the hit marker stays on screen (GDD §7).
+    pub hit_marker_seconds: f32,
+    pub hit_marker_color: Rgb,
+    pub kill_marker_color: Rgb,
 }
 
 fn positive(field: &str, value: f32) -> Result<(), String> {
@@ -63,6 +77,7 @@ impl UiConfig {
             ("title_font", &self.title_font),
             ("loading", &self.loading),
             ("wasted", &self.wasted),
+            ("damage_crit", &self.damage_crit),
         ] {
             if value.is_empty() {
                 return Err(format!("{field} is empty"));
@@ -71,6 +86,9 @@ impl UiConfig {
         if !self.loading.contains("{seed}") {
             return Err("loading must contain {seed}".into());
         }
+        if !self.damage_crit.contains("{damage}") {
+            return Err("damage_crit must contain {damage}".into());
+        }
         let hud = &self.hud;
         positive("loading_size", self.loading_size)?;
         positive("wasted_size", self.wasted_size)?;
@@ -78,6 +96,12 @@ impl UiConfig {
         positive("hud.bar_width", hud.bar_width)?;
         positive("hud.bar_height", hud.bar_height)?;
         positive("hud.bar_gap", hud.bar_gap)?;
+        positive("hud.ammo_size", hud.ammo_size)?;
+        positive("hud.crosshair_dot", hud.crosshair_dot)?;
+        positive("hud.crosshair_arm", hud.crosshair_arm)?;
+        positive("hud.crosshair_thickness", hud.crosshair_thickness)?;
+        positive("hud.hit_marker_size", hud.hit_marker_size)?;
+        positive("hud.hit_marker_seconds", hud.hit_marker_seconds)?;
         if !(self.wasted_saturation.is_finite() && self.wasted_saturation >= 0.0) {
             return Err(format!(
                 "wasted_saturation must be a finite number >= 0, got {}",
@@ -93,7 +117,17 @@ impl UiConfig {
         let (r, g, b) = hud.armor_color;
         unit("hud.armor_color", &[r, g, b])?;
         let (r, g, b, a) = hud.back_color;
-        unit("hud.back_color", &[r, g, b, a])
+        unit("hud.back_color", &[r, g, b, a])?;
+        let (r, g, b, a) = hud.crosshair_color;
+        unit("hud.crosshair_color", &[r, g, b, a])?;
+        for (field, (r, g, b)) in [
+            ("hud.ammo_color", hud.ammo_color),
+            ("hud.hit_marker_color", hud.hit_marker_color),
+            ("hud.kill_marker_color", hud.kill_marker_color),
+        ] {
+            unit(field, &[r, g, b])?;
+        }
+        Ok(())
     }
 
     /// Font asset paths, each of which must be a third-party manifest file.

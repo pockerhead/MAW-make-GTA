@@ -1,7 +1,8 @@
 use crate::character::{
     CharacterControlConfig, Dead, Health, HealthConfig, HealthSystems, LocomotionConfig,
-    apply_damage, character_components, regenerate,
+    character_components, regenerate,
 };
+use crate::combat::Loadout;
 use crate::flow::{GameState, PlayingSystems};
 use crate::world::PlayerSpawn;
 use bevy::prelude::*;
@@ -56,6 +57,7 @@ fn spawn_player(
         Transform::from_translation(spawn.0 + Vec3::Y * config.float_height),
         character_components(&config, handle.0.clone()),
         Health::full(&health),
+        Loadout::default(),
     ));
 }
 
@@ -70,8 +72,7 @@ fn apply_debug_damage(
             continue;
         }
         for mut health in &mut players {
-            (health.current, health.armor) = apply_damage(health.current, health.armor, amount);
-            health.since_damage = 0.0;
+            health.take(amount);
         }
     }
 }

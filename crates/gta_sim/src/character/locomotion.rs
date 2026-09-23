@@ -25,11 +25,21 @@ pub struct LocomotionConfig {
     pub ground_sensor_cling_distance: f32,
     pub ground_spring_strength: f32,
     pub ground_spring_dampening: f32,
+    /// Centre of the head hitbox sphere above the feet, m.
+    pub head_height: f32,
+    pub head_radius: f32,
+    /// Fastest gait while aiming (GDD §3.2).
+    pub aim_max_gait: Gait,
 }
 
 impl LocomotionConfig {
-    /// Checks the speeds that split `AnimState`.
+    /// Checks the speeds that split `AnimState` and the head hitbox against the capsule.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_speeds()?;
+        self.validate_head()
+    }
+
+    fn validate_speeds(&self) -> Result<(), String> {
         let speeds = [
             self.anim_idle_speed,
             self.walk_speed,
@@ -46,6 +56,38 @@ impl LocomotionConfig {
             "anim_idle_speed {} / walk_speed {} / run_speed {} / sprint_speed {} must be finite and satisfy \
              0 < anim_idle_speed < walk_speed < run_speed < sprint_speed",
             self.anim_idle_speed, self.walk_speed, self.run_speed, self.sprint_speed
+        ))
+    }
+
+    /// The head sphere must stick out of the capsule top, otherwise a ray always hits the capsule
+    /// before the head.
+    fn validate_head(&self) -> Result<(), String> {
+        let values = [
+            self.head_height,
+            self.head_radius,
+            self.capsule_radius,
+            self.capsule_height,
+            self.float_height,
+        ];
+        if !values.iter().all(|v| v.is_finite()) || self.head_radius <= 0.0 {
+            return Err(format!(
+                "head_height {} / head_radius {} must be finite, head_radius > 0",
+                self.head_height, self.head_radius
+            ));
+        }
+        let top = self.float_height + self.capsule_height / 2.0;
+        let inside_top = self.head_height < top && self.head_height + self.head_radius > top;
+        let sticks_out = self.head_height - self.head_radius < top - self.capsule_radius;
+        if inside_top && sticks_out {
+            return Ok(());
+        }
+        Err(format!(
+            "head_height {} / head_radius {} must satisfy head_height < {top} < head_height + \
+             head_radius and head_height - head_radius < {}, otherwise a ray always hits the \
+             capsule before the head",
+            self.head_height,
+            self.head_radius,
+            top - self.capsule_radius
         ))
     }
 

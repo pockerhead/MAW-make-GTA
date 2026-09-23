@@ -98,6 +98,14 @@ impl Health {
             since_damage: 0.0,
         }
     }
+
+    /// Applies `amount` of damage through armour; `true` only on the transition from alive to 0.
+    pub fn take(&mut self, amount: f32) -> bool {
+        let was_alive = self.current > 0.0;
+        (self.current, self.armor) = apply_damage(self.current, self.armor, amount);
+        self.since_damage = 0.0;
+        was_alive && self.current <= 0.0
+    }
 }
 
 /// Marks a character whose health reached zero; removed on respawn.
@@ -166,6 +174,15 @@ mod tests {
                 "({current}, {armor}, {amount})"
             );
         }
+    }
+
+    #[test]
+    fn take_reports_the_lethal_hit_once() {
+        let mut health = Health::full(&cfg());
+        assert!(!health.take(30.0));
+        assert_eq!(health.current, 70.0);
+        assert!(health.take(100.0));
+        assert!(!health.take(10.0), "a hit on 0 HP is not a second kill");
     }
 
     #[test]

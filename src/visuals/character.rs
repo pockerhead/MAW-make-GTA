@@ -2,12 +2,36 @@
 
 use super::character_config::{CharacterClips, CharacterVisualConfig};
 use avian3d::prelude::LinearVelocity;
-use bevy::{gltf::GltfMeshName, prelude::*, world_serialization::WorldInstanceReady};
-use gta_sim::character::{AnimState, CharacterBody};
+use bevy::{
+    animation::AnimationTargetId, gltf::GltfMeshName, prelude::*,
+    world_serialization::WorldInstanceReady,
+};
+use gta_sim::{
+    character::{AnimState, CharacterBody},
+    combat::{Loadout, ShotFired, Weapon},
+};
 use std::time::Duration;
 
 /// glTF faces +Z, gameplay bodies face -Z.
 const MODEL_YAW: f32 = std::f32::consts::PI;
+/// Animation mask groups: the arm joints, and every other animated node of the model.
+pub(super) const ARMS_GROUP: u32 = 0;
+pub(super) const BODY_GROUP: u32 = 1;
+
+/// Arm clip set of a held gun.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ArmPose {
+    OneHand,
+    TwoHands,
+}
+
+/// Arm pose for the held weapon; `None` leaves the arms to locomotion.
+pub(super) fn arm_pose(held: Option<Weapon>) -> Option<ArmPose> {
+    match held? {
+        Weapon::Pistol => Some(ArmPose::OneHand),
+        Weapon::Smg | Weapon::Shotgun => Some(ArmPose::TwoHands),
+    }
+}
 
 pub struct CharacterVisualsPlugin;
 
@@ -24,25 +48,43 @@ impl Plugin for CharacterVisualsPlugin {
 #[derive(Resource)]
 pub(super) struct CharacterAnimations {
     pub(super) graph: Handle<AnimationGraph>,
+    /// Locomotion on every joint (unarmed).
     pub(super) nodes: [AnimationNodeIndex; 6],
+    /// The same locomotion without the arms (armed: the arm layer owns them).
+    pub(super) legs: [AnimationNodeIndex; 6],
+    /// Arm-only clips per `ArmPose`.
+    pub(super) hold: [AnimationNodeIndex; 2],
+    pub(super) shoot: [AnimationNodeIndex; 2],
 }
 
 impl FromWorld for CharacterAnimations {
     fn from_world(world: &mut World) -> Self {
         let model = world.resource::<CharacterVisualConfig>().model.clone();
-        let clips = world.resource::<CharacterClips>().0;
+        let clips = *world.resource::<CharacterClips>();
         let asset_server = world.resource::<AssetServer>().clone();
+        let clip = |index: usize| {
+            asset_server.load(GltfAssetLabel::Animation(index).from_asset(model.clone()))
+        };
         let mut graph = AnimationGraph::new();
         let root = graph.root;
-        let nodes = clips.map(|index| {
-            graph.add_clip(
-                asset_server.load(GltfAssetLabel::Animation(index).from_asset(model.clone())),
-                1.0,
-                root,
-            )
-        });
+        let nodes = clips.locomotion.map(|i| graph.add_clip(clip(i), 1.0, root));
+        let legs = clips
+            .locomotion
+            .map(|i| graph.add_clip_with_mask(clip(i), 1 << ARMS_GROUP, 1.0, root));
+        let hold = clips
+            .hold
+            .map(|i| graph.add_clip_with_mask(clip(i), 1 << BODY_GROUP, 1.0, root));
+        let shoot = clips
+            .shoot
+            .map(|i| graph.add_clip_with_mask(clip(i), 1 << BODY_GROUP, 1.0, root));
         let graph = world.resource_mut::<Assets<AnimationGraph>>().add(graph);
-        Self { graph, nodes }
+        Self {
+            graph,
+            nodes,
+            legs,
+            hold,
+            shoot,
+        }
     }
 }
 
@@ -56,6 +98,10 @@ pub struct CharacterModel;
 pub(super) struct CharacterAnimator {
     pub(super) character: Entity,
     pub(super) shown: AnimState,
+    /// Whether `shown` plays on the `legs` nodes (a gun is held).
+    pub(super) armed: bool,
+    /// The arm-layer node playing, if any.
+    pub(super) arms: Option<AnimationNodeIndex>,
 }
 
 /// Model feet (y = 0) on the ground: the body centre floats `float_height` above it.
@@ -94,9 +140,11 @@ fn on_model_ready(
     children: Query<&Children>,
     mut players: Query<&mut AnimationPlayer>,
     meshes: Query<(&GltfMeshName, &MeshMaterial3d<StandardMaterial>)>,
+    targets: Query<(&Name, &AnimationTargetId)>,
     animations: Res<CharacterAnimations>,
     config: Res<CharacterVisualConfig>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
     mut commands: Commands,
 ) {
     let Ok(child_of) = models.get(ready.entity) else {
@@ -126,6 +174,37 @@ fn on_model_ready(
             ready.entity
         );
     }
+    let groups = children
+        .iter_descendants(ready.entity)
+        .filter_map(|entity| targets.get(entity).ok())
+        .map(|(name, target)| {
+            let arm = config.arm_joints.iter().any(|joint| joint == name.as_str());
+            (*target, if arm { ARMS_GROUP } else { BODY_GROUP })
+        })
+        .collect::<Vec<_>>();
+    assign_mask_groups(&animations.graph, &groups, &mut graphs);
+}
+
+/// Adds the model's animated nodes to the shared graph's mask groups (no-op once every node is known).
+fn assign_mask_groups(
+    graph: &Handle<AnimationGraph>,
+    groups: &[(AnimationTargetId, u32)],
+    graphs: &mut Assets<AnimationGraph>,
+) {
+    let known = graphs.get(graph).is_some_and(|graph| {
+        groups
+            .iter()
+            .all(|(target, group)| graph.mask_groups.get(target) == Some(&(1 << group)))
+    });
+    if known {
+        return;
+    }
+    let Some(mut graph) = graphs.get_mut(graph) else {
+        return;
+    };
+    for (target, group) in groups {
+        graph.add_target_to_mask_group(*target, *group);
+    }
 }
 
 fn wire_player(
@@ -149,6 +228,8 @@ fn wire_player(
         CharacterAnimator {
             character,
             shown: AnimState::Idle,
+            armed: false,
+            arms: None,
         },
     ));
 }
@@ -181,7 +262,8 @@ fn tint_mesh(
 }
 
 fn drive_character_animation(
-    characters: Query<(&AnimState, &LinearVelocity)>,
+    characters: Query<(&AnimState, &LinearVelocity, Option<&Loadout>)>,
+    mut shots: MessageReader<ShotFired>,
     mut animators: Query<(
         &mut CharacterAnimator,
         &mut AnimationPlayer,
@@ -190,12 +272,19 @@ fn drive_character_animation(
     animations: Res<CharacterAnimations>,
     config: Res<CharacterVisualConfig>,
 ) {
+    let shooters = shots.read().map(|shot| shot.shooter).collect::<Vec<_>>();
     for (mut animator, mut player, mut transitions) in &mut animators {
-        let Ok((state, velocity)) = characters.get(animator.character) else {
+        let Ok((state, velocity, loadout)) = characters.get(animator.character) else {
             continue;
         };
-        let node = animations.nodes[*state as usize];
-        if *state != animator.shown {
+        let pose = arm_pose(loadout.and_then(|loadout| loadout.held));
+        let locomotion = if pose.is_some() {
+            &animations.legs
+        } else {
+            &animations.nodes
+        };
+        let node = locomotion[*state as usize];
+        if (*state, pose.is_some()) != (animator.shown, animator.armed) {
             transitions
                 .play(
                     &mut player,
@@ -204,13 +293,51 @@ fn drive_character_animation(
                 )
                 .repeat();
             animator.shown = *state;
+            animator.armed = pose.is_some();
         }
+        let fired = shooters.contains(&animator.character);
+        drive_arms(&mut animator, &mut player, &animations, pose, fired);
         let Some(active) = player.animation_mut(node) else {
             continue;
         };
         let horizontal = Vec2::new(velocity.x, velocity.z).length();
         active.set_speed(playback_rate(*state, horizontal, &config));
     }
+}
+
+/// Arm layer: the hold clip loops; a shot (re)starts the shoot clip, which hands back to hold when it ends.
+fn drive_arms(
+    animator: &mut CharacterAnimator,
+    player: &mut AnimationPlayer,
+    animations: &CharacterAnimations,
+    pose: Option<ArmPose>,
+    fired: bool,
+) {
+    let wanted = pose.map(|pose| {
+        let shoot = animations.shoot[pose as usize];
+        let shooting = fired || player.animation(shoot).is_some_and(|a| !a.is_finished());
+        let node = if shooting {
+            shoot
+        } else {
+            animations.hold[pose as usize]
+        };
+        (node, shooting)
+    });
+    let node = wanted.map(|(node, _)| node);
+    if node != animator.arms
+        && let Some(old) = animator.arms
+    {
+        player.stop(old);
+    }
+    if let Some((new, shooting)) = wanted
+        && (node != animator.arms || fired)
+    {
+        let active = player.start(new);
+        if !shooting {
+            active.repeat();
+        }
+    }
+    animator.arms = node;
 }
 
 /// Clip rate that keeps the feet planted: body speed over the clip's native speed in metres.

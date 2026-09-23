@@ -51,6 +51,13 @@
   that yields a DIFFERENT error, not only "no error". A clamp gate driven by steps that divide the distance
   exactly never overshoots, so removing the clamp stays GREEN — include one off-grid start value.
 
+- 2026-09-23 (TASK-007) — a config-sabotage fixture sits strictly on the failing side of a rule, never on
+  its boundary (1.6 + 0.2 = 1.8000001 passed in f32). A hitbox child inside its own capsule is never the
+  closest ray hit; spatial queries name their `SpatialQueryFilter` mask explicitly (hitbox sensors exist).
+- 2026-09-23 (TASK-007) — `bevy_brp_extras` screenshot publishes the PNG before its capture flag clears:
+  space consecutive screenshots >= 0.15 s. A visual shorter than capture latency (a 60 ms tracer) is gated
+  by its mechanism (entity count around the capture), its look by the owner run.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

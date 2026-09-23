@@ -36,6 +36,7 @@ pub struct RenderConfig {
     pub(super) facade: FacadeConfig,
     pub(super) props: PropsConfig,
     pub(super) pickups: PickupVisuals,
+    pub(super) weapons: WeaponVisuals,
 }
 
 /// sRGB colours per district kind.
@@ -154,6 +155,26 @@ pub(super) struct PickupVisuals {
     pub(super) lift: f32,
     pub(super) health_color: Rgb,
     pub(super) armor_color: Rgb,
+}
+
+/// Placeholder boxes of guns and ammo: held, lying as pickups (Q2: primitives, no weapon assets).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WeaponVisuals {
+    /// Box of the gun in the hand (x, y, z), m; z points along the barrel.
+    pub(super) held_size: (f32, f32, f32),
+    /// Gun centre in the hand joint's frame, m (the joint's model scale is undone in code).
+    pub(super) hand_offset: (f32, f32, f32),
+    /// Gun rotation in the hand joint's frame: yaw about Y, then pitch about X, degrees.
+    pub(super) hand_yaw_deg: f32,
+    pub(super) hand_pitch_deg: f32,
+    pub(super) pickup_size: (f32, f32, f32),
+    /// Cube edge of an ammo pickup, m.
+    pub(super) ammo_size: f32,
+    pub(super) pistol_color: Rgb,
+    pub(super) smg_color: Rgb,
+    pub(super) shotgun_color: Rgb,
+    pub(super) ammo_color: Rgb,
 }
 
 impl PropsConfig {
@@ -354,6 +375,36 @@ impl RenderConfig {
         for (name, (r, g, b)) in [
             ("pickups.health_color", k.health_color),
             ("pickups.armor_color", k.armor_color),
+        ] {
+            for value in [r, g, b] {
+                unit(name, value)?;
+            }
+        }
+        let w = &self.weapons;
+        for (name, (x, y, z)) in [
+            ("weapons.held_size", w.held_size),
+            ("weapons.pickup_size", w.pickup_size),
+        ] {
+            for value in [x, y, z] {
+                positive(name, value)?;
+            }
+        }
+        positive("weapons.ammo_size", w.ammo_size)?;
+        let (x, y, z) = w.hand_offset;
+        for (name, value) in [
+            ("weapons.hand_offset", x),
+            ("weapons.hand_offset", y),
+            ("weapons.hand_offset", z),
+            ("weapons.hand_yaw_deg", w.hand_yaw_deg),
+            ("weapons.hand_pitch_deg", w.hand_pitch_deg),
+        ] {
+            check(value.is_finite(), name, "must be finite")?;
+        }
+        for (name, (r, g, b)) in [
+            ("weapons.pistol_color", w.pistol_color),
+            ("weapons.smg_color", w.smg_color),
+            ("weapons.shotgun_color", w.shotgun_color),
+            ("weapons.ammo_color", w.ammo_color),
         ] {
             for value in [r, g, b] {
                 unit(name, value)?;

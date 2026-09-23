@@ -132,6 +132,10 @@ class Game:
     def move_mouse(self, dx, dy):
         return self.call("brp_extras/move_mouse", {"delta": [dx, dy]})
 
+    def send_mouse_button(self, button, ms=100):
+        """Press "Left" / "Right" for `ms` milliseconds (bevy_brp_extras releases it)."""
+        return self.call("brp_extras/send_mouse_button", {"button": button, "duration_ms": ms})
+
     def screenshot(self, path):
         return self.call("brp_extras/screenshot", {"path": str(Path(path).resolve())}, timeout=60)
 

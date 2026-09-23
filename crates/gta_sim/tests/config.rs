@@ -3,6 +3,7 @@ mod common;
 use common::assets_root;
 use gta_sim::{
     character::{HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig},
+    combat::{AIM_CONFIG, AimConfig, WEAPONS_CONFIG, WeaponsConfig},
     config::{ConfigRoot, load_config},
     flow::{RESPAWN_CONFIG, RespawnConfig},
     world::{CITY_CONFIG, CityParams},
@@ -155,4 +156,87 @@ fn health_regen_cap_is_validated() {
 fn pickup_spacing_must_exceed_radius() {
     let error = health_error("spacing", "spacing: 6.0)", "spacing: 0.5)");
     assert!(error.contains("spacing"), "{error}");
+}
+
+#[test]
+fn shipped_weapons_config_loads() {
+    load_config::<WeaponsConfig>(&assets_root(), WEAPONS_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn shipped_aim_config_loads() {
+    load_config::<AimConfig>(&assets_root(), AIM_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+/// Validation error of the shipped `rel` config with `from` replaced by `to`.
+fn sabotaged<T: serde::de::DeserializeOwned>(
+    rel: &str,
+    tag: &str,
+    from: &str,
+    to: &str,
+    validate: impl FnOnce(&T) -> Result<(), String>,
+) -> String {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_{tag}_{}_{}",
+        std::process::id(),
+        unique
+    )));
+    let file = root.path(rel);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = fs::read_to_string(assets_root().path(rel)).unwrap();
+    assert!(
+        original.contains(from),
+        "GATE BROKEN: shipped {rel} has no {from:?}"
+    );
+    fs::write(&file, original.replacen(from, to, 1)).unwrap();
+    let loaded = load_config::<T>(&root, rel);
+    fs::remove_dir_all(&root.0).unwrap();
+    validate(&loaded.unwrap()).unwrap_err()
+}
+
+#[test]
+fn head_must_stick_out_of_capsule() {
+    let error = sabotaged::<LocomotionConfig>(
+        LOCOMOTION_CONFIG,
+        "head",
+        "head_radius: 0.35,",
+        // 0.2 would only touch the capsule top (1.6 + 0.2 = 1.8 = top): f32 rounding decides it.
+        "head_radius: 0.15,",
+        LocomotionConfig::validate,
+    );
+    assert!(error.contains("head_radius"), "{error}");
+}
+
+#[test]
+fn damage_variance_below_one() {
+    let error = sabotaged::<WeaponsConfig>(
+        WEAPONS_CONFIG,
+        "variance",
+        "damage: 25.0, damage_variance: 0.1,",
+        "damage: 25.0, damage_variance: 1.0,",
+        WeaponsConfig::validate,
+    );
+    assert!(error.contains("pistol.damage_variance"), "{error}");
+}
+
+#[test]
+fn reload_must_be_positive() {
+    let error = sabotaged::<WeaponsConfig>(
+        WEAPONS_CONFIG,
+        "reload",
+        "reload: 1.2,",
+        "reload: 0.0,",
+        WeaponsConfig::validate,
+    );
+    assert!(error.contains("pistol.reload"), "{error}");
 }

@@ -4,8 +4,8 @@
 use super::{
     CHARACTER_VISUAL_CONFIG, CharacterClips, CharacterVisualConfig,
     character::{
-        CharacterAnimations, CharacterAnimator, CharacterModel, CharacterVisualsPlugin,
-        model_transform, playback_rate,
+        ARMS_GROUP, ArmPose, BODY_GROUP, CharacterAnimations, CharacterAnimator, CharacterModel,
+        CharacterVisualsPlugin, arm_pose, model_transform, playback_rate,
     },
 };
 use avian3d::prelude::LinearVelocity;
@@ -15,6 +15,7 @@ use bevy::{
 };
 use gta_sim::{
     character::{AnimState, Gait, MoveIntent, move_direction},
+    combat::{Loadout, ShotFired, Weapon},
     compose_sim,
     config::{
         ConfigRoot, load_config,
@@ -99,10 +100,15 @@ fn anim_state(app: &App, player: Entity) -> AnimState {
 fn character_visuals_reference_manifest_rig() {
     let config = visual_config();
     config.validate().unwrap();
-    // idle, walk, sprint (run), sprint, jump, fall in the glTF animation order of the pinned archive.
+    // idle, walk, sprint (run), sprint, jump, fall; holding-right/-both and their -shoot clips,
+    // in the glTF animation order of the pinned archive.
     assert_eq!(
         config.resolve(&manifest()).unwrap(),
-        CharacterClips([1, 2, 3, 3, 4, 5])
+        CharacterClips {
+            locomotion: [1, 2, 3, 3, 4, 5],
+            hold: [13, 15],
+            shoot: [16, 18],
+        }
     );
     let order = [
         AnimState::Idle,
@@ -236,9 +242,34 @@ fn graph_nodes_follow_manifest_clips() {
     let graph = graphs
         .get(&animations.graph)
         .expect("CharacterAnimations graph is not in Assets<AnimationGraph>");
-    let clips = shipped_clips().0;
-    for (node, clip) in animations.nodes.iter().zip(clips) {
-        let Some(AnimationNodeType::Clip(handle)) = graph.get(*node).map(|n| &n.node_type) else {
+    let clips = shipped_clips();
+    let arms = 1 << ARMS_GROUP;
+    let body = 1 << BODY_GROUP;
+    let expected = animations
+        .nodes
+        .iter()
+        .zip(clips.locomotion)
+        .map(|(node, clip)| (*node, clip, 0))
+        .chain(
+            animations
+                .legs
+                .iter()
+                .zip(clips.locomotion)
+                .map(|(node, clip)| (*node, clip, arms)),
+        )
+        .chain(
+            animations
+                .hold
+                .iter()
+                .chain(&animations.shoot)
+                .zip(clips.hold.into_iter().chain(clips.shoot))
+                .map(|(node, clip)| (*node, clip, body)),
+        );
+    for (node, clip, mask) in expected {
+        let Some(graph_node) = graph.get(node) else {
+            panic!("node {node:?} is not in the graph");
+        };
+        let AnimationNodeType::Clip(handle) = &graph_node.node_type else {
             panic!("node {node:?} is not a clip node");
         };
         assert_eq!(
@@ -247,6 +278,35 @@ fn graph_nodes_follow_manifest_clips() {
                 "third_party/mini-characters/character-male-a.glb#Animation{clip}"
             ))
         );
+        assert_eq!(graph_node.mask, mask, "mask of node {node:?} (clip {clip})");
+    }
+}
+
+#[test]
+fn unknown_arm_joints_are_rejected() {
+    let mut config = visual_config();
+    config.hand_joint = "hand-right".into();
+    config.arm_joints.push("elbow-left".into());
+    let errors = config
+        .resolve(&manifest())
+        .expect_err("unknown joints accepted");
+    for joint in ["hand-right", "elbow-left"] {
+        assert!(
+            errors.iter().any(|e| e.contains(joint)),
+            "{joint} not reported: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn arm_pose_per_weapon() {
+    for (held, pose) in [
+        (None, None),
+        (Some(Weapon::Pistol), Some(ArmPose::OneHand)),
+        (Some(Weapon::Smg), Some(ArmPose::TwoHands)),
+        (Some(Weapon::Shotgun), Some(ArmPose::TwoHands)),
+    ] {
+        assert_eq!(arm_pose(held), pose, "{held:?}");
     }
 }
 
@@ -280,6 +340,8 @@ fn animator_follows_anim_state() {
             CharacterAnimator {
                 character: player,
                 shown: AnimState::Idle,
+                armed: false,
+                arms: None,
             },
         ))
         .id();
@@ -319,4 +381,102 @@ fn animator_follows_anim_state() {
             "{state:?}: clip speed {speed}, expected {expected} at {horizontal} m/s"
         );
     }
+}
+
+fn active_nodes(app: &App, animator: Entity) -> Vec<AnimationNodeIndex> {
+    let mut nodes = app
+        .world()
+        .get::<AnimationPlayer>(animator)
+        .unwrap()
+        .playing_animations()
+        .map(|(node, _)| *node)
+        .collect::<Vec<_>>();
+    nodes.sort();
+    nodes
+}
+
+/// Armed: locomotion moves to the arm-less nodes, the arms play the weapon's hold clip, a shot its
+/// shoot clip. (Returning from shoot to hold needs the clip to advance: runtime, t6 screenshots.)
+#[test]
+fn armed_animator_layers_arm_clips() {
+    let mut app = character_visuals_app();
+    for _ in 0..64 {
+        app.update();
+    }
+    let player = player(&mut app);
+    let animator = app
+        .world_mut()
+        .spawn((
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            // Not the player's state, so the first update starts a locomotion clip.
+            CharacterAnimator {
+                character: player,
+                shown: AnimState::Fall,
+                armed: false,
+                arms: None,
+            },
+        ))
+        .id();
+    app.update();
+    let (nodes, legs, hold, shoot) = {
+        let a = app.world().resource::<CharacterAnimations>();
+        (a.nodes, a.legs, a.hold, a.shoot)
+    };
+    let idle = AnimState::Idle as usize;
+    let main = |app: &App| {
+        app.world()
+            .get::<AnimationTransitions>(animator)
+            .unwrap()
+            .get_main_animation()
+    };
+    assert_eq!(anim_state(&app, player), AnimState::Idle);
+    assert_eq!(
+        main(&app),
+        Some(nodes[idle]),
+        "unarmed: full-body locomotion"
+    );
+    assert!(
+        !active_nodes(&app, animator)
+            .iter()
+            .any(|n| hold.contains(n) || shoot.contains(n)),
+        "unarmed: no arm clip"
+    );
+    for (weapon, pose) in [(Weapon::Pistol, 0), (Weapon::Smg, 1)] {
+        app.world_mut().get_mut::<Loadout>(player).unwrap().held = Some(weapon);
+        app.update();
+        assert_eq!(
+            main(&app),
+            Some(legs[idle]),
+            "{weapon:?}: arm-less locomotion"
+        );
+        assert!(
+            active_nodes(&app, animator).contains(&hold[pose]),
+            "{weapon:?}: hold clip not playing"
+        );
+        app.world_mut().write_message(ShotFired {
+            shooter: player,
+            weapon,
+            muzzle: Vec3::ZERO,
+        });
+        app.update();
+        let active = active_nodes(&app, animator);
+        assert!(
+            active.contains(&shoot[pose]),
+            "{weapon:?}: shoot clip not playing"
+        );
+        assert!(
+            !active.contains(&hold[pose]),
+            "{weapon:?}: hold still playing"
+        );
+    }
+    app.world_mut().get_mut::<Loadout>(player).unwrap().held = None;
+    app.update();
+    assert_eq!(main(&app), Some(nodes[idle]), "unarmed again");
+    assert!(
+        !active_nodes(&app, animator)
+            .iter()
+            .any(|n| hold.contains(n) || shoot.contains(n)),
+        "unarmed again: arm clip still playing"
+    );
 }

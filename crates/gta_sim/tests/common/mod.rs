@@ -1,12 +1,19 @@
 #![allow(dead_code)]
 
-use avian3d::prelude::Position;
+use avian3d::prelude::*;
 use bevy::{
-    asset::AssetPlugin, ecs::query::QueryFilter, prelude::*, state::app::StatesPlugin,
+    asset::AssetPlugin,
+    ecs::{message::MessageCursor, query::QueryFilter},
+    prelude::*,
+    state::app::StatesPlugin,
     time::TimeUpdateStrategy,
 };
 use gta_sim::{
-    character::{Health, LocomotionConfig, MoveIntent},
+    character::{
+        ActionIntent, AimIntent, CharacterControlConfig, Health, HealthConfig, LocomotionConfig,
+        MoveIntent,
+    },
+    combat::{BulletTrace, DamageDealt, Loadout, ShotFired, dummy_bundle},
     compose_sim,
     config::ConfigRoot,
     flow::{GameState, WastedPhase},
@@ -175,4 +182,138 @@ pub fn count<F: QueryFilter>(app: &mut App) -> usize {
         .query_filtered::<(), F>()
         .iter(app.world())
         .count()
+}
+
+/// Aims the player from `origin` at `target`.
+pub fn set_aim(app: &mut App, origin: Vec3, target: Vec3) {
+    let entity = player(app);
+    let mut aim = app
+        .world_mut()
+        .get_mut::<AimIntent>(entity)
+        .expect("GATE BROKEN: player missing AimIntent");
+    aim.origin = origin;
+    aim.direction = (target - origin).normalize();
+}
+
+pub fn set_action(app: &mut App, update: impl FnOnce(&mut ActionIntent)) {
+    let entity = player(app);
+    update(
+        app.world_mut()
+            .get_mut::<ActionIntent>(entity)
+            .expect("GATE BROKEN: player missing ActionIntent")
+            .as_mut(),
+    );
+}
+
+pub fn loadout(app: &mut App) -> Loadout {
+    let entity = player(app);
+    app.world()
+        .get::<Loadout>(entity)
+        .expect("GATE BROKEN: player missing Loadout")
+        .clone()
+}
+
+pub fn set_loadout(app: &mut App, update: impl FnOnce(&mut Loadout)) {
+    let entity = player(app);
+    update(
+        app.world_mut()
+            .get_mut::<Loadout>(entity)
+            .expect("GATE BROKEN: player missing Loadout")
+            .as_mut(),
+    );
+}
+
+/// A target dummy built by the production bundle, feet at `feet`.
+pub fn spawn_dummy(app: &mut App, feet: Vec3) -> Entity {
+    let world = app.world();
+    let loco = world.resource::<LocomotionConfig>().clone();
+    let health = world.resource::<HealthConfig>().clone();
+    let handle = world.resource::<CharacterControlConfig>().0.clone();
+    app.world_mut()
+        .spawn(dummy_bundle(&loco, handle, &health, feet))
+        .id()
+}
+
+pub fn health_of(app: &App, entity: Entity) -> Health {
+    *app.world()
+        .get::<Health>(entity)
+        .expect("GATE BROKEN: target missing Health")
+}
+
+pub fn set_health_of(app: &mut App, entity: Entity, update: impl FnOnce(&mut Health)) {
+    update(
+        app.world_mut()
+            .get_mut::<Health>(entity)
+            .expect("GATE BROKEN: target missing Health")
+            .as_mut(),
+    );
+}
+
+/// A static cuboid fixture.
+pub fn spawn_wall(app: &mut App, center: Vec3, size: Vec3) -> Entity {
+    app.world_mut()
+        .spawn((
+            RigidBody::Static,
+            Collider::cuboid(size.x, size.y, size.z),
+            Transform::from_translation(center),
+        ))
+        .id()
+}
+
+/// Weapon messages written while ticking through `Shots::run`, each read exactly once.
+pub struct Shots {
+    fired: MessageCursor<ShotFired>,
+    traces: MessageCursor<BulletTrace>,
+    dealt: MessageCursor<DamageDealt>,
+    pub shots: Vec<ShotFired>,
+    pub trace_log: Vec<BulletTrace>,
+    pub dealt_log: Vec<DamageDealt>,
+}
+
+impl Shots {
+    pub fn new(app: &App) -> Self {
+        let world = app.world();
+        Self {
+            fired: world.resource::<Messages<ShotFired>>().get_cursor_current(),
+            traces: world
+                .resource::<Messages<BulletTrace>>()
+                .get_cursor_current(),
+            dealt: world
+                .resource::<Messages<DamageDealt>>()
+                .get_cursor_current(),
+            shots: Vec::new(),
+            trace_log: Vec::new(),
+            dealt_log: Vec::new(),
+        }
+    }
+
+    /// Runs `ticks` fixed ticks one at a time, reading the messages after each.
+    pub fn run(&mut self, app: &mut App, ticks: u32) {
+        for _ in 0..ticks {
+            run_ticks(app, 1);
+            let world = app.world();
+            self.shots.extend(
+                self.fired
+                    .read(world.resource::<Messages<ShotFired>>())
+                    .copied(),
+            );
+            self.trace_log.extend(
+                self.traces
+                    .read(world.resource::<Messages<BulletTrace>>())
+                    .copied(),
+            );
+            self.dealt_log.extend(
+                self.dealt
+                    .read(world.resource::<Messages<DamageDealt>>())
+                    .copied(),
+            );
+        }
+    }
+
+    /// Clears the logs, keeping the cursors.
+    pub fn clear(&mut self) {
+        self.shots.clear();
+        self.trace_log.clear();
+        self.dealt_log.clear();
+    }
 }

@@ -11,9 +11,11 @@ mod facade;
 mod pickups;
 mod props;
 mod sky;
+mod weapons;
 
 pub use character_config::{CHARACTER_VISUAL_CONFIG, CharacterClips, CharacterVisualConfig};
 pub use config::{RENDER_CONFIG, RenderConfig};
+pub use weapons::HeldGun;
 
 use bevy::{
     light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight},
@@ -44,9 +46,19 @@ impl Plugin for VisualsPlugin {
             city::CityVisualsPlugin,
             character::CharacterVisualsPlugin,
         ))
-        .add_systems(Update, pickups::show_available_pickups)
+        .init_resource::<weapons::WeaponVisualAssets>()
+        .add_systems(
+            Update,
+            (
+                pickups::show_available_pickups,
+                weapons::show_available_weapon_pickups,
+                weapons::attach_held_gun,
+                weapons::show_held_gun,
+            ),
+        )
         .add_observer(visualize_block)
-        .add_observer(pickups::visualize_pickup);
+        .add_observer(pickups::visualize_pickup)
+        .add_observer(weapons::visualize_weapon_pickup);
     }
 }
 

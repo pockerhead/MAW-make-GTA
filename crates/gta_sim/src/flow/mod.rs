@@ -55,6 +55,13 @@ impl Plugin for FlowPlugin {
             .add_systems(OnEnter(GameState::Wasted), wasted::enter_wasted)
             .add_systems(Update, wasted::advance_wasted.in_set(WastedSystems))
             .add_systems(OnExit(WastedPhase::SlowMo), wasted::restore_time_scale)
-            .add_systems(OnExit(GameState::Wasted), wasted::respawn_player);
+            .add_systems(
+                OnExit(GameState::Wasted),
+                (
+                    wasted::respawn_player,
+                    wasted::drop_queued_damage,
+                    wasted::drop_queued_input,
+                ),
+            );
     }
 }
