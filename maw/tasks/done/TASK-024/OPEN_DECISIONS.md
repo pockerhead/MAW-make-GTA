@@ -1,0 +1,3 @@
+- 2026-09-24: code review NEEDS_WORK accepted: earned stars in the dark blink phase equal empty slots (count unreadable half the time). Fix: earned-but-dark gets its own look (e.g. dim fill + kept shadow/outline) distinct from Off; blink stays. Plus cross-config validation fight_report_min_distance < fight_hearing_radius with a failing fixture. QA then captures both blink phases on 3 backgrounds.
+- 2026-09-24: QA SHIP-PENDING-RUNTIME; two trivial Minors (whitespace run in validate_fight_hearing message; t10.py raises on a blocked stand spot instead of retrying) + regex guard fixed by a tiny fixer round 2 (low); no further QA: the fixer reruns t10.py 5x and the config gate, merge after.
+- 2026-09-24: fixer round 2 accepted; SHIP.

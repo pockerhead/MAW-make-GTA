@@ -135,6 +135,109 @@ fn spotted_resets_timer_and_moves_circle() {
     assert!(!w.seen && w.hidden == 5.0, "{w:?}");
 }
 
+/// Two stars: the second row (70 m, 15 s) governs the search, not the first (QA TASK-011).
+#[test]
+fn second_star_row_governs_search() {
+    let mut app = floor();
+    let cfg = wanted_cfg(&app);
+    assert_eq!(
+        (
+            cfg.stars[1].heat,
+            cfg.stars[1].search_radius,
+            cfg.stars[1].clear_seconds
+        ),
+        (180, 70.0, 15.0),
+        "GATE BROKEN: second star row"
+    );
+    let corner = chest(&app, Vec3::new(-35.0, 0.0, -35.0));
+    place_player(&mut app, corner);
+    run_ticks(&mut app, 2);
+    set_heat(&mut app, 180);
+    run_ticks(&mut app, 1);
+    let w = wanted(&app);
+    assert_eq!(w.stars, 2, "{w:?}");
+    let centre = w.last_known.unwrap();
+    // Outside the 1-star circle (40 m), inside the 2-star one (70 m): never clears.
+    let mid = chest(&app, Vec3::new(15.0, 0.0, -35.0));
+    place_player(&mut app, mid);
+    run_ticks(&mut app, 1);
+    let d = flat(position(&mut app), centre);
+    assert!(d > 40.0 && d < 70.0, "GATE BROKEN: {d}");
+    run_ticks(&mut app, 2000);
+    let w = wanted(&app);
+    assert_eq!((w.stars, w.hidden), (2, 0.0), "{w:?}");
+    // Outside 70 m: clears after exactly 15 s = 960 ticks, not 640.
+    let far = chest(&app, Vec3::new(35.0, 0.0, 35.0));
+    place_player(&mut app, far);
+    run_ticks(&mut app, 959);
+    let w = wanted(&app);
+    assert!(
+        flat(position(&mut app), centre) > 70.0,
+        "GATE BROKEN: drifted"
+    );
+    assert_eq!(w.stars, 2, "cleared before 960 ticks: {w:?}");
+    run_ticks(&mut app, 1);
+    assert_eq!(wanted(&app), WantedLevel::default());
+}
+
+/// Named mutation: heat of star row `row` and the search circle centred `distance` m west of the player.
+fn search_from(app: &mut App, row: usize, distance: f32) -> Vec3 {
+    let heat = wanted_cfg(app).stars[row].heat;
+    let centre = position(app) - Vec3::X * distance;
+    let mut w = app.world_mut().resource_mut::<WantedLevel>();
+    w.heat = heat;
+    w.last_known = Some(centre);
+    centre
+}
+
+/// Stars 3..5 (the floor is too small for their circles, so the centre moves, not the player): each
+/// row's own radius and clear time govern the search.
+#[test]
+fn higher_star_rows_govern_search() {
+    let shipped = [(550, 100.0, 20.0), (1200, 140.0, 25.0), (2400, 180.0, 30.0)];
+    for (row, expected) in (2..5).zip(shipped) {
+        let mut app = floor();
+        let rows = wanted_cfg(&app).stars;
+        let r = &rows[row];
+        assert_eq!(
+            (r.heat, r.search_radius, r.clear_seconds),
+            expected,
+            "GATE BROKEN: star row {row}"
+        );
+        let stars = row as u8 + 1;
+        let clear = ticks_in(&app, r.clear_seconds);
+        // Outside the previous row's circle, inside this row's: never clears.
+        let inside = (rows[row - 1].search_radius + r.search_radius) / 2.0;
+        let centre = search_from(&mut app, row, inside);
+        run_ticks(&mut app, clear + 64);
+        let w = wanted(&app);
+        let d = flat(position(&mut app), centre);
+        assert!(
+            d > rows[row - 1].search_radius && d < r.search_radius,
+            "GATE BROKEN: {d}"
+        );
+        assert_eq!((w.stars, w.hidden), (stars, 0.0), "row {row}: {w:?}");
+        // Outside this row's circle: clears after exactly its clear time.
+        let centre = search_from(&mut app, row, r.search_radius + 10.0);
+        run_ticks(&mut app, clear - 1);
+        let w = wanted(&app);
+        assert!(
+            flat(position(&mut app), centre) > r.search_radius,
+            "GATE BROKEN: drifted"
+        );
+        assert_eq!(
+            w.stars, stars,
+            "row {row} cleared before {clear} ticks: {w:?}"
+        );
+        run_ticks(&mut app, 1);
+        assert_eq!(
+            wanted(&app),
+            WantedLevel::default(),
+            "row {row} not cleared at tick {clear}"
+        );
+    }
+}
+
 /// `seen` of a one-star player at (0,0,8) watched by a cop at `cop_feet` looking along `yaw`.
 fn seen_through_the_production_system(cop_feet: Vec3, yaw: f32) -> bool {
     let mut app = floor();

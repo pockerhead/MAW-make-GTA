@@ -23,7 +23,8 @@ pub fn choose_reaction(
     let cower = cfg.cower * t.cower * panic;
     let reportable = match threat.kind {
         ThreatKind::Corpse => true,
-        ThreatKind::Gunshot | ThreatKind::Fight => d >= cfg.report_min_distance,
+        ThreatKind::Gunshot => d >= cfg.report_min_distance,
+        ThreatKind::Fight => d >= cfg.fight_report_min_distance,
         ThreatKind::Aimed | ThreatKind::Hurt => false,
     };
     let report = if allow_report && reportable {
@@ -66,6 +67,9 @@ mod tests {
             (Hurt, 0.0, (1.0, 1.0, 1.5), true, Cower),
             (Aimed, 6.0, (1.0, 1.0, 1.5), true, Flee),
             (Gunshot, 30.0, (0.7, 1.0, 1.5), false, Flee),
+            (Fight, 18.0, (0.6, 1.0, 1.4), true, Report),
+            (Gunshot, 18.0, (0.6, 1.0, 1.4), true, Flee),
+            (Fight, 12.0, (0.6, 1.0, 1.4), true, Flee),
         ];
         for (row, (kind, distance, (flee, cower, report), allow, expected)) in
             rows.into_iter().enumerate()

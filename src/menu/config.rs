@@ -81,8 +81,13 @@ pub struct StarsConfig {
     pub lit_color: Rgb,
     /// The bright phase of an earned star's blink while no cop sees the player.
     pub gray_color: Rgb,
-    /// A star not earned, and the dark phase of the blink.
+    /// The dark phase of that blink: still an earned star, never the empty slot's look.
+    pub dim_color: Rgb,
+    /// A star not earned.
     pub off_color: Rgba,
+    /// Drop shadow of an earned star (every phase), px down-right; empty slots have none.
+    pub shadow_offset: f32,
+    pub shadow_color: Rgba,
     /// Real seconds of one blink phase.
     pub blink_seconds: f32,
 }
@@ -161,11 +166,20 @@ impl UiConfig {
         for (field, (r, g, b)) in [
             ("hud.stars.lit_color", stars.lit_color),
             ("hud.stars.gray_color", stars.gray_color),
+            ("hud.stars.dim_color", stars.dim_color),
         ] {
             unit(field, &[r, g, b])?;
         }
         let (r, g, b, a) = stars.off_color;
         unit("hud.stars.off_color", &[r, g, b, a])?;
+        if !(stars.shadow_offset.is_finite() && stars.shadow_offset >= 0.0) {
+            return Err(format!(
+                "hud.stars.shadow_offset must be a finite number >= 0, got {}",
+                stars.shadow_offset
+            ));
+        }
+        let (r, g, b, a) = stars.shadow_color;
+        unit("hud.stars.shadow_color", &[r, g, b, a])?;
         let (r, g, b) = witness.fill_color;
         unit("hud.witness_bar.fill_color", &[r, g, b])?;
         let (r, g, b, a) = witness.back_color;

@@ -154,7 +154,11 @@ pub fn assert_shipped(app: &App) {
     let civilian = app.world().resource::<CivilianConfig>();
     assert_eq!(ticks_in(app, civilian.call_seconds), 256, "GATE BROKEN");
     assert_eq!(
-        civilian.reaction.report_min_distance, 25.0,
+        (
+            civilian.reaction.report_min_distance,
+            civilian.reaction.fight_report_min_distance
+        ),
+        (25.0, 15.0),
         "GATE BROKEN: report_min_distance"
     );
     let p = app.world().resource::<PerceptionConfig>();
@@ -165,7 +169,7 @@ pub fn assert_shipped(app: &App) {
             p.corpse_sight,
             p.slots
         ),
-        (40.0, 15.0, 20.0, 4),
+        (40.0, 20.0, 20.0, 4),
         "GATE BROKEN: perception"
     );
 }

@@ -134,7 +134,8 @@ impl WantedConfig {
             return Ok(());
         }
         Err(format!(
-            "incident_memory_seconds {memory} must be > the longest civilian call delay {call_delay} s              (perception slots + call_seconds)"
+            "incident_memory_seconds {memory} must be > the longest civilian call delay {call_delay} s \
+             (perception slots + call_seconds)"
         ))
     }
 }

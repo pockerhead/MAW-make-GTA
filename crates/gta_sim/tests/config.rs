@@ -1,10 +1,12 @@
 mod common;
 
+use bevy::{asset::AssetPlugin, prelude::*, state::app::StatesPlugin};
 use common::assets_root;
 use gta_sim::{
     character::{HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig},
     civilian::{CIVILIAN_CONFIG, CivilianConfig},
     combat::{AIM_CONFIG, AimConfig, MELEE_CONFIG, MeleeConfig, WEAPONS_CONFIG, WeaponsConfig},
+    compose_sim,
     config::{ConfigRoot, load_config},
     flow::{RESPAWN_CONFIG, RespawnConfig},
     gang::{GANG_CONFIG, GangConfig},
@@ -12,7 +14,7 @@ use gta_sim::{
     perception::{PERCEPTION_CONFIG, PerceptionConfig},
     population::{POPULATION_CONFIG, PopulationConfig},
     wanted::{WANTED_CONFIG, WantedConfig},
-    world::{CITY_CONFIG, CityParams},
+    world::{CITY_CONFIG, CityParams, WorldSource},
 };
 use std::{
     fs,
@@ -475,6 +477,76 @@ fn temperament_spread_below_one() {
 }
 
 #[test]
+fn fight_report_distance_below_fight_hearing() {
+    let shipped = assets_root();
+    let hearing = load_config::<PerceptionConfig>(&shipped, PERCEPTION_CONFIG)
+        .unwrap()
+        .fight_hearing_radius;
+    assert!(
+        hearing < 21.0,
+        "GATE BROKEN: shipped fight_hearing_radius {hearing} >= 21"
+    );
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_fight_report_{}_{}",
+        std::process::id(),
+        unique
+    )));
+    for rel in [
+        LOCOMOTION_CONFIG,
+        HEALTH_CONFIG,
+        RESPAWN_CONFIG,
+        WEAPONS_CONFIG,
+        AIM_CONFIG,
+        MELEE_CONFIG,
+        POPULATION_CONFIG,
+        PERCEPTION_CONFIG,
+        NAVIGATION_CONFIG,
+        CIVILIAN_CONFIG,
+        GANG_CONFIG,
+        WANTED_CONFIG,
+    ] {
+        let file = root.path(rel);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::copy(shipped.path(rel), &file).unwrap();
+    }
+    // Passes civilian.ron's own checks, but sits past the distance a fight is heard at.
+    let civilian = root.path(CIVILIAN_CONFIG);
+    let original = fs::read_to_string(&civilian).unwrap();
+    let from = "fight_report_min_distance: 15.0,";
+    assert!(
+        original.contains(from),
+        "GATE BROKEN: shipped {CIVILIAN_CONFIG} has no {from:?}"
+    );
+    fs::write(
+        &civilian,
+        original.replacen(from, "fight_report_min_distance: 21.0,", 1),
+    )
+    .unwrap();
+    let own = load_config::<CivilianConfig>(&root, CIVILIAN_CONFIG).map(|c| c.validate());
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        TransformPlugin,
+        AssetPlugin::default(),
+        StatesPlugin,
+    ));
+    let composed = compose_sim(&mut app, root.clone(), WorldSource::TestArea);
+    fs::remove_dir_all(&root.0).unwrap();
+    assert!(matches!(own, Ok(Ok(()))), "GATE BROKEN: {own:?}");
+    let error = composed.expect_err("compose_sim accepted an unreportable fight");
+    assert!(error.path.ends_with(CIVILIAN_CONFIG), "{error}");
+    assert!(
+        error.message.contains("fight_report_min_distance"),
+        "{error}"
+    );
+    assert!(!error.message.contains("  "), "{error}");
+}
+
+#[test]
 fn shipped_gang_config_loads() {
     load_config::<GangConfig>(&assets_root(), GANG_CONFIG)
         .unwrap()
@@ -699,4 +771,5 @@ fn incident_memory_must_outlast_a_civilian_call() {
     wanted.validate().unwrap();
     let error = wanted.validate_call_delay(call_delay).unwrap_err();
     assert!(error.contains("incident_memory_seconds"), "{error}");
+    assert!(!error.contains("  "), "a run of spaces in: {error}");
 }

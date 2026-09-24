@@ -9,7 +9,7 @@ use gta_sim::{
     character::{ActionIntent, AimIntent},
     civilian::{CivilianConfig, CivilianState},
     combat::{Loadout, MeleeHit, Weapon},
-    perception::Cause,
+    perception::{Cause, StimulusLog, ThreatKind},
     wanted::Crime,
 };
 use wanted_support::*;
@@ -115,46 +115,83 @@ fn attack_call_then_body_call_counts_each_incident_once() {
     assert_eq!(w.heat, 40 + 10, "{w:?}");
 }
 
-#[test]
-fn body_call_does_not_report_a_private_punch() {
+/// `graph_app(10)` with an idle victim at (0,0,-10) and the player 1 m north of it.
+fn punch_floor() -> (App, Entity) {
     let mut app = graph_app(10.0, &[]);
     assert_shipped(&app);
     let victim = spawn_civilian(&mut app, SIDES[0], 0.5, calm());
-    let witness = spawn_civilian(&mut app, SIDES[1], 0.8, CORPSE_WITNESS);
     hold_idle(&mut app, victim);
-    hold_idle(&mut app, witness);
     let start = chest(&app, Vec3::new(0.0, 0.0, -9.0));
     place_player(&mut app, start);
-    run_ticks(&mut app, 16);
-    let origin = position(&mut app);
-    let target = position_of(&app, victim);
-    set_aim(&mut app, origin, target);
+    (app, victim)
+}
+
+/// One unarmed punch at `victim`; ticks until it lands.
+fn land_punch(app: &mut App, probe: &mut Probe, victim: Entity) -> MeleeHit {
+    let origin = position(app);
+    let target = position_of(app, victim);
+    set_aim(app, origin, target);
     let mut hits = app
         .world()
         .resource::<Messages<MeleeHit>>()
         .get_cursor_current();
-    let mut probe = Probe::new(&app);
-    set_action(&mut app, |a| a.fire_requested = true);
-    let mut hit = None;
+    set_action(app, |a| a.fire_requested = true);
     for _ in 0..24 {
-        probe.run(&mut app, 1);
+        probe.run(app, 1);
         let messages = app.world().resource::<Messages<MeleeHit>>();
         if let Some(h) = hits.read(messages).find(|h| h.target == victim) {
-            hit = Some(*h);
-            break;
+            return *h;
         }
     }
-    let hit = hit.expect("GATE BROKEN: the punch never landed");
-    let w2 = position_of(&app, witness);
+    panic!("GATE BROKEN: the punch never landed");
+}
+
+#[test]
+fn punch_seen_by_a_civilian_is_reported() {
+    let (mut app, victim) = punch_floor();
+    let witness = spawn_civilian(&mut app, SIDES[1], 0.8, CORPSE_WITNESS);
+    hold_idle(&mut app, witness);
+    run_ticks(&mut app, 16);
+    let mut probe = Probe::new(&app);
+    let hit = land_punch(&mut app, &mut probe, victim);
+    let d = position_of(&app, witness).distance(hit.point);
     assert!(
-        w2.distance(hit.point) > 15.0,
-        "GATE BROKEN: the witness hears the fight"
+        (18.0..=20.0).contains(&d),
+        "GATE BROKEN: the witness is {d} m from the punch"
     );
+    await_report(&mut app, &mut probe, witness, Cause::Attack(hit.attack));
+    probe.run_until_calls(&mut app, 1, 256 + 16);
+    let w = wanted(&app);
+    assert_eq!((w.heat, w.stars), (5, 0), "{w:?}");
+    assert_eq!(crimes_of(&app), vec![(Crime::Punch, true)]);
+}
+
+#[test]
+fn body_call_does_not_report_a_private_punch() {
+    let (mut app, victim) = punch_floor();
+    run_ticks(&mut app, 16);
+    let mut probe = Probe::new(&app);
+    land_punch(&mut app, &mut probe, victim);
     assert_eq!(
         crimes_of(&app),
         vec![(Crime::Punch, false)],
         "liveness: the punch was recorded"
     );
+    // The witness arrives after the fight is no longer audible.
+    probe.run(&mut app, 8);
+    assert!(
+        app.world()
+            .resource::<StimulusLog>()
+            .0
+            .iter()
+            .all(|&(_, kind, ..)| kind != ThreatKind::Fight),
+        "GATE BROKEN: the fight is still audible"
+    );
+    hold_idle(&mut app, victim);
+    let witness = spawn_civilian(&mut app, SIDES[1], 0.8, CORPSE_WITNESS);
+    hold_idle(&mut app, witness);
+    probe.run(&mut app, 16);
+    let w2 = position_of(&app, witness);
     // Named mutation: an unattributed death standing in for a gang kill.
     set_health_of(&mut app, victim, |h| h.current = 0.0);
     probe.run(&mut app, 1);

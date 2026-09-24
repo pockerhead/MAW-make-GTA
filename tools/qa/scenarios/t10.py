@@ -28,13 +28,17 @@ BUBBLE_DEADLINE_S = 120.0
 GROUP_RADIUS_M = 40.0
 GROUP_MIN = 3
 VICTIM_STAND_OFF_M = 5.0
-CALLER_RANGE_M = (25.0, 38.0)
+# Inside [report_min_distance, hearing_radius] with room for the 1 m teleport tolerance and a drifting caller.
+CALLER_RANGE_M = (27.0, 36.0)
 TELEPORT_TOLERANCE_M = 1.0
 CHEST_M = 1.0
 CLICK_MS = 80
 CIRCLE_MARGIN_M = 10.0
 CAPTURE_GAP_S = 0.2
 PLAN_TRIES = 5
+KILL_TRIES = 4
+KILL_WAIT_S = 1.0
+LINE_CLEAR_M = 1.0
 CALLER_TEMPERAMENT = {"flee": 0.5, "cower": 1.0, "report": 1.5}
 HOLD = {"Idle": {"left": 1.0e6}}
 
@@ -65,7 +69,7 @@ def civilian_config():
     civilian = ron_text("npc/civilian.ron")
     return {
         "call_seconds": ron_number(civilian, r"call_seconds:\s*([\d.]+)"),
-        "report_min_distance": ron_number(civilian, r"report_min_distance:\s*([\d.]+)"),
+        "report_min_distance": ron_number(civilian, r"(?<!_)report_min_distance:\s*([\d.]+)"),
         "hearing_radius": ron_number(ron_text("npc/perception.ron"), r"hearing_radius:\s*([\d.]+)"),
     }
 
@@ -120,8 +124,19 @@ def poll(what, probe, timeout, interval=0.1):
     raise AssertionError(f"{what} not reached in {timeout} s (last {value!r})")
 
 
-def plan_kill(people, hearing):
-    """Victim with >= GROUP_MIN others within GROUP_RADIUS_M, a stand spot 5 m from it, a caller in range."""
+def segment_gap(point, a, b):
+    """Horizontal distance from `point` to the segment a-b."""
+    ax, az, bx, bz = a[0], a[2], b[0], b[2]
+    px, pz = point[0], point[2]
+    dx, dz = bx - ax, bz - az
+    length2 = dx * dx + dz * dz
+    t = 0.0 if length2 == 0.0 else max(0.0, min(1.0, ((px - ax) * dx + (pz - az) * dz) / length2))
+    return math.hypot(px - (ax + t * dx), pz - (az + t * dz))
+
+
+def plan_kill(people, hearing, tried=frozenset()):
+    """Victim with >= GROUP_MIN others within GROUP_RADIUS_M, a stand spot 5 m from it with no other
+    civilian near the line of fire, a caller in range. Skips (victim, spot index) pairs in `tried`."""
     lo, hi = CALLER_RANGE_M
     for victim in sorted(people, key=lambda c: -sum(
             1 for o in people if o is not c and horizontal(o["position"], c["position"]) <= GROUP_RADIUS_M)):
@@ -130,13 +145,26 @@ def plan_kill(people, hearing):
             break
         vx, vy, vz = victim["position"]
         for k in range(16):
+            if (victim["entity"], k) in tried:
+                continue
             angle = 2.0 * math.pi * k / 16
             spot = (vx + VICTIM_STAND_OFF_M * math.sin(angle), vy, vz + VICTIM_STAND_OFF_M * math.cos(angle))
+            if any(segment_gap(o["position"], spot, victim["position"]) < LINE_CLEAR_M for o in group):
+                continue
             callers = [o for o in people if o is not victim
                        and lo <= math.dist(o["position"], spot) <= min(hi, hearing)]
             if callers:
-                return victim, spot, callers[0], group
-    raise AssertionError("GATE BROKEN: no victim with a group and a caller in range")
+                return victim, spot, callers[0], group, k
+    raise AssertionError("GATE BROKEN: no victim with a group, a clear line and a caller in range")
+
+
+def reached(probe, timeout, interval=0.05):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if probe():
+            return True
+        time.sleep(interval)
+    return False
 
 
 def run(out):
@@ -171,44 +199,58 @@ def run(out):
             if player(game)["held"] != "Pistol":
                 raise AssertionError(f"pistol not picked up: {player(game)['held']}")
 
-            # 3. Victim, caller, stand spot; named mutations; one shot.
-            # Teleport first: calm civilians past `recycle_distance` may be recycled at any tick, and a
-            # BRP mutation of a despawned entity panics the game. Near the player they stay.
-            for _ in range(PLAN_TRIES):
-                victim, spot, caller, group = plan_kill(alive(civilians(game)), civ["hearing_radius"])
+            # 3. Victim, caller, stand spot; named mutations; one shot. A shot that does not kill (a tree or
+            # a pole on the muzzle line; civilians on it are excluded by the plan) is retried from another
+            # spot: the property under test is the report, not one line of fire. Both are re-held first,
+            # so a call about the missed shot is cut and the kill starts a fresh one.
+            tried = set()
+            misses = []
+            for _ in range(KILL_TRIES):
+                # Teleport first: calm civilians past `recycle_distance` may be recycled at any tick, and a
+                # BRP mutation of a despawned entity panics the game. Near the player they stay.
+                for _ in range(PLAN_TRIES):
+                    victim, spot, caller, group, k = plan_kill(alive(civilians(game)), civ["hearing_radius"], tried)
+                    me = player(game)
+                    teleport(game, me, [spot[0], spot[1] - me["float_height"], spot[2]])
+                    time.sleep(SETTLE_S)
+                    ids = {c["entity"] for c in alive(civilians(game))}
+                    if victim["entity"] in ids and caller["entity"] in ids:
+                        break
+                else:
+                    raise AssertionError(f"GATE BROKEN: the planned victim or caller vanished {PLAN_TRIES} times")
+                tried.add((victim["entity"], k))
+                health = game.component_path("Health")
+                mutate_civilian(game, victim["entity"], ".state", HOLD)
+                game.mutate_component(victim["entity"], health, ".current", 1.0)
+                mutate_civilian(game, caller["entity"], ".state", HOLD)
+                mutate_civilian(game, caller["entity"], ".temperament", CALLER_TEMPERAMENT)
+                time.sleep(0.2)
                 me = player(game)
-                teleport(game, me, [spot[0], spot[1] - me["float_height"], spot[2]])
-                time.sleep(SETTLE_S)
-                ids = {c["entity"] for c in alive(civilians(game))}
-                if victim["entity"] in ids and caller["entity"] in ids:
+                if horizontal(me["position"], spot) > TELEPORT_TOLERANCE_M:
+                    misses.append({"victim": victim["entity"], "spot": k, "blocked": me["position"]})
+                    continue
+                by_id = {c["entity"]: c for c in civilians(game)}
+                victim_at = by_id[victim["entity"]]["position"]
+                caller_at = by_id[caller["entity"]]["position"]
+                caller_distance = math.dist(caller_at, me["position"])
+                if not (civ["report_min_distance"] <= caller_distance <= civ["hearing_radius"]):
+                    raise AssertionError(f"GATE BROKEN: caller at {caller_distance:.1f} m from the muzzle")
+                target = [victim_at[0], victim_at[1] - me["float_height"] + CHEST_M, victim_at[2]]
+                miss = aim_at(game, target, cam["sensitivity_deg"])
+                magazine = me["guns"][0]["magazine"]
+                game.send_mouse_button("Left", CLICK_MS)
+                if reached(lambda: civilian_state(game, victim["entity"]) == "Dead", KILL_WAIT_S):
                     break
+                misses.append({"victim": victim["entity"], "spot": k, "aim_miss_m": round(miss, 3),
+                               "state": civilian_state(game, victim["entity"]),
+                               "magazine": (magazine, player(game)["guns"][0]["magazine"])})
             else:
-                raise AssertionError(f"GATE BROKEN: the planned victim or caller vanished {PLAN_TRIES} times")
-            health = game.component_path("Health")
-            mutate_civilian(game, victim["entity"], ".state", HOLD)
-            game.mutate_component(victim["entity"], health, ".current", 1.0)
-            mutate_civilian(game, caller["entity"], ".state", HOLD)
-            mutate_civilian(game, caller["entity"], ".temperament", CALLER_TEMPERAMENT)
-            time.sleep(0.2)
-            me = player(game)
-            if horizontal(me["position"], spot) > TELEPORT_TOLERANCE_M:
-                raise AssertionError(f"GATE BROKEN: stand spot blocked: {me['position']} vs {spot}")
-            by_id = {c["entity"]: c for c in civilians(game)}
-            victim_at = by_id[victim["entity"]]["position"]
-            caller_at = by_id[caller["entity"]]["position"]
-            caller_distance = math.dist(caller_at, me["position"])
-            if not (civ["report_min_distance"] <= caller_distance <= civ["hearing_radius"]):
-                raise AssertionError(f"GATE BROKEN: caller at {caller_distance:.1f} m from the muzzle")
-            target = [victim_at[0], victim_at[1] - me["float_height"] + CHEST_M, victim_at[2]]
-            miss = aim_at(game, target, cam["sensitivity_deg"])
-            magazine = me["guns"][0]["magazine"]
-            game.send_mouse_button("Left", CLICK_MS)
-            poll("the victim's death", lambda: civilian_state(game, victim["entity"]) == "Dead", 2.0)
+                raise AssertionError(f"GATE BROKEN: no kill in {KILL_TRIES} shots: {misses}")
             shot_at = time.monotonic()
             summary["kill"] = {
                 "victim": victim["entity"], "group": len(group), "caller": caller["entity"],
                 "caller_distance_m": round(caller_distance, 1), "aim_miss_m": round(miss, 3),
-                "magazine": (magazine, player(game)["guns"][0]["magazine"]),
+                "magazine": (magazine, player(game)["guns"][0]["magazine"]), "misses": misses,
             }
 
             # 4. The caller phones it in: Report, then done; heat and stars.

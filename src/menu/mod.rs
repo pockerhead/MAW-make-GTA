@@ -1,6 +1,6 @@
 mod config;
 
-pub use config::{UI_CONFIG, UiConfig};
+pub use config::{StarsConfig, UI_CONFIG, UiConfig};
 
 use bevy::prelude::*;
 use gta_sim::{flow::GameState, world::CitySeed};

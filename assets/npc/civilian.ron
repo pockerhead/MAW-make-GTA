@@ -12,6 +12,7 @@
         report: 0.8,
         temperament_spread: 0.5,   // each temperament factor in [1 - s, 1 + s]
         panic_distance: 15.0,      // cower weight 0 at and beyond this, m
-        report_min_distance: 25.0, // an active threat closer than this is never phoned in, m
+        report_min_distance: 25.0, // a gunshot closer than this is never phoned in, m
+        fight_report_min_distance: 15.0, // same for a fight; keep below perception.ron fight_hearing_radius
     ),
 )

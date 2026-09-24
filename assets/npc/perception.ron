@@ -1,7 +1,7 @@
 (
     slots: 4,                   // agents perceive in turn: one slot per fixed tick (64 Hz / 4 = 16 Hz)
     hearing_radius: 40.0,       // m, gunshots (GDD §6.2)
-    fight_hearing_radius: 15.0, // m, melee hits
+    fight_hearing_radius: 20.0, // m, melee hits
     corpse_sight: 20.0,         // m, a corpse in line of sight
     aimed_distance: 15.0,       // m, a gun aimed at the civilian
     aimed_cone_deg: 10.0,       // half-angle between the aim ray and the civilian's chest

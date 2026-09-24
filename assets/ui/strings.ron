@@ -17,7 +17,11 @@
           // Over a civilian phoning the police: px size, metres above the head top, colours.
           witness_bar: (width: 48.0, height: 6.0, head_offset: 0.35,
                         fill_color: (1.0, 0.85, 0.2), back_color: (0.0, 0.0, 0.0, 0.55)),
-          // Wanted stars: white while a cop sees the player, blinking grey while unseen (GDD §6.4).
+          // Wanted stars: white while a cop sees the player, blinking grey/dim grey while unseen (GDD §6.4).
+          // Earned stars carry a dark drop shadow in every phase, empty slots are a faint light ghost
+          // with none: countable on sky, light walls and asphalt alike.
           stars: (glyph: "★", size: 26.0, gap: 2.0, lit_color: (1.0, 1.0, 1.0),
-                  gray_color: (0.55, 0.55, 0.55), off_color: (0.0, 0.0, 0.0, 0.45), blink_seconds: 0.25)),
+                  gray_color: (0.72, 0.72, 0.72), dim_color: (0.40, 0.40, 0.40),
+                  off_color: (1.0, 1.0, 1.0, 0.25), blink_seconds: 0.25,
+                  shadow_offset: 2.0, shadow_color: (0.0, 0.0, 0.0, 0.9))),
 )

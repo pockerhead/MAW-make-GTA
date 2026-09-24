@@ -50,8 +50,10 @@ pub struct ReactionConfig {
     pub temperament_spread: f32,
     /// The cower weight falls to 0 at this threat distance, m.
     pub panic_distance: f32,
-    /// A gunshot or fight closer than this is never phoned in, m.
+    /// A gunshot closer than this is never phoned in, m.
     pub report_min_distance: f32,
+    /// A fight closer than this is never phoned in, m; below `fight_hearing_radius`, or no punch is.
+    pub fight_report_min_distance: f32,
 }
 
 fn range_ok(field: &str, (lo, hi): (f32, f32)) -> Result<(), String> {
@@ -87,6 +89,10 @@ impl CivilianConfig {
             ("reaction.cower", r.cower),
             ("reaction.report", r.report),
             ("reaction.report_min_distance", r.report_min_distance),
+            (
+                "reaction.fight_report_min_distance",
+                r.fight_report_min_distance,
+            ),
         ] {
             if !(value.is_finite() && value >= 0.0) {
                 return Err(format!("{field} {value} must be finite and >= 0"));
@@ -105,6 +111,18 @@ impl CivilianConfig {
             ));
         }
         Ok(())
+    }
+
+    /// A fight is heard up to `fight_hearing_radius` m; a report threshold at or past it phones in no punch.
+    pub fn validate_fight_hearing(&self, fight_hearing_radius: f32) -> Result<(), String> {
+        let min = self.reaction.fight_report_min_distance;
+        if min < fight_hearing_radius {
+            return Ok(());
+        }
+        Err(format!(
+            "reaction.fight_report_min_distance {min} must be < perception fight_hearing_radius \
+             {fight_hearing_radius}, or no punch is ever phoned in"
+        ))
     }
 }
 

@@ -90,6 +90,12 @@ pub fn compose_sim(
         path: root.path(CIVILIAN_CONFIG),
         message,
     })?;
+    civilian
+        .validate_fight_hearing(perception.fight_hearing_radius)
+        .map_err(|message| ConfigError {
+            path: root.path(CIVILIAN_CONFIG),
+            message,
+        })?;
     let gangs = load_config::<GangConfig>(&root, GANG_CONFIG)?;
     gangs.validate().map_err(|message| ConfigError {
         path: root.path(GANG_CONFIG),
