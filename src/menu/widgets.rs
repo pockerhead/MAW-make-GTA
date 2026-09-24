@@ -16,6 +16,7 @@ pub enum SettingKey {
     InvertY,
     ReduceShake,
     NoFlashes,
+    ReduceCameraMotion,
 }
 
 /// What a menu button does when pressed.

@@ -23,8 +23,10 @@ pub struct GameSettings {
     pub invert_y: bool,
     /// Camera shake scaled by `juice.ron` `shake.reduced_scale`.
     pub reduce_shake: bool,
-    /// No muzzle flashes (tracers stay).
+    /// No muzzle flashes (tracers stay) and no hurt vignette.
     pub no_flashes: bool,
+    /// Recoil kick scaled by `juice.ron` `camera_motion_reduced_scale`.
+    pub reduce_camera_motion: bool,
 }
 
 impl Default for GameSettings {
@@ -35,6 +37,7 @@ impl Default for GameSettings {
             invert_y: false,
             reduce_shake: false,
             no_flashes: false,
+            reduce_camera_motion: false,
         }
     }
 }

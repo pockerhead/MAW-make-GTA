@@ -10,6 +10,10 @@
         max_roll_deg: 5.0,
         noise_hz: 15.0,         // noise lattice steps per second
         reduced_scale: 0.3,     // share of the shake left with the "reduce shake" setting (0..1)
+        shot_trauma: 0.1,       // trauma added by a shot the player fires (0..1)
+        hurt_trauma: 0.2,       // trauma added by each hit that lowers the player's health or armour (0..1)
+        death_trauma: 0.4,      // trauma added by a kill near the player (0..1)
+        death_radius: 12.0,     // m from the player within which a kill adds death_trauma
     ),
     flash: (seconds: 0.05, size: 0.25, color: (1.0, 0.8, 0.4), light_intensity: 100000.0, light_range: 6.0),
     tracer: (seconds: 0.1, width: 0.05, color: (1.0, 0.9, 0.6)),
@@ -24,5 +28,24 @@
         crit_size: 38.0,        // font px, headshot
         color: (1.0, 1.0, 1.0),
         crit_color: (0.95, 0.12, 0.12),
+    ),
+    camera_motion_reduced_scale: 0.3,   // share of the recoil kick left with "reduce camera motion" (0..1)
+    vignette: (
+        color: (0.75, 0.0, 0.0),
+        per_hurt: 0.45,         // intensity added per hit taken
+        max: 0.65,              // intensity cap (0..1]; sustained fire (~2.7 hits/s) reaches it in ~1 s
+        decay_per_s: 0.45,      // intensity lost per real second: one hit stays readable ~1 s
+        radius: 0.85,           // size of the clear centre (bevy Vignette radius)
+        smoothness: 2.0,        // edge softness (bevy Vignette smoothness); lower keeps the tint at the edges
+    ),
+    damage_arc: (
+        seconds: 0.6,           // s, real time; fades out over it
+        radius_px: 150.0,       // px, ring around the screen centre
+        thickness_px: 6.0,      // px
+        color: (0.9, 0.1, 0.1),
+    ),
+    star_pulse: (
+        scale: 1.3,             // wanted-star row scale when the level rises (> 1)
+        seconds: 0.35,          // s, real time, back to scale 1 (ease back-out)
     ),
 )

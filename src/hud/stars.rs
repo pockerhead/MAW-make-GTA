@@ -2,7 +2,10 @@
 //! player. The sim owns `WantedLevel`; this only draws it.
 
 use super::{rgb, rgba};
-use crate::menu::{StarsConfig, UiConfig, UiFonts};
+use crate::{
+    juice::{JuiceConfig, StarPulseConfig, StarsRaised},
+    menu::{StarsConfig, UiConfig, UiFonts},
+};
 use bevy::prelude::*;
 use gta_sim::{
     wanted::{STARS, WantedLevel},
@@ -11,6 +14,13 @@ use gta_sim::{
 
 #[derive(Component)]
 pub(super) struct StarRow;
+
+/// Real seconds left of the pulse that plays when the wanted level rises.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct StarPulse {
+    pub left: f32,
+}
 
 /// One star; `0` is its index from the left.
 #[derive(Component)]
@@ -63,6 +73,7 @@ pub(super) fn spawn_stars(mut commands: Commands, ui: Res<UiConfig>, fonts: Res<
             Name::new("Wanted stars"),
             CityScoped,
             StarRow,
+            StarPulse { left: 0.0 },
             Node {
                 position_type: PositionType::Absolute,
                 top: px(hud.margin
@@ -120,6 +131,31 @@ pub(super) fn update_stars(
     }
 }
 
+/// Row scale `elapsed` real seconds into a pulse: `scale` at 0, eases back-out to 1.
+pub(super) fn star_pulse_scale(elapsed: f32, cfg: &StarPulseConfig) -> f32 {
+    1.0 + (cfg.scale - 1.0) * (1.0 - EaseFunction::BackOut.sample_clamped(elapsed / cfg.seconds))
+}
+
+pub(super) fn pulse_stars(
+    mut raised: MessageReader<StarsRaised>,
+    juice: Res<JuiceConfig>,
+    real: Res<Time<Real>>,
+    mut rows: Query<(&mut StarPulse, &mut UiTransform)>,
+) {
+    let cfg = &juice.star_pulse;
+    let restart = raised.read().count() > 0;
+    for (mut pulse, mut transform) in &mut rows {
+        if restart {
+            pulse.left = cfg.seconds;
+        }
+        pulse.left = (pulse.left - real.delta_secs()).max(0.0);
+        let scale = Vec2::splat(star_pulse_scale(cfg.seconds - pulse.left, cfg));
+        if transform.scale != scale {
+            transform.scale = scale;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +186,23 @@ mod tests {
         assert_eq!(looks(&unseen, 0.1), vec![Gray, Gray, Off, Off, Off]);
         assert_eq!(looks(&unseen, 0.3), vec![Dim, Dim, Off, Off, Off]);
         assert_eq!(looks(&WantedLevel::default(), 0.1), vec![Off; 5]);
+    }
+
+    /// G-J3 (pure math): the pulse starts at `scale`, eases back-out (dipping just under 1) and
+    /// ends at exactly 1.
+    #[test]
+    fn star_pulse_curve() {
+        let cfg = StarPulseConfig {
+            scale: 1.3,
+            seconds: 0.35,
+        };
+        assert!((star_pulse_scale(0.0, &cfg) - 1.3).abs() < 1e-5);
+        assert_eq!(star_pulse_scale(0.35, &cfg), 1.0);
+        assert_eq!(star_pulse_scale(3.5, &cfg), 1.0);
+        let min = (0..=1000)
+            .map(|i| star_pulse_scale(0.35 * i as f32 / 1000.0, &cfg))
+            .fold(f32::INFINITY, f32::min);
+        assert!((0.96..=0.98).contains(&min), "min scale {min}");
     }
 
     /// With the shipped colours an earned star never looks like an empty slot, and the blink shows.

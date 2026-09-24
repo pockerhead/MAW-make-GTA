@@ -19,6 +19,11 @@ pub struct JuiceConfig {
     pub flash: FlashConfig,
     pub tracer: TracerConfig,
     pub damage_numbers: DamageNumbersConfig,
+    /// Share of the recoil kick left with the "reduce camera motion" setting, [0, 1].
+    pub camera_motion_reduced_scale: f32,
+    pub vignette: VignetteConfig,
+    pub damage_arc: DamageArcConfig,
+    pub star_pulse: StarPulseConfig,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug)]
@@ -54,6 +59,53 @@ pub struct ShakeConfig {
     pub noise_hz: f32,
     /// Share of the shake left with the "reduce shake" setting, [0, 1].
     pub reduced_scale: f32,
+    /// Trauma added by a shot the player fires (0..1].
+    pub shot_trauma: f32,
+    /// Trauma added by each hit that lowers the player's health or armour (0..1].
+    pub hurt_trauma: f32,
+    /// Trauma added by a kill within `death_radius` of the player (0..1].
+    pub death_trauma: f32,
+    /// m.
+    pub death_radius: f32,
+}
+
+/// Red screen-edge vignette when the player is hurt; real seconds.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct VignetteConfig {
+    pub color: Rgb,
+    /// Intensity added per hurt.
+    pub per_hurt: f32,
+    /// Intensity cap, (0, 1].
+    pub max: f32,
+    /// Intensity lost per real second.
+    pub decay_per_s: f32,
+    /// Size of the clear centre (bevy `Vignette::radius`).
+    pub radius: f32,
+    /// Softness of the edge (bevy `Vignette::smoothness`).
+    pub smoothness: f32,
+}
+
+/// Screen arc pointing at whoever hurt the player; real seconds, logical pixels.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct DamageArcConfig {
+    /// Lifetime; the arc fades out over it.
+    pub seconds: f32,
+    /// Radius of the ring the arc sits on.
+    pub radius_px: f32,
+    pub thickness_px: f32,
+    pub color: Rgb,
+}
+
+/// Wanted stars pulse when the level rises.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct StarPulseConfig {
+    /// Scale at the start of the pulse, > 1.
+    pub scale: f32,
+    /// Real seconds back to scale 1.
+    pub seconds: f32,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug)]
@@ -142,19 +194,49 @@ impl JuiceConfig {
         positive("tracer.seconds", t.seconds)?;
         positive("tracer.width", t.width)?;
         unit_rgb("tracer.color", t.color)?;
-        self.damage_numbers.validate()
+        self.damage_numbers.validate()?;
+        if !(0.0..=1.0).contains(&self.camera_motion_reduced_scale) {
+            return Err(format!(
+                "camera_motion_reduced_scale must be in [0, 1], got {}",
+                self.camera_motion_reduced_scale
+            ));
+        }
+        let v = &self.vignette;
+        unit_rgb("vignette.color", v.color)?;
+        positive("vignette.per_hurt", v.per_hurt)?;
+        trauma("vignette.max", v.max)?;
+        positive("vignette.decay_per_s", v.decay_per_s)?;
+        positive("vignette.radius", v.radius)?;
+        positive("vignette.smoothness", v.smoothness)?;
+        let a = &self.damage_arc;
+        positive("damage_arc.seconds", a.seconds)?;
+        positive("damage_arc.radius_px", a.radius_px)?;
+        positive("damage_arc.thickness_px", a.thickness_px)?;
+        unit_rgb("damage_arc.color", a.color)?;
+        let p = &self.star_pulse;
+        if !(p.scale.is_finite() && p.scale > 1.0) {
+            return Err(format!("star_pulse.scale must be > 1, got {}", p.scale));
+        }
+        positive("star_pulse.seconds", p.seconds)
     }
+}
+
+/// A finite value in (0, 1].
+fn trauma(field: &str, value: f32) -> Result<(), String> {
+    positive(field, value)?;
+    if value > 1.0 {
+        return Err(format!("{field} must be <= 1, got {value}"));
+    }
+    Ok(())
 }
 
 impl ShakeConfig {
     fn validate(&self) -> Result<(), String> {
-        positive("shake.melee_trauma", self.melee_trauma)?;
-        if self.melee_trauma > 1.0 {
-            return Err(format!(
-                "shake.melee_trauma must be <= 1, got {}",
-                self.melee_trauma
-            ));
-        }
+        trauma("shake.melee_trauma", self.melee_trauma)?;
+        trauma("shake.shot_trauma", self.shot_trauma)?;
+        trauma("shake.hurt_trauma", self.hurt_trauma)?;
+        trauma("shake.death_trauma", self.death_trauma)?;
+        positive("shake.death_radius", self.death_radius)?;
         positive("shake.decay_per_s", self.decay_per_s)?;
         non_negative("shake.max_yaw_deg", self.max_yaw_deg)?;
         non_negative("shake.max_pitch_deg", self.max_pitch_deg)?;
@@ -216,5 +298,18 @@ mod tests {
         cfg.hit_stop_seconds = 0.0;
         let error = cfg.validate().unwrap_err();
         assert!(error.contains("hit_stop_seconds"), "{error}");
+    }
+
+    #[test]
+    fn sabotaged_feedback_values_fail() {
+        let fails = |keyword: &str, sabotage: fn(&mut JuiceConfig)| {
+            let mut cfg = shipped();
+            sabotage(&mut cfg);
+            let error = cfg.validate().unwrap_err();
+            assert!(error.contains(keyword), "{keyword}: {error}");
+        };
+        fails("vignette.max", |c| c.vignette.max = 1.5);
+        fails("star_pulse.scale", |c| c.star_pulse.scale = 0.9);
+        fails("shake.death_radius", |c| c.shake.death_radius = -1.0);
     }
 }

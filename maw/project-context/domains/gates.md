@@ -107,6 +107,10 @@
   resources are entities); a component query missed the Tnua sensor orphans. "New city" is `Paused -> Loading`:
   pause first, a direct `Playing -> Loading` keeps the old city alive and fails for the wrong reason.
 
+- 2026-09-24 (TASK-014) — judge a short-lived screen effect (vignette) by a pixel delta (edge band vs a no-hit
+  frame, same pose, two scenes) with the intensity read at capture time, never by one screenshot.
+- 2026-09-24 (TASK-014) — `CityLandmarks.park_center` sits on the SMG pickup: a teleport there arms the player.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

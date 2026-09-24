@@ -115,6 +115,7 @@ fn setting_text(key: SettingKey, settings: &GameSettings, ui: &UiConfig) -> Stri
         SettingKey::InvertY => flag(settings.invert_y),
         SettingKey::ReduceShake => flag(settings.reduce_shake),
         SettingKey::NoFlashes => flag(settings.no_flashes),
+        SettingKey::ReduceCameraMotion => flag(settings.reduce_camera_motion),
     }
 }
 
@@ -143,6 +144,11 @@ pub(super) fn spawn_settings_screen(
             (SettingKey::Volume, &menu.volume, true),
             (SettingKey::InvertY, &menu.invert_y, false),
             (SettingKey::ReduceShake, &menu.reduce_shake, false),
+            (
+                SettingKey::ReduceCameraMotion,
+                &menu.reduce_camera_motion,
+                false,
+            ),
             (SettingKey::NoFlashes, &menu.no_flashes, false),
         ] {
             parent
@@ -296,6 +302,7 @@ pub(super) fn press_buttons(
                     SettingKey::InvertY => &mut s.invert_y,
                     SettingKey::ReduceShake => &mut s.reduce_shake,
                     SettingKey::NoFlashes => &mut s.no_flashes,
+                    SettingKey::ReduceCameraMotion => &mut s.reduce_camera_motion,
                     _ => continue,
                 };
                 *flag = !*flag;

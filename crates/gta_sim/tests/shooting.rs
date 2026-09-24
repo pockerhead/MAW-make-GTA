@@ -6,8 +6,8 @@ use common::*;
 use gta_sim::{
     character::{Dead, Gait, HeadHitbox, LocomotionConfig, WeaponRequest, head_hitbox},
     combat::{
-        AimConfig, BulletTrace, CombatRng, DamageDealt, GunSlot, Loadout, Weapon, WeaponPickup,
-        WeaponsConfig, muzzle, roll_damage,
+        AimConfig, BulletTrace, CombatRng, DamageDealt, GunSlot, Loadout, TraceHit, Weapon,
+        WeaponPickup, WeaponsConfig, muzzle, roll_damage,
     },
     world::WorldSource,
 };
@@ -102,6 +102,7 @@ fn pistol_hits_dummy_at_10m_for_table_damage() {
     );
     assert_eq!(loadout(&mut app).guns[0].magazine, cfg.pistol.magazine - 1);
     assert_eq!(shots.trace_log.len(), 1);
+    assert_eq!(shots.trace_log[0].hit, TraceHit::Body);
 }
 
 #[test]
@@ -119,6 +120,7 @@ fn wall_between_muzzle_and_target_blocks() {
     assert!(shots.dealt_log.is_empty(), "{:?}", shots.dealt_log);
     assert_eq!(health_of(&app, dummy).current, 100.0);
     assert_eq!(shots.trace_log.len(), 1);
+    assert_eq!(shots.trace_log[0].hit, TraceHit::World);
     let to = shots.trace_log[0].to;
     assert!(
         (to.z - 29.1).abs() < 0.05,
@@ -221,6 +223,14 @@ fn shotgun_fires_ten_pellets() {
         shots.dealt_log.iter().all(|d| d.shot == shot),
         "pellets of one blast carry different shot ids: {:?}",
         shots.dealt_log
+    );
+    assert!(
+        shots
+            .trace_log
+            .iter()
+            .all(|t| t.attack == shots.shots[0].attack),
+        "pellet traces do not carry the blast's attack id: {:?}",
+        shots.trace_log
     );
 }
 

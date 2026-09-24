@@ -14,8 +14,8 @@ use gta_sim::{
     character::{Character, Gait},
     civilian::{Civilian, PoliceCall},
     combat::{
-        BatPickup, BulletTrace, CombatRng, DamageDealt, Dummy, MeleeHit, Pickup, ShotFired, Weapon,
-        WeaponPickup, WeaponsConfig, dropped_gun,
+        BatPickup, BulletTrace, CombatRng, DamageDealt, Dummy, MeleeHit, Pickup, ShotFired,
+        TraceHit, Weapon, WeaponPickup, WeaponsConfig, dropped_gun,
     },
     compose_sim,
     flow::{GameState, pause_request},
@@ -324,6 +324,8 @@ fn new_city_replaces_the_city() {
             shooter: nobody,
             from: Vec3::ZERO,
             to: Vec3::X,
+            hit: TraceHit::Nothing,
+            attack: 1,
         });
         world.write_message(DamageDealt {
             shooter: nobody,

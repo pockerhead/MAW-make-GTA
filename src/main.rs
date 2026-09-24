@@ -13,7 +13,7 @@ mod settings;
 mod vfx;
 mod visuals;
 
-use audio::{MIX_CONFIG, MixConfig, ShotAudioPlugin};
+use audio::{GameAudioPlugin, MIX_CONFIG, MixConfig};
 use bevy::{asset::io::file::FileAssetReader, prelude::*};
 use camera::{CAMERA_CONFIG, CameraConfig, CameraPlugin};
 use gta_sim::{
@@ -137,6 +137,9 @@ fn preflight(
                 "{UI_CONFIG}: font {font} is not listed in {THIRD_PARTY_MANIFEST}"
             ));
         }
+    }
+    if let Err(errors) = mix_config.check_sounds(&manifest) {
+        unlisted.extend(errors);
     }
     if !unlisted.is_empty() {
         return Err(unlisted);
@@ -278,7 +281,7 @@ fn main() -> AppExit {
             hud::HudPlugin,
             JuicePlugin,
             vfx::VfxPlugin,
-            ShotAudioPlugin,
+            GameAudioPlugin,
             minimap::MinimapPlugin,
         ));
     #[cfg(feature = "dev")]

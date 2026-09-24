@@ -104,6 +104,15 @@
   BRP queries and Transform-based leak detectors miss it; ~1/s from civilian recycling). Every character despawn
   path also despawns its sensor targets; leak audits count all entities, not only reflected queries.
 
+- 2026-09-24 (TASK-014) — audio: `PlaybackMode::Loop` wraps rodio `repeat_infinite`, which buffers every played
+  sample: endless procedural decoders use `Once`. `set_volume` replaces the sink volume (GlobalVolume applies only
+  at sink creation). rodio 0.22.2 `Spatial` pans MIRRORED and sums stereo as L+R: the listener is built with
+  mirrored ears behind one fn, gated by G-A7 (goes RED when Bevy ships a fixed rodio).
+- 2026-09-24 (TASK-014) — respawn keeps the SAME player entity and resets armour: frame-diff detectors
+  (`Local` baselines over Health/WantedLevel) compare only in `Playing` and forget the baseline elsewhere.
+- 2026-09-24 (TASK-014) — a spawner that "refreshes an existing entity, else spawns" in one MessageReader loop
+  cannot see its own spawns from the same run: dedupe by key with a local set (8 damage arcs per shotgun blast).
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

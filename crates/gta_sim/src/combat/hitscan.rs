@@ -63,6 +63,14 @@ pub struct ShotFired {
     pub attack: u32,
 }
 
+/// What a pellet stopped on.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceHit {
+    Nothing,
+    World,
+    Body,
+}
+
 /// One pellet's path from the muzzle to where it stopped (tracer).
 #[derive(Message, Reflect, Clone, Copy, Debug)]
 #[reflect(Message)]
@@ -70,6 +78,10 @@ pub struct BulletTrace {
     pub shooter: Entity,
     pub from: Vec3,
     pub to: Vec3,
+    /// What the pellet stopped on; `Body` = a character that is not `Dead`.
+    pub hit: TraceHit,
+    /// Attack id of the trigger pull, equal to `ShotFired.attack`.
+    pub attack: u32,
 }
 
 /// One hit that damaged a live target. `damage` is exactly the amount passed to `Health::take`
@@ -236,18 +248,26 @@ pub(super) fn fire_weapons(
                     shooter,
                     from,
                     to: from + d * stats.range,
+                    hit: TraceHit::Nothing,
+                    attack: shot,
                 });
                 continue;
             };
             let point = from + d * hit.distance;
+            let (target, headshot) = colliders
+                .get(hit.entity)
+                .map_or((hit.entity, false), |(of, head)| (of.body, head));
             traces.write(BulletTrace {
                 shooter,
                 from,
                 to: point,
+                hit: if targets.contains(target) {
+                    TraceHit::Body
+                } else {
+                    TraceHit::World
+                },
+                attack: shot,
             });
-            let (target, headshot) = colliders
-                .get(hit.entity)
-                .map_or((hit.entity, false), |(of, head)| (of.body, head));
             // `current > 0` covers a target killed earlier this tick whose `Dead` is still deferred.
             let Ok(mut health) = targets.get_mut(target) else {
                 continue;

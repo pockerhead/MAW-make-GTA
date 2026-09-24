@@ -5,6 +5,7 @@ mod widgets;
 
 pub(crate) use config::{Rgb, Rgba, positive, unit};
 pub use config::{StarsConfig, UI_CONFIG, UiConfig};
+pub(crate) use widgets::MenuAction;
 pub use widgets::clock_seed;
 pub(crate) use widgets::title_screen;
 

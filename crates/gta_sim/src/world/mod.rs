@@ -8,7 +8,7 @@ pub use city::{
 pub use citygen::minimap::{Raster, RasterStyle, heading_on_map, map_px, project, rasterize};
 pub use citygen::{
     BuildingKind, CityLayout, CityParams, DistrictKind, Landmarks, RoadClass, Tier, centroid,
-    contains_convex,
+    contains_convex, dist_point_segment,
 };
 
 use crate::flow::{GameState, NEW_CITY};

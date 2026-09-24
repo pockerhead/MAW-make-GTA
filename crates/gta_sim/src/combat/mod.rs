@@ -6,8 +6,8 @@ mod weapons;
 
 pub(crate) use hitscan::unit_f32;
 pub use hitscan::{
-    AIM_CONFIG, AimConfig, BulletTrace, CombatRng, DamageDealt, ShotFired, aim_yaw, cone_sample,
-    muzzle,
+    AIM_CONFIG, AimConfig, BulletTrace, CombatRng, DamageDealt, ShotFired, TraceHit, aim_yaw,
+    cone_sample, muzzle,
 };
 pub use melee::{
     HitReaction, KnockbackTuning, MELEE_CONFIG, Melee, MeleeConfig, MeleeHit, MeleeHitStats,
@@ -61,6 +61,7 @@ impl Plugin for CombatPlugin {
             .register_type::<Dummy>()
             .register_type::<ShotFired>()
             .register_type::<BulletTrace>()
+            .register_type::<TraceHit>()
             .register_type::<DamageDealt>()
             .register_type::<Melee>()
             .register_type::<Swing>()

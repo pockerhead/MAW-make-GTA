@@ -5,7 +5,7 @@ mod witness;
 #[cfg(test)]
 mod witness_gate;
 
-use crate::menu::UiConfig;
+use crate::{juice::StarsRaised, menu::UiConfig};
 use bevy::prelude::*;
 use gta_sim::{
     character::{Health, HealthConfig},
@@ -21,6 +21,8 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(witness::WitnessBarPlugin)
+            .add_message::<StarsRaised>()
+            .register_type::<stars::StarPulse>()
             .add_systems(
                 OnTransition {
                     exited: GameState::Loading,
@@ -36,6 +38,7 @@ impl Plugin for HudPlugin {
                     weapon::update_crosshair,
                     weapon::update_hit_marker,
                     stars::update_stars,
+                    stars::pulse_stars,
                 ),
             )
             .add_systems(OnEnter(WastedPhase::Screen), wasted::spawn_wasted_screen)

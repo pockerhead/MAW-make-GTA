@@ -1,29 +1,62 @@
-//! Trauma camera shake (GDD §8): a melee hit the player lands or takes adds trauma; the camera
-//! rotates by `max · trauma² · noise` and trauma decays on real time. Rotation only: the aim ray is
-//! written before the shake is applied.
+//! Trauma camera shake (GDD §8): the player's shots, melee hits the player lands or takes, hits
+//! that hurt the player and kills nearby add trauma; the camera rotates by `max · trauma² · noise`
+//! and trauma decays on real time. Rotation only: the aim ray is written before the shake is applied.
 
-use super::{JuiceConfig, config::ShakeConfig};
+use super::{JuiceConfig, PlayerHurt, config::ShakeConfig};
 use crate::settings::GameSettings;
 use bevy::prelude::*;
-use gta_sim::{combat::MeleeHit, player::Player};
+use gta_sim::{
+    combat::{DamageDealt, MeleeHit, ShotFired},
+    player::Player,
+};
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Reflect)]
+#[reflect(Resource)]
 pub struct CameraShake {
     pub trauma: f32,
     /// Applied after the camera's own rotation.
     pub rotation: Quat,
 }
 
-pub(super) fn add_melee_trauma(
+/// Each row adds its trauma, clamped at 1; rows stack (a punch taken is melee + hurt).
+pub(super) fn add_trauma(
+    mut shots: MessageReader<ShotFired>,
     mut hits: MessageReader<MeleeHit>,
-    players: Query<(), With<Player>>,
+    mut hurts: MessageReader<PlayerHurt>,
+    mut dealt: MessageReader<DamageDealt>,
+    players: Query<(Entity, &Transform), With<Player>>,
     juice: Res<JuiceConfig>,
     mut shake: ResMut<CameraShake>,
 ) {
-    for hit in hits.read() {
-        if players.contains(hit.attacker) || players.contains(hit.target) {
-            shake.trauma = (shake.trauma + juice.shake.melee_trauma).min(1.0);
+    let cfg = &juice.shake;
+    let player = players.single().ok();
+    let is_player = |entity: Entity| player.is_some_and(|(p, _)| p == entity);
+    let mut rows = Vec::new();
+    rows.extend(
+        shots
+            .read()
+            .filter(|shot| is_player(shot.shooter))
+            .map(|_| cfg.shot_trauma),
+    );
+    rows.extend(
+        hits.read()
+            .filter(|hit| is_player(hit.attacker) || is_player(hit.target))
+            .map(|_| cfg.melee_trauma),
+    );
+    rows.extend(hurts.read().map(|_| cfg.hurt_trauma));
+    for hit in dealt.read() {
+        let Some((body, transform)) = player else {
+            continue;
+        };
+        if hit.killed
+            && hit.target != body
+            && hit.point.distance(transform.translation) <= cfg.death_radius
+        {
+            rows.push(cfg.death_trauma);
         }
+    }
+    for row in rows {
+        shake.trauma = (shake.trauma + row).min(1.0);
     }
 }
 
@@ -88,6 +121,10 @@ mod tests {
             max_roll_deg: 5.0,
             noise_hz: 15.0,
             reduced_scale: 0.3,
+            shot_trauma: 0.1,
+            hurt_trauma: 0.2,
+            death_trauma: 0.4,
+            death_radius: 12.0,
         }
     }
 

@@ -1,7 +1,73 @@
 (
+    listener_ear_gap: 0.3,        // m between the camera listener's ears
+    min_gain: 0.01,               // spatial one-shots quieter than this at the listener are not spawned
+    voices: (shot: 12, impact: 12, hurt: 2, ui: 4, stinger: 1, death_sting: 1),   // alive one-shots per class; the oldest is stolen
     shot: (
-        pistol: (seconds: 0.18, decay: 22.0, volume: 0.5),
-        smg: (seconds: 0.10, decay: 35.0, volume: 0.35),
-        shotgun: (seconds: 0.35, decay: 12.0, volume: 0.7),
+        pitch_variants: [0.95, 1.0, 1.05],               // playback speed, cycled by attack id (GDD §8: ±5%)
+        npc_ref_distance: 8.0,                           // m of full volume around an NPC muzzle, then (ref/d)^2
+        // seconds: burst length, s; decay, body_decay: envelope rates, 1/s; volume: linear;
+        // body_hz: low sine body, Hz; body_level: body relative to the noise
+        pistol:  (seconds: 0.18, decay: 22.0, volume: 0.5,  body_hz: 140.0, body_decay: 30.0, body_level: 0.6),
+        smg:     (seconds: 0.10, decay: 35.0, volume: 0.35, body_hz: 170.0, body_decay: 45.0, body_level: 0.4),
+        shotgun: (seconds: 0.35, decay: 12.0, volume: 0.7,  body_hz: 90.0,  body_decay: 18.0, body_level: 0.8),
     ),
+    // 0.4: rodio 0.22.2 downmixes stereo files as L+R on spatial emitters (up to 2x); all impact files are stereo.
+    impacts: (
+        volume: 0.4,
+        ref_distance: 6.0,        // m of full volume, then (ref/d)^2
+        bullet_body: [
+            "third_party/impact-sounds/impactSoft_medium_000.ogg", "third_party/impact-sounds/impactSoft_medium_001.ogg",
+            "third_party/impact-sounds/impactSoft_medium_002.ogg", "third_party/impact-sounds/impactSoft_medium_003.ogg",
+            "third_party/impact-sounds/impactSoft_medium_004.ogg",
+        ],
+        bullet_world: [
+            "third_party/impact-sounds/impactGeneric_light_000.ogg", "third_party/impact-sounds/impactGeneric_light_001.ogg",
+            "third_party/impact-sounds/impactGeneric_light_002.ogg", "third_party/impact-sounds/impactGeneric_light_003.ogg",
+            "third_party/impact-sounds/impactGeneric_light_004.ogg",
+        ],
+        punch: [
+            "third_party/impact-sounds/impactPunch_medium_000.ogg", "third_party/impact-sounds/impactPunch_medium_001.ogg",
+            "third_party/impact-sounds/impactPunch_medium_002.ogg", "third_party/impact-sounds/impactPunch_medium_003.ogg",
+            "third_party/impact-sounds/impactPunch_medium_004.ogg",
+        ],
+        heavy: [
+            "third_party/impact-sounds/impactPunch_heavy_000.ogg", "third_party/impact-sounds/impactPunch_heavy_001.ogg",
+            "third_party/impact-sounds/impactPunch_heavy_002.ogg", "third_party/impact-sounds/impactPunch_heavy_003.ogg",
+            "third_party/impact-sounds/impactPunch_heavy_004.ogg",
+        ],
+        death: [
+            "third_party/impact-sounds/impactSoft_heavy_000.ogg", "third_party/impact-sounds/impactSoft_heavy_001.ogg",
+            "third_party/impact-sounds/impactSoft_heavy_002.ogg", "third_party/impact-sounds/impactSoft_heavy_003.ogg",
+            "third_party/impact-sounds/impactSoft_heavy_004.ogg",
+        ],
+    ),
+    // The player's own body (GDD §8 "Урон игроку"): non-spatial, no stereo sum; no CC0 voice exists, so a heavy thud.
+    hurt: (
+        volume: 0.6,
+        min_interval: 0.5,        // real s after a hurt cue in which further hits stay silent (vignette/shake still add)
+        pool: [
+            "third_party/impact-sounds/impactPunch_heavy_000.ogg", "third_party/impact-sounds/impactPunch_heavy_001.ogg",
+            "third_party/impact-sounds/impactPunch_heavy_002.ogg", "third_party/impact-sounds/impactPunch_heavy_003.ogg",
+            "third_party/impact-sounds/impactPunch_heavy_004.ogg",
+        ],
+    ),
+    interface: (volume: 0.6, press: "third_party/interface-sounds/click_001.ogg",
+                pause: "third_party/interface-sounds/toggle_001.ogg"),
+    stinger: (
+        volume: 0.7,
+        wanted: "third_party/music-jingles/jingles_HIT00.ogg",   // wanted level rises
+        death: "third_party/music-jingles/jingles_SAX01.ogg",    // player dies ("глухой sting"): descending sax jingle
+    ),
+    ambience: (city_volume: 0.25, park_volume: 0.35,
+               city_duck_in_park: 0.5,    // share of the city bed removed at park weight 1
+               park_fade: 25.0,           // m outside a park over which the park weight falls 1 -> 0
+               city_lowpass_hz: 300.0,    // Hz, one-pole low-pass of the city noise
+               // chirps_per_s: mean chirp starts per s; a chirp sweeps hi_hz -> lo_hz over chirp_seconds
+               birds: (chirps_per_s: 1.5, lo_hz: 2500.0, hi_hz: 5000.0, chirp_seconds: 0.08)),
+    siren: (volume: 0.6, ref_distance: 15.0, max_emitters: 2,   // ref_distance: m of full volume, then (ref/d)^2
+            audible: 150.0,               // m from the listener; farther cops carry no siren
+            repick_seconds: 1.0,          // real s between re-choosing which cops carry sirens
+            switch_margin: 10.0,          // m; a siren leaves its live, audible cop only for one this much closer
+            height: 1.0,                  // m above the cop's body centre
+            lo_hz: 800.0, hi_hz: 1700.0, period: 4.9),   // wail sweep, Hz; one up-and-down sweep, s
 )

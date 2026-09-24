@@ -3615,6 +3615,7 @@ dependencies = [
  "bevy_brp_extras",
  "bevy_enhanced_input",
  "gta_sim",
+ "rodio",
  "ron",
  "serde",
 ]
