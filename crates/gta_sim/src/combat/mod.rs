@@ -6,8 +6,8 @@ mod weapons;
 
 pub(crate) use hitscan::unit_f32;
 pub use hitscan::{
-    AIM_CONFIG, AimConfig, BulletTrace, CombatRng, DamageDealt, ShotFired, TraceHit, aim_yaw,
-    cone_sample, muzzle,
+    AIM_CONFIG, AimConfig, BulletHitVehicle, BulletTrace, CombatRng, DamageDealt, ShotFired,
+    TraceHit, aim_yaw, cone_sample, muzzle,
 };
 pub use melee::{
     HitReaction, KnockbackTuning, MELEE_CONFIG, Melee, MeleeConfig, MeleeHit, MeleeHitStats,
@@ -49,6 +49,7 @@ impl Plugin for CombatPlugin {
             .add_message::<ShotFired>()
             .add_message::<BulletTrace>()
             .add_message::<DamageDealt>()
+            .add_message::<BulletHitVehicle>()
             .add_message::<MeleeHit>()
             .add_message::<melee::Strike>()
             .register_type::<Pickup>()
@@ -63,6 +64,7 @@ impl Plugin for CombatPlugin {
             .register_type::<BulletTrace>()
             .register_type::<TraceHit>()
             .register_type::<DamageDealt>()
+            .register_type::<BulletHitVehicle>()
             .register_type::<Melee>()
             .register_type::<Swing>()
             .register_type::<MeleeWeapon>()
@@ -122,12 +124,14 @@ fn clear_combat_messages(
     mut damage: ResMut<Messages<DamageDealt>>,
     mut hits: ResMut<Messages<MeleeHit>>,
     mut strikes: ResMut<Messages<melee::Strike>>,
+    mut vehicle_hits: ResMut<Messages<BulletHitVehicle>>,
 ) {
     shots.clear();
     traces.clear();
     damage.clear();
     hits.clear();
     strikes.clear();
+    vehicle_hits.clear();
 }
 
 fn reseed_combat(seed: Res<CitySeed>, mut rng: ResMut<CombatRng>) {

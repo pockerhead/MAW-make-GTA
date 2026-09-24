@@ -18,6 +18,7 @@ pub(crate) const PARKS: u64 = 12;
 pub(crate) const LOTS: u64 = 13;
 pub(crate) const BUILDINGS: u64 = 14;
 pub(crate) const GANGS: u64 = 15;
+pub(crate) const PARKING: u64 = 16;
 
 // FNV-1a is fixed here so RNG substreams are independent of Rust's hasher.
 pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {

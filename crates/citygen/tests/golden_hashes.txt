@@ -4,6 +4,6 @@
 # Update with the bless procedure: properties green, then
 #   cargo test -p citygen --test golden -- --ignored bless_print_golden --nocapture
 # and paste the printed lines here by hand.
-1 0xd2158922f1e5cd6f
-2 0x0672ef45a54e0587
-42 0xe62c12ebedcb8268
+1 0x31849ea45f8ec142
+2 0x67a43b6eb7a7bd76
+42 0xaa9407c7d1b9df77

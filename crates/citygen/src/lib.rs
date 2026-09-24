@@ -10,6 +10,7 @@ mod layout;
 mod lots;
 pub mod minimap;
 mod params;
+mod parking;
 mod pois;
 mod rng;
 mod roads;
@@ -38,6 +39,7 @@ pub fn generate(seed: u64, params: &CityParams) -> Result<CityLayout, GenError> 
         &districts,
     )?;
     let (sidewalks, lanes, player_spawn) = graphs::build(params, &roads, &blocks);
+    let parking = parking::spots(seed, params, &roads);
     Ok(CityLayout {
         seed,
         size: params.size,
@@ -52,5 +54,6 @@ pub fn generate(seed: u64, params: &CityParams) -> Result<CityLayout, GenError> 
         lanes,
         player_spawn,
         landmarks,
+        parking,
     })
 }

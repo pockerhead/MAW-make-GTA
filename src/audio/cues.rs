@@ -14,6 +14,7 @@ use bevy::{
 use gta_sim::{
     combat::{BulletTrace, DamageDealt, MeleeHit, ShotFired, TraceHit, Weapon},
     player::Player,
+    vehicle::{Driving, VehicleImpact},
 };
 use std::collections::HashSet;
 
@@ -28,10 +29,12 @@ pub enum SoundClass {
     DeathSting,
     Siren,
     Ambience,
+    /// The hum of the player's car: a loop like the siren.
+    Engine,
 }
 
 impl SoundClass {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
     const ONE_SHOTS: [Self; 6] = [
         Self::Shot,
         Self::Impact,
@@ -95,11 +98,13 @@ pub struct SoundBank {
     pub sirens: Vec<Handle<Synth>>,
     pub city: Handle<Synth>,
     pub birds: Handle<Synth>,
+    pub engine: Handle<Synth>,
     pub bullet_body: Pool,
     pub bullet_world: Pool,
     pub punch: Pool,
     pub heavy: Pool,
     pub death: Pool,
+    pub vehicle: Pool,
     pub hurt: Pool,
     pub press: Handle<AudioSource>,
     pub pause: Handle<AudioSource>,
@@ -124,6 +129,7 @@ impl FromWorld for SoundBank {
             .collect();
         let city = synths.add(Synth::city(&mix.ambience));
         let birds = synths.add(Synth::birds(&mix.ambience.birds));
+        let engine = synths.add(Synth::engine(&mix.engine));
         let assets = world.resource::<AssetServer>();
         let i = &mix.impacts;
         Self {
@@ -131,11 +137,13 @@ impl FromWorld for SoundBank {
             sirens,
             city,
             birds,
+            engine,
             bullet_body: Pool::load(assets, &i.bullet_body),
             bullet_world: Pool::load(assets, &i.bullet_world),
             punch: Pool::load(assets, &i.punch),
             heavy: Pool::load(assets, &i.heavy),
             death: Pool::load(assets, &i.death),
+            vehicle: Pool::load(assets, &i.vehicle),
             hurt: Pool::load(assets, &mix.hurt.pool),
             press: assets.load(mix.interface.press.clone()),
             pause: assets.load(mix.interface.pause.clone()),
@@ -294,6 +302,8 @@ fn play_impacts(
     mut traces: MessageReader<BulletTrace>,
     mut melee: MessageReader<MeleeHit>,
     mut dealt: MessageReader<DamageDealt>,
+    mut crashes: MessageReader<VehicleImpact>,
+    drivers: Query<&Driving, With<Player>>,
     mix: Res<MixConfig>,
     listeners: Query<&GlobalTransform, With<SpatialListener>>,
     mut bank: ResMut<SoundBank>,
@@ -331,11 +341,30 @@ fn play_impacts(
     for hit in dealt.read().filter(|hit| hit.killed) {
         hits.push((bank.death.pick(), hit.point));
     }
-    for (handle, at) in hits {
+    // The player's own crash is always heard; other cars only within audibility.
+    let own = drivers.single().ok().map(|d| d.vehicle);
+    let mut own_crashes = Vec::new();
+    // A car-car crash comes once per car at the same point: one sound, the driven car's first.
+    let mut crashes: Vec<&VehicleImpact> = crashes.read().collect();
+    crashes.sort_by_key(|crash| Some(crash.vehicle) != own);
+    let mut voiced = Vec::new();
+    for crash in crashes {
+        if voiced.contains(&crash.point) {
+            continue;
+        }
+        voiced.push(crash.point);
+        if Some(crash.vehicle) == own {
+            own_crashes.push((bank.vehicle.pick(), crash.point));
+        } else {
+            hits.push((bank.vehicle.pick(), crash.point));
+        }
+    }
+    let heard_anyway = own_crashes.len();
+    for (i, (handle, at)) in own_crashes.into_iter().chain(hits).enumerate() {
         let Some(handle) = handle else {
             continue;
         };
-        if !audible(ear, at, cfg.ref_distance, mix.min_gain) {
+        if i >= heard_anyway && !audible(ear, at, cfg.ref_distance, mix.min_gain) {
             continue;
         }
         let settings = spatial(cfg.ref_distance).with_volume(Volume::Linear(cfg.volume));
@@ -472,7 +501,7 @@ fn enforce_voice_budget(
             SoundClass::Ui => v.ui,
             SoundClass::Stinger => v.stinger,
             SoundClass::DeathSting => v.death_sting,
-            SoundClass::Siren | SoundClass::Ambience => continue,
+            SoundClass::Siren | SoundClass::Ambience | SoundClass::Engine => continue,
         };
         let voices = &mut alive[class.index()];
         if voices.len() <= cap {

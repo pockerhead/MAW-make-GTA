@@ -31,6 +31,10 @@ pub struct HeatTable {
     pub punch_cop: u32,
     pub wound_cop: u32,
     pub kill_cop: u32,
+    /// A civilian wounded by a car.
+    pub run_over: u32,
+    /// The first entry into a car (a theft).
+    pub car_theft: u32,
 }
 
 impl HeatTable {
@@ -43,6 +47,8 @@ impl HeatTable {
             Crime::PunchCop => self.punch_cop,
             Crime::WoundCop => self.wound_cop,
             Crime::KillCop => self.kill_cop,
+            Crime::RunOver => self.run_over,
+            Crime::CarTheft => self.car_theft,
         }
     }
 }
@@ -97,6 +103,8 @@ impl WantedConfig {
             ("heat.punch_cop", h.punch_cop),
             ("heat.wound_cop", h.wound_cop),
             ("heat.kill_cop", h.kill_cop),
+            ("heat.run_over", h.run_over),
+            ("heat.car_theft", h.car_theft),
         ] {
             if value == 0 {
                 return Err(format!("{field} must be > 0"));

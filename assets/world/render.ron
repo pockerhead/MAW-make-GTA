@@ -43,4 +43,9 @@
               pickup_size: (0.15, 0.2, 0.6), ammo_size: 0.3, pistol_color: (0.2, 0.2, 0.22),
               smg_color: (0.35, 0.3, 0.2), shotgun_color: (0.45, 0.25, 0.12), ammo_color: (0.85, 0.75, 0.2),
               bat_size: (0.06, 0.06, 0.85), bat_color: (0.55, 0.38, 0.2)),
+    // Kenney Car Kit sedan x 1.6 (vehicle/sedan.ron derives the chassis from it). offset: model origin
+    // under the chassis centre, m = -(body bottom 0.24 + half height 0.92); z: the body node's -0.025 x 1.6
+    // mirrored by the 180 deg model yaw.
+    vehicle: (model: "third_party/car-kit/sedan.glb", scale: 1.6, offset: (0.0, -1.16, -0.04),
+              wheels: ("wheel-front-left", "wheel-front-right", "wheel-back-left", "wheel-back-right")),
 )

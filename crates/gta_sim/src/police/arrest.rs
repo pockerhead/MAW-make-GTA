@@ -8,6 +8,7 @@ use crate::combat::{HitReaction, Melee, ShotFired};
 use crate::flow::GameState;
 use crate::navigation::flat_distance;
 use crate::player::Player;
+use crate::vehicle::Driving;
 use crate::wanted::{WantedConfig, WantedLevel};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -29,7 +30,10 @@ pub(super) fn arrest_player(
     mut next: ResMut<NextState<GameState>>,
     mut shots: MessageReader<ShotFired>,
     // `Without<Dead>`: a death this tick is already applied here and beats the arrest.
-    player: Query<(Entity, &Position, &HitReaction, &Melee), (With<Player>, Without<Dead>)>,
+    player: Query<
+        (Entity, &Position, &HitReaction, &Melee),
+        (With<Player>, Without<Dead>, Without<Driving>),
+    >,
     cops: Query<(Entity, &Position, &PoliceUnit)>,
 ) {
     let (esc, wanted_cfg) = configs;

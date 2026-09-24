@@ -33,6 +33,8 @@ pub struct MinimapConfig {
     /// Diameter of an NPC or pickup dot, px.
     pub dot_px: f32,
     pub pickup_color: Rgb,
+    /// Dot of a car the player does not drive.
+    pub vehicle_color: Rgb,
     /// Landmark glyphs (the font must have them) and colours.
     pub hospital: (String, Rgb),
     pub station: (String, Rgb),
@@ -64,6 +66,7 @@ impl MinimapConfig {
             ("hud.minimap.building", self.building),
             ("hud.minimap.arrow_color", self.arrow_color),
             ("hud.minimap.pickup_color", self.pickup_color),
+            ("hud.minimap.vehicle_color", self.vehicle_color),
             ("hud.minimap.hospital", self.hospital.1),
             ("hud.minimap.station", self.station.1),
         ] {

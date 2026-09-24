@@ -169,6 +169,7 @@ fn juice_app() -> App {
             distance: 3.8,
             pivot: None,
             aim_blend: 0.0,
+            look_idle: 0.0,
         },
         Transform::default(),
     ));

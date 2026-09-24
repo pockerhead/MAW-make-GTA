@@ -28,7 +28,6 @@ from t8 import scalar, variant  # noqa: E402
 from t11 import cops, set_heat, star_heats, wanted  # noqa: E402
 
 SEED = 1
-CLASSES = ["Shot", "Impact", "Hurt", "Ui", "Stinger", "DeathSting", "Siren", "Ambience"]
 ARMOR = 1.0e6
 SETTLE_S = 0.5
 POLL_S = 0.05
@@ -39,22 +38,50 @@ SIREN_DEADLINE_S = 90.0
 DAMAGE_DEALT = "gta_sim::combat::hitscan::DamageDealt"
 
 
+# Loop classes whose cap is a law of the code, not a mix.ron value: two ambience beds, one engine (the player's car).
+LOOP_CAPS = {"Ambience": 2, "Engine": 1}
+
+
+def sound_classes():
+    """`SoundClass` variants in declaration order (= `SoundStats` index), read from the client source."""
+    text = (REPO / "src" / "audio" / "cues.rs").read_text(encoding="utf-8")
+    body = re.search(r"pub enum SoundClass\s*\{(.*?)\}", text, re.S)
+    if not body:
+        raise AssertionError("GATE BROKEN: SoundClass enum not found in src/audio/cues.rs")
+    lines = [re.sub(r"//.*", "", line).strip() for line in body.group(1).splitlines()]
+    return [line.rstrip(",") for line in lines if line and not line.startswith("#")]
+
+
+CLASSES = sound_classes()
+
+
+def snake(name):
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
 def mix_caps():
     """Voice caps per class (index order of `CLASSES`) and ambience gains from `audio/mix.ron`."""
     text = (REPO / "assets" / "audio" / "mix.ron").read_text(encoding="utf-8")
-    voices = re.search(r"voices:\s*\(shot:\s*(\d+),\s*impact:\s*(\d+),\s*hurt:\s*(\d+),\s*ui:\s*(\d+),"
-                       r"\s*stinger:\s*(\d+),\s*death_sting:\s*(\d+)\)", text)
+    voices = re.search(r"voices:\s*\(([^)]*)\)", text)
     sirens = re.search(r"max_emitters:\s*(\d+)", text)
     city = re.search(r"city_volume:\s*([\d.]+)", text)
     park = re.search(r"park_volume:\s*([\d.]+)", text)
     if not (voices and sirens and city and park):
         raise AssertionError("GATE BROKEN: audio/mix.ron layout not understood")
-    caps = [int(v) for v in voices.groups()] + [int(sirens.group(1)), 2]
+    known = {k: int(v) for k, v in re.findall(r"(\w+):\s*(\d+)", voices.group(1))}
+    known["siren"] = int(sirens.group(1))
+    known.update({snake(k): v for k, v in LOOP_CAPS.items()})
+    missing = [c for c in CLASSES if snake(c) not in known]
+    if missing:
+        raise AssertionError(f"GATE BROKEN: no voice cap for SoundClass {missing} (mix.ron voices / LOOP_CAPS)")
+    caps = [known[snake(c)] for c in CLASSES]
     return {"caps": caps, "city_volume": float(city.group(1)), "park_volume": float(park.group(1))}
 
 
 def stats(game):
     raw = resource_value(game, "SoundStats")
+    if len(raw["peak_alive"]) != len(CLASSES):
+        raise AssertionError(f"GATE BROKEN: SoundStats has {len(raw['peak_alive'])} classes, cues.rs parse gave {CLASSES}")
     return {"spawned": [int(v) for v in raw["spawned"]], "peak_alive": [int(v) for v in raw["peak_alive"]]}
 
 

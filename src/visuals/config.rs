@@ -37,6 +37,19 @@ pub struct RenderConfig {
     pub(super) props: PropsConfig,
     pub(super) pickups: PickupVisuals,
     pub(super) weapons: WeaponVisuals,
+    pub(super) vehicle: VehicleVisuals,
+}
+
+/// The car model on every `Vehicle` body.
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(super) struct VehicleVisuals {
+    pub(super) model: String,
+    pub(super) scale: f32,
+    /// Model origin relative to the chassis centre in the body frame, m.
+    pub(super) offset: (f32, f32, f32),
+    /// Node names of the front-left, front-right, back-left, back-right wheels.
+    pub(super) wheels: [String; 4],
 }
 
 /// sRGB colours per district kind.
@@ -221,6 +234,11 @@ impl RenderConfig {
             .models()
             .into_iter()
             .flat_map(|m| [m.model.as_str(), m.texture.as_str()])
+    }
+
+    /// Asset path of the car model.
+    pub fn vehicle_asset_paths(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.vehicle.model.as_str())
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -415,6 +433,20 @@ impl RenderConfig {
                 unit(name, value)?;
             }
         }
+        let v = &self.vehicle;
+        positive("vehicle.scale", v.scale)?;
+        check(
+            [v.offset.0, v.offset.1, v.offset.2]
+                .iter()
+                .all(|x| x.is_finite()),
+            "vehicle.offset",
+            "must be finite",
+        )?;
+        check(
+            v.wheels.iter().all(|w| !w.is_empty()),
+            "vehicle.wheels",
+            "must name four nodes",
+        )?;
         Ok(())
     }
 }

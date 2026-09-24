@@ -283,7 +283,12 @@ fn sync_loop_pause(
     spatial: Query<(&Sound, &SpatialAudioSink)>,
 ) {
     let paused = *state.get() == GameState::Paused;
-    let loops = |sound: &Sound| matches!(sound.class, SoundClass::Ambience | SoundClass::Siren);
+    let loops = |sound: &Sound| {
+        matches!(
+            sound.class,
+            SoundClass::Ambience | SoundClass::Siren | SoundClass::Engine
+        )
+    };
     let sinks = flat
         .iter()
         .filter(|(sound, _)| loops(sound))

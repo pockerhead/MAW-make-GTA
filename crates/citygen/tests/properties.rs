@@ -542,3 +542,74 @@ fn setback_tiers_nested() {
         "seed 1: no building besides the tower has setback tiers"
     );
 }
+
+/// The avenue edge and direction (`true` = a→b) a spot lies on, if it sits on an avenue curb lane.
+fn spot_lane(
+    params: &CityParams,
+    layout: &CityLayout,
+    spot: &citygen::ParkingSpot,
+) -> Option<(usize, bool)> {
+    let cfg = &params.parking;
+    let from_centre = params.half_carriageway(RoadClass::Avenue) - cfg.curb_offset;
+    layout.roads.edges.iter().enumerate().find_map(|(e, edge)| {
+        if edge.class != RoadClass::Avenue {
+            return None;
+        }
+        let (a, b) = (
+            layout.roads.nodes[edge.a as usize],
+            layout.roads.nodes[edge.b as usize],
+        );
+        let len = (b - a).length();
+        let d = (b - a) / len;
+        if d.perp_dot(spot.heading).abs() >= 1e-4 {
+            return None;
+        }
+        let forward = spot.heading.dot(d) > 0.0;
+        let (start, dir) = if forward { (a, d) } else { (b, -d) };
+        let rel = spot.position - start;
+        let along = rel.dot(dir);
+        let side = rel.dot(dir.perp());
+        let on_lane = (side - from_centre).abs() < 0.01
+            && along >= cfg.end_margin - 0.01
+            && along <= len - cfg.end_margin + 0.01;
+        on_lane.then_some((e, forward))
+    })
+}
+
+#[test]
+fn parking_spots_on_avenue_curb_lanes() {
+    let params = shipped_params();
+    let cfg = &params.parking;
+    let mut counts = Vec::new();
+    for (seed, layout) in layouts() {
+        assert!(!layout.parking.is_empty(), "seed {seed}: no parking spots");
+        let mut by_lane: std::collections::HashMap<(usize, bool), Vec<Vec2>> = Default::default();
+        for (i, spot) in layout.parking.iter().enumerate() {
+            let lane = spot_lane(&params, layout, spot).unwrap_or_else(|| {
+                panic!(
+                    "seed {seed}: spot {i} at {} (heading {}) is not on an avenue curb lane",
+                    spot.position, spot.heading
+                )
+            });
+            for (b, block) in layout.blocks.iter().enumerate() {
+                assert!(
+                    !contains_convex(&block.curb, spot.position, 0.0),
+                    "seed {seed}: spot {i} inside block {b}"
+                );
+            }
+            by_lane.entry(lane).or_default().push(spot.position);
+        }
+        for ((edge, forward), spots) in by_lane {
+            for (i, a) in spots.iter().enumerate() {
+                for b in &spots[i + 1..] {
+                    assert!(
+                        a.distance(*b) >= cfg.spacing - 0.01,
+                        "seed {seed}: edge {edge} ({forward}) spots {a} and {b} closer than spacing"
+                    );
+                }
+            }
+        }
+        counts.push((*seed, layout.parking.len()));
+    }
+    println!("parking spots per seed: {counts:?}");
+}

@@ -1,0 +1,17 @@
+// Car crash and bullet damage (GDD §5.2).
+(
+    // Car health; crash loss = (closing speed - threshold_speed)·per_mps. 10 m/s -> 200, 28 m/s -> 920.
+    // bullet_scale: multiplier on a weapon's base damage per pellet that hits the body.
+    // scrape_normal: a contact normal with at least this share along the car's down axis is an
+    // underbody scrape, not a crash (0.5 = within 60° of straight down; the nose chamfer is 0.86).
+    vehicle: (
+        max_health: 1000.0,
+        threshold_speed: 5.0,
+        per_mps: 40.0,
+        bullet_scale: 1.0,
+        scrape_normal: 0.5,
+    ),
+    // Pedestrian hit: loss = (closing speed - threshold_speed)·per_mps, 10 m/s -> 84.
+    // knockdown_speed, m/s; shove_scale: knockback velocity per m/s of closing speed.
+    pedestrian: (threshold_speed: 3.0, per_mps: 12.0, knockdown_speed: 4.0, shove_scale: 0.6),
+)

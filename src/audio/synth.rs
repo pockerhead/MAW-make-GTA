@@ -1,7 +1,8 @@
-//! Procedural sounds (GDD §8): gunshots (noise + low body), the siren wail, the city bed and park
-//! birds. Loops are endless decoders played `Once`: rodio's `Loop` would buffer a source that never ends.
+//! Procedural sounds (GDD §8): gunshots (noise + low body), the siren wail, the city bed, park
+//! birds and the engine hum. Loops are endless decoders played `Once`: rodio's `Loop` would buffer a
+//! source that never ends.
 
-use super::config::{AmbienceConfig, BirdsConfig, ShotSoundConfig, SirenConfig};
+use super::config::{AmbienceConfig, BirdsConfig, EngineConfig, ShotSoundConfig, SirenConfig};
 use bevy::{
     audio::{ChannelCount, Decodable, SampleRate, Source},
     prelude::*,
@@ -17,6 +18,14 @@ pub enum Synth {
     Siren(SirenSynth),
     City(CitySynth),
     Birds(BirdSynth),
+    Engine(EngineSynth),
+}
+
+#[derive(Clone, Copy)]
+pub struct EngineSynth {
+    base_hz: f32,
+    harmonics: u32,
+    noise: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -85,7 +94,15 @@ impl Synth {
         })
     }
 
-    /// Siren, city and birds never end.
+    pub fn engine(cfg: &EngineConfig) -> Self {
+        Self::Engine(EngineSynth {
+            base_hz: cfg.base_hz,
+            harmonics: cfg.harmonics,
+            noise: cfg.noise,
+        })
+    }
+
+    /// Siren, city, birds and the engine never end.
     #[cfg(test)]
     pub fn is_endless(&self) -> bool {
         !matches!(self, Self::Shot(_))
@@ -137,6 +154,11 @@ pub enum SynthDecoder {
         chirp: Option<f32>,
         phase: f32,
     },
+    Engine {
+        synth: EngineSynth,
+        phase: f32,
+        noise: Noise,
+    },
 }
 
 impl Decodable for Synth {
@@ -166,6 +188,11 @@ impl Decodable for Synth {
                 noise,
                 chirp: None,
                 phase: 0.0,
+            },
+            Self::Engine(synth) => SynthDecoder::Engine {
+                synth,
+                phase: 0.0,
+                noise,
             },
         }
     }
@@ -222,6 +249,21 @@ impl Iterator for SynthDecoder {
                 let amplitude = 0.5 - 0.5 * (TAU * u).cos();
                 *chirp = (tau + DT < synth.chirp_seconds).then_some(tau + DT);
                 Some(amplitude * phase.sin())
+            }
+            Self::Engine {
+                synth,
+                phase,
+                noise,
+            } => {
+                *phase = (*phase + TAU * synth.base_hz * DT) % TAU;
+                let mut sum = 0.0;
+                let mut level = 0.0;
+                for k in 1..=synth.harmonics {
+                    let k = k as f32;
+                    sum += (k * *phase).sin() / k;
+                    level += 1.0 / k;
+                }
+                Some((sum + synth.noise * noise.signed()) / (level + synth.noise))
             }
         }
     }

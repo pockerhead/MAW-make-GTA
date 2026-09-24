@@ -7,6 +7,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use gta_sim::{
     combat::{DamageDealt, Loadout},
     player::Player,
+    vehicle::Driving,
     world::CityScoped,
 };
 
@@ -133,18 +134,18 @@ pub(super) fn update_ammo(
 #[allow(clippy::type_complexity)]
 pub(super) fn update_crosshair(
     ui: Res<UiConfig>,
-    player: Query<&Loadout, With<Player>>,
+    player: Query<(&Loadout, Has<Driving>), With<Player>>,
     camera: Query<(&OrbitCamera, &Projection)>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut dot: Query<&mut Visibility, (With<CrosshairDot>, Without<CrosshairArm>)>,
     mut arms: Query<(&CrosshairArm, &mut UiTransform, &mut Visibility), Without<CrosshairDot>>,
 ) {
-    let (Ok(loadout), Ok((orbit, projection)), Ok(window)) =
+    let (Ok((loadout, driving)), Ok((orbit, projection)), Ok(window)) =
         (player.single(), camera.single(), window.single())
     else {
         return;
     };
-    let armed = loadout.held.is_some();
+    let armed = loadout.held.is_some() && !driving;
     for mut visibility in &mut dot {
         visibility.set_if_neq(shown(armed));
     }

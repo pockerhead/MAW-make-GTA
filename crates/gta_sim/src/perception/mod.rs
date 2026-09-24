@@ -5,6 +5,7 @@ use crate::civilian::{Civilian, CivilianState};
 use crate::combat::{DamageDealt, Loadout, MeleeHit, ShotFired};
 use crate::layers::GameLayer;
 use crate::population::Corpse;
+use crate::vehicle::Vehicle;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -23,6 +24,10 @@ pub struct PerceptionConfig {
     pub aimed_distance: f32,
     /// Half-angle between an aim ray and the civilian's chest, degrees.
     pub aimed_cone_deg: f32,
+    /// A car on the sidewalk this close is a threat, m.
+    pub car_distance: f32,
+    /// ... when it moves at least this fast, m/s.
+    pub car_speed: f32,
 }
 
 impl PerceptionConfig {
@@ -35,6 +40,8 @@ impl PerceptionConfig {
             ("fight_hearing_radius", self.fight_hearing_radius),
             ("corpse_sight", self.corpse_sight),
             ("aimed_distance", self.aimed_distance),
+            ("car_distance", self.car_distance),
+            ("car_speed", self.car_speed),
         ] {
             if !(value.is_finite() && value > 0.0) {
                 return Err(format!("{field} {value} must be finite and > 0"));
@@ -57,6 +64,8 @@ pub enum ThreatKind {
     Corpse,
     Aimed,
     Hurt,
+    /// A moving car on the sidewalk (GDD §6.2); no crime.
+    Car,
 }
 
 /// What produced a threat: an attack id (`AttackSerial`) or a corpse.
@@ -113,14 +122,32 @@ pub enum AiSystems {
     Decide,
 }
 
-/// A World-layer hit closer than `to` blocks the line from `from`.
-pub fn sight_blocked(spatial: &SpatialQuery, from: Vec3, to: Vec3) -> bool {
+/// A World hit closer than `to` blocks the walk from `from`: movement choices (direct seek, obstacle
+/// probes, spawn cover) see walls only, as before cars existed; sight uses `sight_blocked`.
+pub fn wall_blocked(spatial: &SpatialQuery, from: Vec3, to: Vec3) -> bool {
     let Ok((direction, distance)) = Dir3::new_and_length(to - from) else {
         return false;
     };
     let filter = SpatialQueryFilter::from_mask(GameLayer::World);
     spatial
         .cast_ray(from, direction, distance, true, &filter)
+        .is_some_and(|hit| hit.distance < distance)
+}
+
+/// A World or Vehicle hit closer than `to` blocks the line from `from`. A car that holds either end
+/// does not: its driver sees out and is seen, and a car is visible itself.
+pub fn sight_blocked(spatial: &SpatialQuery, from: Vec3, to: Vec3) -> bool {
+    let Ok((direction, distance)) = Dir3::new_and_length(to - from) else {
+        return false;
+    };
+    let cars = SpatialQueryFilter::from_mask(GameLayer::Vehicle);
+    let mut holders = spatial.point_intersections(from, &cars);
+    holders.extend(spatial.point_intersections(to, &cars));
+    let filter = SpatialQueryFilter::from_mask([GameLayer::World, GameLayer::Vehicle]);
+    spatial
+        .cast_ray_predicate(from, direction, distance, true, &filter, &|entity| {
+            !holders.contains(&entity)
+        })
         .is_some_and(|hit| hit.distance < distance)
 }
 
@@ -238,6 +265,7 @@ fn perceive(
     mut agents: Query<(Entity, &Civilian, &Position, &mut Perception)>,
     corpses: Query<(Entity, &Position), With<Corpse>>,
     aimers: Query<(Entity, &Position, &AimIntent, &Loadout), Without<Dead>>,
+    cars: Query<(&Vehicle, &Position, &LinearVelocity)>,
 ) {
     *load = PerceptionLoad::default();
     let slot = (clock.tick % u64::from(cfg.slots)) as u8;
@@ -303,6 +331,17 @@ fn perceive(
             load.rays += 1;
             if !sight_blocked(&spatial, eyes, at.0) {
                 offer(ThreatKind::Aimed, at.0, distance, None);
+            }
+        }
+        for (car, at, velocity) in &cars {
+            let distance = chest.distance(at.0);
+            if !car.on_sidewalk || velocity.length() < cfg.car_speed || distance > cfg.car_distance
+            {
+                continue;
+            }
+            load.rays += 1;
+            if !sight_blocked(&spatial, eyes, at.0) {
+                offer(ThreatKind::Car, at.0, distance, None);
             }
         }
         perception.pending = nearest;

@@ -204,7 +204,10 @@ fn render_props_reference_manifest_files() {
     let manifest = load_config::<ThirdPartyManifest>(&assets_root(), THIRD_PARTY_MANIFEST)
         .unwrap_or_else(|e| panic!("GATE BROKEN: {e}"));
     let config = render_config();
-    for path in config.prop_asset_paths() {
+    for path in config
+        .prop_asset_paths()
+        .chain(config.vehicle_asset_paths())
+    {
         assert!(
             manifest.contains_asset(path),
             "{RENDER_CONFIG}: {path} is not listed in {THIRD_PARTY_MANIFEST}"

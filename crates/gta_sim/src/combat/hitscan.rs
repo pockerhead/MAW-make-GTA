@@ -100,6 +100,17 @@ pub struct DamageDealt {
     pub killed: bool,
 }
 
+/// A pellet that stopped on a vehicle body; `damage` is before the vehicle's `bullet_scale`.
+#[derive(Message, Reflect, Clone, Copy, Debug)]
+#[reflect(Message)]
+pub struct BulletHitVehicle {
+    pub shooter: Entity,
+    pub attack: u32,
+    pub vehicle: Entity,
+    pub point: Vec3,
+    pub damage: f32,
+}
+
 /// Sim-owned RNG of spread and damage rolls; seeded, so a run is reproducible.
 #[derive(Resource)]
 pub struct CombatRng(pub ChaCha8Rng);
@@ -159,13 +170,19 @@ pub(super) fn fire_weapons(
     dead: Query<(), With<Dead>>,
     reactions: Query<&HitReaction>,
     mut targets: Query<&mut Health, Without<Dead>>,
+    layers: Query<&CollisionLayers>,
     mut fired: MessageWriter<ShotFired>,
     mut traces: MessageWriter<BulletTrace>,
     mut dealt: MessageWriter<DamageDealt>,
+    mut vehicle_hits: MessageWriter<BulletHitVehicle>,
     mut serial: ResMut<AttackSerial>,
 ) {
-    let filter =
-        SpatialQueryFilter::from_mask([GameLayer::World, GameLayer::Character, GameLayer::Hitbox]);
+    let filter = SpatialQueryFilter::from_mask([
+        GameLayer::World,
+        GameLayer::Character,
+        GameLayer::Hitbox,
+        GameLayer::Vehicle,
+    ]);
     for (shooter, position, aim, mut action, mut loadout, velocity, reaction) in &mut shooters {
         // A request during cooldown or reload is dropped, not buffered.
         let requested = std::mem::take(&mut action.fire_requested);
@@ -268,6 +285,20 @@ pub(super) fn fire_weapons(
                 },
                 attack: shot,
             });
+            if !targets.contains(target)
+                && layers
+                    .get(hit.entity)
+                    .is_ok_and(|l| l.memberships.has_all(GameLayer::Vehicle))
+            {
+                vehicle_hits.write(BulletHitVehicle {
+                    shooter,
+                    attack: shot,
+                    vehicle: target,
+                    point,
+                    damage: stats.damage * falloff_factor(stats, hit.distance),
+                });
+                continue;
+            }
             // `current > 0` covers a target killed earlier this tick whose `Dead` is still deferred.
             let Ok(mut health) = targets.get_mut(target) else {
                 continue;

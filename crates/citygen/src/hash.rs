@@ -1,7 +1,7 @@
 use crate::{BuildingKind, CityLayout, DistrictKind, RoadClass, Vec2, rng::fnv1a64};
 
 // Bumped on any change of the canonical encoding below.
-const HASH_SCHEMA_VERSION: u32 = 2;
+const HASH_SCHEMA_VERSION: u32 = 3;
 // Floats are hashed at 1 mm resolution so sub-millimetre noise does not count as a layout change.
 const QUANTUM_PER_METRE: f32 = 1000.0;
 
@@ -152,6 +152,12 @@ pub fn layout_hash(layout: &CityLayout) -> u64 {
     }
 
     w.vec2(layout.player_spawn);
+
+    w.len(layout.parking.len());
+    for spot in &layout.parking {
+        w.vec2(spot.position);
+        w.vec2(spot.heading);
+    }
     fnv1a64(&w.0)
 }
 

@@ -2,6 +2,7 @@ use super::melee::MeleeWeapon;
 use super::weapons::{Loadout, Weapon, WeaponsConfig, acquire};
 use crate::character::{CharacterBody, Dead, Health, HealthConfig};
 use crate::player::Player;
+use crate::vehicle::Driving;
 use crate::world::{CityScoped, HospitalSpawn};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -54,7 +55,10 @@ pub(super) fn collect_pickups(
     cfg: Res<HealthConfig>,
     time: Res<Time<Fixed>>,
     mut pickups: Query<(&mut Pickup, &Transform)>,
-    mut players: Query<(&Position, &CharacterBody, &mut Health), (With<Player>, Without<Dead>)>,
+    mut players: Query<
+        (&Position, &CharacterBody, &mut Health),
+        (With<Player>, Without<Dead>, Without<Driving>),
+    >,
 ) {
     let dt = time.delta_secs();
     let p = &cfg.pickups;
@@ -129,7 +133,10 @@ pub(super) fn collect_weapon_pickups(
     cfg: Res<WeaponsConfig>,
     time: Res<Time<Fixed>>,
     mut pickups: Query<(Entity, &mut WeaponPickup, &Transform, Has<Dropped>)>,
-    mut players: Query<(&Position, &CharacterBody, &mut Loadout), (With<Player>, Without<Dead>)>,
+    mut players: Query<
+        (&Position, &CharacterBody, &mut Loadout),
+        (With<Player>, Without<Dead>, Without<Driving>),
+    >,
 ) {
     let dt = time.delta_secs();
     for (entity, mut pickup, transform, dropped) in &mut pickups {
@@ -194,7 +201,10 @@ pub(super) fn collect_bat_pickups(
     cfg: Res<WeaponsConfig>,
     time: Res<Time<Fixed>>,
     mut pickups: Query<(&mut BatPickup, &Transform)>,
-    mut players: Query<(&Position, &CharacterBody, &mut Loadout), (With<Player>, Without<Dead>)>,
+    mut players: Query<
+        (&Position, &CharacterBody, &mut Loadout),
+        (With<Player>, Without<Dead>, Without<Driving>),
+    >,
 ) {
     let dt = time.delta_secs();
     for (mut pickup, transform) in &mut pickups {

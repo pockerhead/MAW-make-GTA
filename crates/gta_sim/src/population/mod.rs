@@ -11,7 +11,7 @@ use crate::combat::unit_f32;
 use crate::flow::{GameState, NEW_CITY};
 use crate::gang::GangSystems;
 use crate::navigation::{GraphWalker, SidewalkGraph, flat_distance, wander_next};
-use crate::perception::sight_blocked;
+use crate::perception::wall_blocked;
 use crate::player::Player;
 use crate::world::CitySeed;
 use avian3d::prelude::*;
@@ -273,7 +273,7 @@ pub fn occluded(
         .into_iter()
         .all(|target| {
             *rays += 1;
-            sight_blocked(spatial, view.origin, target)
+            wall_blocked(spatial, view.origin, target)
         })
 }
 

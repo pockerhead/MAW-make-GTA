@@ -17,6 +17,7 @@ mod pickups;
 mod police_gate;
 mod props;
 mod sky;
+mod vehicle;
 mod weapons;
 
 pub use character_config::{CHARACTER_VISUAL_CONFIG, CharacterClips, CharacterVisualConfig};
@@ -51,6 +52,7 @@ impl Plugin for VisualsPlugin {
             sky::SkyPlugin,
             city::CityVisualsPlugin,
             character::CharacterVisualsPlugin,
+            vehicle::VehicleVisualsPlugin,
         ))
         .init_resource::<weapons::WeaponVisualAssets>()
         .add_systems(

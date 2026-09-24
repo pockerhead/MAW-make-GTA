@@ -42,6 +42,8 @@ pub struct ActionIntent {
     pub select: Option<WeaponRequest>,
     /// Weapon wheel steps since the last tick (+ next, − previous).
     pub cycle: i32,
+    /// F: enter/exit a car, cleared by the fixed tick.
+    pub vehicle_requested: bool,
 }
 
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq)]

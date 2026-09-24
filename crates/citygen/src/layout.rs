@@ -16,6 +16,14 @@ pub struct CityLayout {
     pub lanes: LaneGraph,
     pub player_spawn: Vec2,
     pub landmarks: Landmarks,
+    pub parking: Vec<ParkingSpot>,
+}
+
+/// A parked-car spot on an avenue curb lane; `heading` is the unit lane direction.
+#[derive(Clone, Copy, Debug)]
+pub struct ParkingSpot {
+    pub position: Vec2,
+    pub heading: Vec2,
 }
 
 /// Landmark indices: `plaza` and `park` are blocks, `tower` is a building.

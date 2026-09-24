@@ -40,6 +40,12 @@
             "third_party/impact-sounds/impactSoft_heavy_002.ogg", "third_party/impact-sounds/impactSoft_heavy_003.ogg",
             "third_party/impact-sounds/impactSoft_heavy_004.ogg",
         ],
+        // A car hitting a wall or another car.
+        vehicle: [
+            "third_party/impact-sounds/impactMetal_heavy_000.ogg", "third_party/impact-sounds/impactMetal_heavy_001.ogg",
+            "third_party/impact-sounds/impactMetal_heavy_002.ogg", "third_party/impact-sounds/impactMetal_heavy_003.ogg",
+            "third_party/impact-sounds/impactMetal_heavy_004.ogg",
+        ],
     ),
     // The player's own body (GDD §8 "Урон игроку"): non-spatial, no stereo sum; no CC0 voice exists, so a heavy thud.
     hurt: (
@@ -70,4 +76,9 @@
             switch_margin: 10.0,          // m; a siren leaves its live, audible cop only for one this much closer
             height: 1.0,                  // m above the cop's body centre
             lo_hz: 800.0, hi_hz: 1700.0, period: 4.9),   // wail sweep, Hz; one up-and-down sweep, s
+    // Procedural engine hum of the player's car: `harmonics` sines of base_hz (1/k levels) plus `noise`.
+    // rpm = max(speed / max_speed, |throttle| * rev_share); pitch = playback speed idle_pitch..max_pitch by rpm;
+    // volume idle_volume..max_volume by max(rpm, |throttle|); ref_distance: m of full volume, then (ref/d)^2.
+    engine: (base_hz: 45.0, harmonics: 6, noise: 0.15, idle_pitch: 0.8, max_pitch: 2.4, rev_share: 0.35,
+             idle_volume: 0.25, max_volume: 0.6, ref_distance: 8.0),
 )

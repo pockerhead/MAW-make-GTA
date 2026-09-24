@@ -43,6 +43,8 @@ pub struct HudLayout {
     pub bar_gap: f32,
     pub health_color: Rgb,
     pub armor_color: Rgb,
+    /// Health bar of the car the player drives, shown only while driving.
+    pub vehicle_color: Rgb,
     pub back_color: Rgba,
     pub ammo_size: f32,
     pub ammo_color: Rgb,
@@ -208,6 +210,8 @@ impl UiConfig {
         unit("hud.health_color", &[r, g, b])?;
         let (r, g, b) = hud.armor_color;
         unit("hud.armor_color", &[r, g, b])?;
+        let (r, g, b) = hud.vehicle_color;
+        unit("hud.vehicle_color", &[r, g, b])?;
         let (r, g, b, a) = hud.back_color;
         unit("hud.back_color", &[r, g, b, a])?;
         let (r, g, b, a) = hud.crosshair_color;

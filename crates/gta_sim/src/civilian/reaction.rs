@@ -25,7 +25,7 @@ pub fn choose_reaction(
         ThreatKind::Corpse => true,
         ThreatKind::Gunshot => d >= cfg.report_min_distance,
         ThreatKind::Fight => d >= cfg.fight_report_min_distance,
-        ThreatKind::Aimed | ThreatKind::Hurt => false,
+        ThreatKind::Aimed | ThreatKind::Hurt | ThreatKind::Car => false,
     };
     let report = if allow_report && reportable {
         cfg.report * t.report
@@ -70,6 +70,8 @@ mod tests {
             (Fight, 18.0, (0.6, 1.0, 1.4), true, Report),
             (Gunshot, 18.0, (0.6, 1.0, 1.4), true, Flee),
             (Fight, 12.0, (0.6, 1.0, 1.4), true, Flee),
+            (Car, 5.0, (1.0, 1.0, 1.0), true, Flee),
+            (Car, 2.0, (1.0, 1.0, 1.0), true, Cower),
         ];
         for (row, (kind, distance, (flee, cower, report), allow, expected)) in
             rows.into_iter().enumerate()

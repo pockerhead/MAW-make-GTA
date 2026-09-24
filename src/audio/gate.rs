@@ -412,6 +412,7 @@ fn loops_are_endless_once() {
         Synth::siren(&mix.siren, 0.0),
         Synth::city(&mix.ambience),
         Synth::birds(&mix.ambience.birds),
+        Synth::engine(&mix.engine),
     ] {
         assert!(synth.is_endless());
         assert_eq!(synth.decoder().total_duration(), None);

@@ -14,6 +14,7 @@ use gta_sim::{
     flow::GameState,
     player::DebugDamage,
     police::{CopState, PoliceUnit, UnitKind},
+    vehicle::VehicleImpact,
     wanted::WantedLevel,
 };
 
@@ -45,6 +46,27 @@ fn pellets_share_one_impact() {
     app.update();
     let impacts = new_sounds(&mut app, &before, SoundClass::Impact);
     assert_eq!(impacts.len(), 3, "one impact per (attack, kind)");
+}
+
+/// Crashes (correctness): a car-car crash comes as one `VehicleImpact` per car at the same point and
+/// makes one impact sound; a crash at another point makes its own.
+#[test]
+fn car_crash_is_one_impact() {
+    let mut app = audio_app();
+    let (_, at) = player_at(&mut app);
+    let hit = at + Vec3::new(3.0, 1.0, 4.0);
+    let (a, b) = (stand_in(&mut app, hit), stand_in(&mut app, hit));
+    let before = entity_set(&mut app);
+    for (vehicle, point) in [(a, hit), (b, hit), (a, hit + Vec3::X)] {
+        app.world_mut().write_message(VehicleImpact {
+            vehicle,
+            point,
+            speed: 10.0,
+        });
+    }
+    app.update();
+    let impacts = new_sounds(&mut app, &before, SoundClass::Impact);
+    assert_eq!(impacts.len(), 2, "one impact per crash point");
 }
 
 fn hurt_cues(app: &App) -> u64 {

@@ -24,6 +24,28 @@ pub struct MixConfig {
     pub stinger: StingerMix,
     pub ambience: AmbienceConfig,
     pub siren: SirenConfig,
+    pub engine: EngineConfig,
+}
+
+/// Engine hum of the player's car (GDD §8).
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct EngineConfig {
+    /// Fundamental at playback speed 1, Hz.
+    pub base_hz: f32,
+    /// Sine partials k = 1..=harmonics at level 1/k.
+    pub harmonics: u32,
+    /// White noise level relative to the fundamental.
+    pub noise: f32,
+    /// Playback speed at idle and at max revs.
+    pub idle_pitch: f32,
+    pub max_pitch: f32,
+    /// Revs the throttle alone gives a standing car, [0, 1].
+    pub rev_share: f32,
+    pub idle_volume: f32,
+    pub max_volume: f32,
+    /// Full volume around the car, m; `(ref/d)²` beyond.
+    pub ref_distance: f32,
 }
 
 /// Alive one-shots per class; the oldest is stolen.
@@ -88,6 +110,8 @@ pub struct ImpactMix {
     pub punch: Vec<String>,
     pub heavy: Vec<String>,
     pub death: Vec<String>,
+    /// A car hitting the world or another car.
+    pub vehicle: Vec<String>,
 }
 
 /// The player's own body taking damage: non-spatial.
@@ -282,7 +306,27 @@ impl MixConfig {
         positive("siren.lo_hz", s.lo_hz)?;
         positive("siren.hi_hz", s.hi_hz)?;
         below("siren.lo_hz", s.lo_hz, "hi_hz", s.hi_hz)?;
-        positive("siren.period", s.period)
+        positive("siren.period", s.period)?;
+        let e = &self.engine;
+        positive("engine.base_hz", e.base_hz)?;
+        if e.harmonics < 1 {
+            return Err(format!(
+                "engine.harmonics must be >= 1, got {}",
+                e.harmonics
+            ));
+        }
+        if !(e.noise.is_finite() && e.noise >= 0.0) {
+            return Err(format!(
+                "engine.noise must be a finite number >= 0, got {}",
+                e.noise
+            ));
+        }
+        positive("engine.idle_pitch", e.idle_pitch)?;
+        below("engine.idle_pitch", e.idle_pitch, "max_pitch", e.max_pitch)?;
+        unit("engine.rev_share", e.rev_share)?;
+        volume("engine.idle_volume", e.idle_volume)?;
+        volume("engine.max_volume", e.max_volume)?;
+        positive("engine.ref_distance", e.ref_distance)
     }
 
     /// Every sound file the mix plays, relative to the assets root.
@@ -295,7 +339,7 @@ impl MixConfig {
             .map(String::as_str)
     }
 
-    fn pools(&self) -> [(&'static str, &Vec<String>); 6] {
+    fn pools(&self) -> [(&'static str, &Vec<String>); 7] {
         let i = &self.impacts;
         [
             ("impacts.bullet_body", &i.bullet_body),
@@ -303,6 +347,7 @@ impl MixConfig {
             ("impacts.punch", &i.punch),
             ("impacts.heavy", &i.heavy),
             ("impacts.death", &i.death),
+            ("impacts.vehicle", &i.vehicle),
             ("hurt.pool", &self.hurt.pool),
         ]
     }

@@ -94,21 +94,27 @@ fn shipped_manifest_is_valid() {
             "inter",
             "impact-sounds",
             "interface-sounds",
-            "music-jingles"
+            "music-jingles",
+            "car-kit"
         ])
     );
     let audio = ["impact-sounds", "interface-sounds", "music-jingles"];
     for pack in manifest.packs.iter().filter(|p| {
-        p.name != "mini-characters" && p.name != "inter" && !audio.contains(&p.name.as_str())
+        p.name != "mini-characters"
+            && p.name != "inter"
+            && p.name != "car-kit"
+            && !audio.contains(&p.name.as_str())
     }) {
         assert_eq!(pack.files.len(), 4, "pack {} file count", pack.name);
         assert!(pack.rig.is_none(), "pack {} has no rig", pack.name);
     }
-    // 25 impact .ogg + License; click_001, toggle_001 + License; jingles_HIT00, jingles_SAX01 + License.
+    // 30 impact .ogg + License; click_001, toggle_001 + License; jingles_HIT00, jingles_SAX01 + License;
+    // sedan.glb, its colormap + License.
     for (name, files) in [
-        ("impact-sounds", 26),
+        ("impact-sounds", 31),
         ("interface-sounds", 3),
         ("music-jingles", 3),
+        ("car-kit", 3),
     ] {
         let pack = manifest.packs.iter().find(|p| p.name == name).unwrap();
         assert_eq!(pack.files.len(), files, "{name} file count");

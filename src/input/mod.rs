@@ -9,10 +9,15 @@ use gta_sim::{
     combat::Weapon,
     flow::GameState,
     player::Player,
+    vehicle::{DriveIntent, Driving},
 };
 
 #[derive(Component)]
 struct OnFoot;
+
+/// Driving controls; active instead of `OnFoot` while the player drives.
+#[derive(Component)]
+struct InVehicle;
 
 #[derive(InputAction)]
 #[action_output(Vec2)]
@@ -66,6 +71,27 @@ struct Slot4;
 #[action_output(f32)]
 struct CycleWeapon;
 
+#[derive(InputAction)]
+#[action_output(bool)]
+struct EnterVehicle;
+
+#[derive(InputAction)]
+#[action_output(Vec2)]
+struct Drive;
+
+#[derive(InputAction)]
+#[action_output(bool)]
+struct Handbrake;
+
+#[derive(InputAction)]
+#[action_output(bool)]
+struct ExitVehicle;
+
+/// Mouse look while driving (the camera reads it like `Look`).
+#[derive(InputAction)]
+#[action_output(Vec2)]
+pub struct DriveLook;
+
 #[derive(Resource)]
 pub struct CursorCaptured(pub bool);
 
@@ -74,21 +100,20 @@ pub struct PlayerInputPlugin;
 impl Plugin for PlayerInputPlugin {
     fn build(&self, app: &mut App) {
         app.add_input_context::<OnFoot>()
+            .add_input_context::<InVehicle>()
             .insert_resource(CursorCaptured(true))
             .add_systems(Startup, spawn_input)
             .add_systems(
                 Update,
                 (
+                    sync_contexts,
                     write_move_intent.after(apply_mouse_look),
                     write_action_intent.after(apply_mouse_look),
+                    write_drive_intent.after(apply_mouse_look),
                 ),
             )
             .add_systems(OnEnter(GameState::Playing), capture_cursor)
-            .add_systems(
-                OnEnter(GameState::Paused),
-                (release_cursor, deactivate_input),
-            )
-            .add_systems(OnExit(GameState::Paused), activate_input)
+            .add_systems(OnEnter(GameState::Paused), release_cursor)
             .add_systems(OnEnter(GameState::MainMenu), release_cursor)
             .add_systems(OnEnter(GameState::Wasted), release_held_actions)
             .add_systems(OnEnter(GameState::Busted), release_held_actions);
@@ -116,6 +141,29 @@ fn spawn_input(mut commands: Commands) {
                 Action::<CycleWeapon>::new(),
                 bindings![(Binding::mouse_wheel(), SwizzleAxis::YXZ)],
             ),
+            (
+                Action::<EnterVehicle>::new(),
+                ActionSettings {
+                    require_reset: true,
+                    ..default()
+                },
+                bindings![KeyCode::KeyF],
+            ),
+        ]),
+        InVehicle,
+        ContextActivity::<InVehicle>::INACTIVE,
+        actions!(InVehicle[
+            (Action::<Drive>::new(), Bindings::spawn(Cardinal::wasd_keys())),
+            (Action::<DriveLook>::new(), bindings![Binding::mouse_motion()]),
+            (Action::<Handbrake>::new(), bindings![KeyCode::Space]),
+            (
+                Action::<ExitVehicle>::new(),
+                ActionSettings {
+                    require_reset: true,
+                    ..default()
+                },
+                bindings![KeyCode::KeyF],
+            ),
         ]),
     ));
 }
@@ -138,17 +186,39 @@ fn release_cursor(
     cursor.visible = true;
 }
 
-// `write_move_intent` has no capture check: Space during the pause would latch a jump for the resume.
-fn deactivate_input(mut commands: Commands, input: Single<Entity, With<OnFoot>>) {
-    commands
-        .entity(*input)
-        .insert(ContextActivity::<OnFoot>::INACTIVE);
+/// `(on foot, in vehicle)` context activity. Paused turns both off: `write_move_intent` has no
+/// capture check, and Space during the pause would latch a jump for the resume.
+fn context_activity(state: &GameState, driving: bool) -> (bool, bool) {
+    match state {
+        GameState::Paused => (false, false),
+        _ => (!driving, driving),
+    }
 }
 
-fn activate_input(mut commands: Commands, input: Single<Entity, With<OnFoot>>) {
-    commands
-        .entity(*input)
-        .insert(ContextActivity::<OnFoot>::ACTIVE);
+fn sync_contexts(
+    mut commands: Commands,
+    state: Res<State<GameState>>,
+    player: Option<Single<Has<Driving>, With<Player>>>,
+    input: Single<(
+        Entity,
+        &ContextActivity<OnFoot>,
+        &ContextActivity<InVehicle>,
+    )>,
+) {
+    let driving = player.is_some_and(|p| *p);
+    let (on_foot, in_vehicle) = context_activity(state.get(), driving);
+    let (entity, current_foot, current_vehicle) = *input;
+    // Inserted only on a change: every insert re-runs the context's activation observers.
+    if **current_foot != on_foot {
+        commands
+            .entity(entity)
+            .insert(ContextActivity::<OnFoot>::new(on_foot));
+    }
+    if **current_vehicle != in_vehicle {
+        commands
+            .entity(entity)
+            .insert(ContextActivity::<InVehicle>::new(in_vehicle));
+    }
 }
 
 fn write_move_intent(
@@ -232,7 +302,51 @@ fn write_action_intent(
     }
 }
 
-fn release_held_actions(mut player: Single<(&mut ActionIntent, &mut AimIntent), With<Player>>) {
+#[allow(clippy::type_complexity)]
+fn write_drive_intent(
+    captured: Res<CursorCaptured>,
+    drive: Single<&Action<Drive>>,
+    handbrake: Single<&Action<Handbrake>>,
+    enter: EventsOf<EnterVehicle>,
+    exit: EventsOf<ExitVehicle>,
+    player: Single<(&mut DriveIntent, &mut ActionIntent), With<Player>>,
+) {
+    let (mut intent, mut action) = player.into_inner();
+    if !captured.0 {
+        *intent = DriveIntent::default();
+        return;
+    }
+    let axis = ***drive;
+    *intent = DriveIntent {
+        throttle: axis.y,
+        steer: axis.x,
+        handbrake: ***handbrake,
+    };
+    if enter.contains(ActionEvents::START) || exit.contains(ActionEvents::START) {
+        action.vehicle_requested = true;
+    }
+}
+
+fn release_held_actions(
+    mut player: Single<(&mut ActionIntent, &mut AimIntent, &mut DriveIntent), With<Player>>,
+) {
     player.0.fire_held = false;
     player.1.aiming = false;
+    *player.2 = DriveIntent::default();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_activity_table() {
+        use GameState::*;
+        for state in [MainMenu, Loading, Playing, Wasted, Busted] {
+            assert_eq!(context_activity(&state, false), (true, false), "{state:?}");
+            assert_eq!(context_activity(&state, true), (false, true), "{state:?}");
+        }
+        assert_eq!(context_activity(&Paused, false), (false, false));
+        assert_eq!(context_activity(&Paused, true), (false, false));
+    }
 }

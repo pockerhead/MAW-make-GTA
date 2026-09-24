@@ -11,6 +11,7 @@ use gta_sim::{
     character::{Health, HealthConfig},
     flow::{BustedPhase, GameState, WastedPhase},
     player::Player,
+    vehicle::{DamageConfig, Driving, VehicleHealth},
     world::CityScoped,
 };
 
@@ -54,11 +55,17 @@ impl Plugin for HudPlugin {
 enum HudBar {
     Health,
     Armor,
+    /// The car the player drives; hidden on foot.
+    Vehicle,
 }
 
 /// The coloured fill of one bar; its width is the percentage of the maximum.
 #[derive(Component)]
 struct HudFill(HudBar);
+
+/// The background of one bar (the whole bar row).
+#[derive(Component)]
+struct HudBarRoot(HudBar);
 
 fn rgb((r, g, b): (f32, f32, f32)) -> Color {
     Color::srgb(r, g, b)
@@ -72,6 +79,7 @@ fn spawn_hud(mut commands: Commands, ui: Res<UiConfig>) {
     let hud = &ui.hud;
     let bar = |kind: HudBar, color: Color| {
         (
+            HudBarRoot(kind),
             Node {
                 width: px(hud.bar_width),
                 height: px(hud.bar_height),
@@ -103,23 +111,43 @@ fn spawn_hud(mut commands: Commands, ui: Res<UiConfig>) {
         children![
             bar(HudBar::Health, rgb(hud.health_color)),
             bar(HudBar::Armor, rgb(hud.armor_color)),
+            bar(HudBar::Vehicle, rgb(hud.vehicle_color)),
         ],
     ));
 }
 
 // Not `Changed<Health>`: `since_damage` changes every fixed tick, so the filter would always pass.
+#[allow(clippy::type_complexity)]
 fn update_bars(
     cfg: Res<HealthConfig>,
-    player: Query<&Health, With<Player>>,
-    mut fills: Query<(&HudFill, &mut Node)>,
+    damage: Res<DamageConfig>,
+    player: Query<(&Health, Option<&Driving>), With<Player>>,
+    cars: Query<&VehicleHealth>,
+    mut fills: Query<(&HudFill, &mut Node), Without<HudBarRoot>>,
+    mut roots: Query<(&HudBarRoot, &mut Node), Without<HudFill>>,
 ) {
-    let Ok(health) = player.single() else {
+    let Ok((health, driving)) = player.single() else {
         return;
     };
+    let car = driving.and_then(|d| cars.get(d.vehicle).ok());
+    for (root, mut node) in &mut roots {
+        if root.0 != HudBar::Vehicle {
+            continue;
+        }
+        let display = if car.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
     for (fill, mut node) in &mut fills {
         let (value, max) = match fill.0 {
             HudBar::Health => (health.current, cfg.max_health),
             HudBar::Armor => (health.armor, cfg.max_armor),
+            HudBar::Vehicle => (car.map_or(0.0, |c| c.current), damage.vehicle.max_health),
         };
         let width = percent(100.0 * value / max);
         if node.width != width {

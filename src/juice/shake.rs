@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use gta_sim::{
     combat::{DamageDealt, MeleeHit, ShotFired},
     player::Player,
+    vehicle::{Driving, VehicleImpact},
 };
 
 #[derive(Resource, Default, Reflect)]
@@ -18,18 +19,35 @@ pub struct CameraShake {
     pub rotation: Quat,
 }
 
+/// Trauma of a crash of the player's car at `speed` m/s.
+pub fn crash_trauma(speed: f32, cfg: &ShakeConfig) -> f32 {
+    if speed < cfg.crash_min_speed {
+        return 0.0;
+    }
+    (speed * cfg.crash_trauma_per_mps).min(1.0)
+}
+
 /// Each row adds its trauma, clamped at 1; rows stack (a punch taken is melee + hurt).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn add_trauma(
     mut shots: MessageReader<ShotFired>,
     mut hits: MessageReader<MeleeHit>,
     mut hurts: MessageReader<PlayerHurt>,
     mut dealt: MessageReader<DamageDealt>,
-    players: Query<(Entity, &Transform), With<Player>>,
+    mut crashes: MessageReader<VehicleImpact>,
+    players: Query<(Entity, &Transform, Option<&Driving>), With<Player>>,
     juice: Res<JuiceConfig>,
     mut shake: ResMut<CameraShake>,
 ) {
     let cfg = &juice.shake;
-    let player = players.single().ok();
+    let car = players
+        .single()
+        .ok()
+        .and_then(|(.., driving)| driving.map(|d| d.vehicle));
+    let player = players
+        .single()
+        .ok()
+        .map(|(entity, transform, _)| (entity, transform));
     let is_player = |entity: Entity| player.is_some_and(|(p, _)| p == entity);
     let mut rows = Vec::new();
     rows.extend(
@@ -44,6 +62,12 @@ pub(super) fn add_trauma(
             .map(|_| cfg.melee_trauma),
     );
     rows.extend(hurts.read().map(|_| cfg.hurt_trauma));
+    rows.extend(
+        crashes
+            .read()
+            .filter(|crash| Some(crash.vehicle) == car)
+            .map(|crash| crash_trauma(crash.speed, cfg)),
+    );
     for hit in dealt.read() {
         let Some((body, transform)) = player else {
             continue;
@@ -125,6 +149,8 @@ mod tests {
             hurt_trauma: 0.2,
             death_trauma: 0.4,
             death_radius: 12.0,
+            crash_trauma_per_mps: 0.02,
+            crash_min_speed: 5.0,
         }
     }
 
@@ -149,6 +175,14 @@ mod tests {
         let t = 3.3;
         let [a, b, c] = [0, 1, 2].map(|channel| smooth_noise(channel, t));
         assert!(a != b && b != c && a != c, "{a} {b} {c}");
+    }
+
+    #[test]
+    fn crash_trauma_rows() {
+        let cfg = cfg();
+        assert_eq!(crash_trauma(4.9, &cfg), 0.0);
+        assert!((crash_trauma(10.0, &cfg) - 0.2).abs() < 1e-6);
+        assert_eq!(crash_trauma(80.0, &cfg), 1.0);
     }
 
     #[test]

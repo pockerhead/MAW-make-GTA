@@ -17,6 +17,7 @@ pub struct CityParams {
     pub pois: PoiParams,
     pub massing: MassingParams,
     pub landmarks: LandmarkParams,
+    pub parking: ParkingParams,
 }
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +100,17 @@ pub struct LandmarkParams {
     pub tower_floors: u32,
     pub tower_footprint: f32,
     pub park_radius: f32,
+}
+/// Parked-car spots on the outer (curb) lane of avenues: a station every `spacing` m from
+/// `end_margin` m after each node, each kept with `chance`; the spot centre is `curb_offset` m in
+/// from the curb.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ParkingParams {
+    pub spacing: f32,
+    pub chance: f32,
+    pub end_margin: f32,
+    pub curb_offset: f32,
 }
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DistrictKind {
@@ -288,6 +300,20 @@ impl CityParams {
         if l.tower_floors as f32 * self.districts.downtown.floor_height <= tallest {
             return Err("landmarks.tower_floors must make the tower the tallest building".into());
         }
+        let parking = &self.parking;
+        if !parking.spacing.is_finite() || parking.spacing < 5.0 {
+            return Err("parking.spacing must be at least 5 m".into());
+        }
+        probability("parking.chance", parking.chance)?;
+        if !parking.end_margin.is_finite() || parking.end_margin < 0.0 {
+            return Err("parking.end_margin must be nonnegative".into());
+        }
+        if !parking.curb_offset.is_finite()
+            || parking.curb_offset <= 0.0
+            || parking.curb_offset > self.roads.lane_width
+        {
+            return Err("parking.curb_offset must be in (0, roads.lane_width]".into());
+        }
         Ok(())
     }
 }
@@ -330,5 +356,23 @@ mod tests {
         let mut p = shipped();
         p.landmarks.tower_floors = 30;
         assert!(p.validate().unwrap_err().contains("landmarks.tower_floors"));
+
+        let mut p = shipped();
+        p.parking.spacing = 4.0;
+        assert!(p.validate().unwrap_err().contains("parking.spacing"));
+
+        let mut p = shipped();
+        p.parking.chance = 1.5;
+        assert!(p.validate().unwrap_err().contains("parking.chance"));
+
+        let mut p = shipped();
+        p.parking.end_margin = -1.0;
+        assert!(p.validate().unwrap_err().contains("parking.end_margin"));
+
+        for bad in [0.0, 3.5] {
+            let mut p = shipped();
+            p.parking.curb_offset = bad;
+            assert!(p.validate().unwrap_err().contains("parking.curb_offset"));
+        }
     }
 }

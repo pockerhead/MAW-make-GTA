@@ -9,6 +9,7 @@ use crate::gang::{Faction, GangMember};
 use crate::perception::Cause;
 use crate::player::Player;
 use crate::police::PoliceUnit;
+use crate::vehicle::{VehicleEntered, VehicleHit};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::collections::HashSet;
@@ -22,6 +23,8 @@ pub enum Crime {
     PunchCop,
     WoundCop,
     KillCop,
+    RunOver,
+    CarTheft,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -145,14 +148,25 @@ pub(crate) enum Victim {
     Other,
 }
 
+/// What dealt a player hit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HitSource {
+    Gun,
+    Melee,
+    Vehicle,
+}
+
 /// Crime of one player hit; gang wounds and hits on anyone else are none.
-pub(crate) fn classify(victim: Victim, melee: bool, killed: bool) -> Option<Crime> {
+pub(crate) fn classify(victim: Victim, source: HitSource, killed: bool) -> Option<Crime> {
     match (victim, killed) {
         (Victim::Civilian | Victim::Gang, true) => Some(Crime::Kill),
-        (Victim::Civilian, false) if melee => Some(Crime::Punch),
-        (Victim::Civilian, false) => Some(Crime::Wound),
+        (Victim::Civilian, false) => Some(match source {
+            HitSource::Melee => Crime::Punch,
+            HitSource::Gun => Crime::Wound,
+            HitSource::Vehicle => Crime::RunOver,
+        }),
         (Victim::Cop, true) => Some(Crime::KillCop),
-        (Victim::Cop, false) if melee => Some(Crime::PunchCop),
+        (Victim::Cop, false) if source == HitSource::Melee => Some(Crime::PunchCop),
         (Victim::Cop, false) => Some(Crime::WoundCop),
         _ => None,
     }
@@ -169,6 +183,8 @@ pub(super) fn record_crimes(
     mut shots: MessageReader<ShotFired>,
     mut hits: MessageReader<MeleeHit>,
     mut dealt: MessageReader<DamageDealt>,
+    mut run_over: MessageReader<VehicleHit>,
+    mut entered: MessageReader<VehicleEntered>,
     players: Query<&Position, With<Player>>,
     kinds: Query<(Has<Civilian>, Has<GangMember>, Has<PoliceUnit>)>,
     persons: Query<
@@ -180,6 +196,7 @@ pub(super) fn record_crimes(
     let now = time.elapsed_secs_f64();
     let merge = cfg.shooting_merge_seconds;
     let melee: HashSet<u32> = hits.read().map(|hit| hit.attack).collect();
+    let by_car: HashSet<u32> = run_over.read().map(|hit| hit.attack).collect();
     let dealt: Vec<DamageDealt> = dealt.read().copied().collect();
     let killed: HashSet<(u32, Entity)> = dealt
         .iter()
@@ -203,7 +220,14 @@ pub(super) fn record_crimes(
             Ok((false, false, true)) => Victim::Cop,
             _ => Victim::Other,
         };
-        let Some(crime) = classify(victim, melee.contains(&hit.shot), hit.killed) else {
+        let source = if by_car.contains(&hit.shot) {
+            HitSource::Vehicle
+        } else if melee.contains(&hit.shot) {
+            HitSource::Melee
+        } else {
+            HitSource::Gun
+        };
+        let Some(crime) = classify(victim, source, hit.killed) else {
             continue;
         };
         let id = crimes.record(
@@ -220,6 +244,21 @@ pub(super) fn record_crimes(
         } else {
             touched.push(id);
         }
+    }
+    for theft in entered.read().filter(|e| e.first) {
+        let Ok(at) = players.get(theft.driver) else {
+            continue;
+        };
+        let id = crimes.record(
+            Crime::CarTheft,
+            theft.driver,
+            Some(theft.vehicle),
+            theft.attack,
+            at.0,
+            now,
+            merge,
+        );
+        touched.push(id);
     }
     for id in always {
         if let Some((heat, at)) = crimes.report(id, &cfg.heat) {
@@ -314,6 +353,8 @@ mod tests {
         punch_cop: 45,
         wound_cop: 80,
         kill_cop: 150,
+        run_over: 30,
+        car_theft: 15,
     };
 
     fn entity(index: u32) -> Entity {
@@ -322,26 +363,34 @@ mod tests {
 
     #[test]
     fn classify_table() {
+        use HitSource::*;
         use Victim::*;
         let rows = [
-            (Civilian, true, false, Some(Crime::Punch)),
-            (Civilian, false, false, Some(Crime::Wound)),
-            (Civilian, true, true, Some(Crime::Kill)),
-            (Civilian, false, true, Some(Crime::Kill)),
-            (Gang, true, false, None),
-            (Gang, false, false, None),
-            (Gang, false, true, Some(Crime::Kill)),
-            (Cop, true, false, Some(Crime::PunchCop)),
-            (Cop, false, false, Some(Crime::WoundCop)),
-            (Cop, false, true, Some(Crime::KillCop)),
-            (Other, true, false, None),
-            (Other, false, true, None),
+            (Civilian, Melee, false, Some(Crime::Punch)),
+            (Civilian, Gun, false, Some(Crime::Wound)),
+            (Civilian, Melee, true, Some(Crime::Kill)),
+            (Civilian, Gun, true, Some(Crime::Kill)),
+            (Gang, Melee, false, None),
+            (Gang, Gun, false, None),
+            (Gang, Gun, true, Some(Crime::Kill)),
+            (Cop, Melee, false, Some(Crime::PunchCop)),
+            (Cop, Gun, false, Some(Crime::WoundCop)),
+            (Cop, Gun, true, Some(Crime::KillCop)),
+            (Other, Melee, false, None),
+            (Other, Gun, true, None),
+            (Civilian, Vehicle, false, Some(Crime::RunOver)),
+            (Civilian, Vehicle, true, Some(Crime::Kill)),
+            (Gang, Vehicle, false, None),
+            (Gang, Vehicle, true, Some(Crime::Kill)),
+            (Cop, Vehicle, false, Some(Crime::WoundCop)),
+            (Cop, Vehicle, true, Some(Crime::KillCop)),
+            (Other, Vehicle, false, None),
         ];
-        for (victim, melee, killed, expected) in rows {
+        for (victim, source, killed, expected) in rows {
             assert_eq!(
-                classify(victim, melee, killed),
+                classify(victim, source, killed),
                 expected,
-                "{victim:?} melee {melee} killed {killed}"
+                "{victim:?} {source:?} killed {killed}"
             );
         }
     }

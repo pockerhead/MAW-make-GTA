@@ -111,6 +111,12 @@
   frame, same pose, two scenes) with the intensity read at capture time, never by one screenshot.
 - 2026-09-24 (TASK-014) — `CityLandmarks.park_center` sits on the SMG pickup: a teleport there arms the player.
 
+- 2026-09-25 (TASK-015) — "A iterated before B" gates: bevy_ecs 0.19.1 query order is neither spawn nor table
+  creation order (component-index HashMap); pin the precondition with a QueryState created before B's table and
+  assert the order (`GATE BROKEN`). A latch flip needs a weapon whose mode reads the latch (SMG, not the
+  semi-auto pistol). Runtime scenarios never hard-code enum lists: derive them from source/data (t13 broke on a new
+  SoundClass).
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

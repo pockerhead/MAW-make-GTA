@@ -30,3 +30,8 @@ Goal (GDD §13): трафик по графу полос (кинематика +
 - [ ] Every new tuning value lives in its GDD §12 data file, not in a `const`
 - [ ] `cargo build`, `cargo clippy -- -D warnings`, `cargo test -p gta_sim` (and `-p citygen` where touched) are green
 - [ ] Existing tests pass
+
+## Orchestrator notes (from TASK-015, binding)
+- O2 (QA TASK-015): a player in a car can be neither arrested nor wounded, so driving is a safe haven. Implement Q2(b) here: a bullet hitting the car's cabin/window zone wounds the driver (data-driven share), and cops can pull a driver out of a car stopped (≤ exit speed) for an arrest at 1 star (GTA-like). Gate both.
+- O1: the hold-fire rule spares bystanders but not cars: a cop whose line grazes a parked car's corner wastes shots into it. Treat non-target cars in the widened fire line like other non-hostile blockers (reposition), gated.
+- Forced eject on Wasted/Busted still uses the left door's feet ray and can land on a low wall top (TASK-015 FIX_SUMMARY round 2 §1); apply the same feet-height rule to the forced path.

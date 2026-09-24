@@ -15,7 +15,7 @@ use crate::combat::{
 use crate::navigation::{
     NavigationConfig, Route, RouteLoad, SidewalkGraph, avoid_offset, flat_distance, steer,
 };
-use crate::perception::{AiClock, Perception, PerceptionConfig, sight_blocked};
+use crate::perception::{AiClock, Perception, PerceptionConfig, sight_blocked, wall_blocked};
 use crate::player::Player;
 use crate::population::corpse_components;
 use crate::tactics::{
@@ -307,7 +307,7 @@ pub(super) fn gang_fsm(
             });
             if flat_distance(feet, member.spot) > nav.arrive_radius {
                 member.home_clear =
-                    !sight_blocked(&spatial, chest, member.spot + Vec3::Y * loco.float_height);
+                    !wall_blocked(&spatial, chest, member.spot + Vec3::Y * loco.float_height);
             }
         }
 

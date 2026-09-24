@@ -24,6 +24,15 @@ pub struct CameraConfig {
     pub aim_transition: f32,
     /// Mouse sensitivity multiplier while aiming.
     pub aim_sensitivity_scale: f32,
+    /// Car camera (GDD §5.1): distance behind the pivot, pivot height above the car centre, m.
+    pub car_distance: f32,
+    pub car_pivot_height: f32,
+    /// Pitch the car camera returns to, degrees.
+    pub car_pitch_deg: f32,
+    /// Half-life of the return behind the car, s.
+    pub car_yaw_half_life: f32,
+    /// Seconds without mouse look before the camera returns behind the car.
+    pub car_look_return: f32,
 }
 
 impl CameraConfig {
@@ -34,10 +43,20 @@ impl CameraConfig {
             ("aim_fov_deg", self.aim_fov_deg),
             ("aim_transition", self.aim_transition),
             ("aim_sensitivity_scale", self.aim_sensitivity_scale),
+            ("car_distance", self.car_distance),
+            ("car_pivot_height", self.car_pivot_height),
+            ("car_yaw_half_life", self.car_yaw_half_life),
+            ("car_look_return", self.car_look_return),
         ] {
             if !(value.is_finite() && value > 0.0) {
                 return Err(format!("{field} must be a finite number > 0, got {value}"));
             }
+        }
+        if !(self.pitch_min_deg..=self.pitch_max_deg).contains(&self.car_pitch_deg) {
+            return Err(format!(
+                "car_pitch_deg must be in [pitch_min_deg, pitch_max_deg], got {}",
+                self.car_pitch_deg
+            ));
         }
         if self.aim_sensitivity_scale > 1.0 {
             return Err(format!(

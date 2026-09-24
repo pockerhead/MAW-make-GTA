@@ -1,4 +1,4 @@
-//! Minimap dots (police, gang members, pickups) and landmark glyphs (hospital, police station):
+//! Minimap dots (police, gang members, pickups, cars) and landmark glyphs (hospital, police station):
 //! ordinary UI children of the minimap root, placed by `map_px`.
 
 use super::{Minimap, MinimapConfig};
@@ -12,6 +12,7 @@ use gta_sim::{
     gang::{GangConfig, GangMember},
     player::Player,
     police::PoliceUnit,
+    vehicle::{Driving, Vehicle},
     world::{HospitalSpawn, PoliceStationSpawn, map_px, project},
 };
 use std::collections::HashSet;
@@ -21,6 +22,7 @@ pub enum MarkerKind {
     Police,
     Gang(u8),
     Pickup,
+    Vehicle,
     Hospital,
     Station,
 }
@@ -90,8 +92,8 @@ pub(super) fn spawn_landmarks(
 
 type Tracked<'w, 's, T> = Query<'w, 's, (Entity, &'static T), Without<Dead>>;
 
-/// Adds a dot for every new live cop, gang member and available pickup; drops dots whose target is
-/// gone, dead or taken.
+/// Adds a dot for every new live cop, gang member, available pickup and car the player does not
+/// drive; drops dots whose target is gone, dead, taken or driven.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn sync_markers(
     mut commands: Commands,
@@ -107,6 +109,7 @@ pub(super) fn sync_markers(
         Query<(Entity, &WeaponPickup)>,
         Query<(Entity, &BatPickup)>,
     ),
+    cars: (Query<Entity, With<Vehicle>>, Query<&Driving, With<Player>>),
 ) {
     let cfg = &ui.hud.minimap;
     let (health, guns, bats) = pickups;
@@ -136,6 +139,15 @@ pub(super) fn sync_markers(
         bats.iter()
             .filter(|(_, p)| p.available())
             .map(|(e, _)| (e, MarkerKind::Pickup, pickup)),
+    );
+    let (vehicles, driving) = cars;
+    let driven = driving.single().ok().map(|d| d.vehicle);
+    let car = color(cfg.vehicle_color);
+    live.extend(
+        vehicles
+            .iter()
+            .filter(|&e| Some(e) != driven)
+            .map(|e| (e, MarkerKind::Vehicle, car)),
     );
     let wanted: HashSet<Entity> = live.iter().map(|l| l.0).collect();
     let mut shown = HashSet::new();

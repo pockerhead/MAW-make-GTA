@@ -99,6 +99,7 @@ fn preflight(
     })?;
     let mut unlisted = render_config
         .prop_asset_paths()
+        .chain(render_config.vehicle_asset_paths())
         .filter(|path| !manifest.contains_asset(path))
         .map(|path| {
             format!("{RENDER_CONFIG}: prop asset {path} is not listed in {THIRD_PARTY_MANIFEST}")

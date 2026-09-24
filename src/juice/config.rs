@@ -24,6 +24,25 @@ pub struct JuiceConfig {
     pub vignette: VignetteConfig,
     pub damage_arc: DamageArcConfig,
     pub star_pulse: StarPulseConfig,
+    pub smoke: SmokeConfig,
+}
+
+/// Smoke from the hood of a wrecked car (health 0); real seconds.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct SmokeConfig {
+    /// Seconds between puffs of one car.
+    pub interval: f32,
+    /// Lifetime of a puff; it rises and fades over it.
+    pub seconds: f32,
+    /// Diameter of a new puff, m.
+    pub size: f32,
+    /// Height a puff rises over its lifetime, m.
+    pub rise: f32,
+    /// sRGB colour and starting alpha.
+    pub color: (f32, f32, f32, f32),
+    /// Puff origin in the car body frame, m.
+    pub hood: (f32, f32, f32),
 }
 
 #[derive(Deserialize, Clone, Copy, Debug)]
@@ -67,6 +86,10 @@ pub struct ShakeConfig {
     pub death_trauma: f32,
     /// m.
     pub death_radius: f32,
+    /// Trauma per m/s of a crash of the player's car (clamped at 1).
+    pub crash_trauma_per_mps: f32,
+    /// Crashes slower than this add no trauma, m/s.
+    pub crash_min_speed: f32,
 }
 
 /// Red screen-edge vignette when the player is hurt; real seconds.
@@ -217,7 +240,20 @@ impl JuiceConfig {
         if !(p.scale.is_finite() && p.scale > 1.0) {
             return Err(format!("star_pulse.scale must be > 1, got {}", p.scale));
         }
-        positive("star_pulse.seconds", p.seconds)
+        positive("star_pulse.seconds", p.seconds)?;
+        let s = &self.smoke;
+        positive("smoke.interval", s.interval)?;
+        positive("smoke.seconds", s.seconds)?;
+        positive("smoke.size", s.size)?;
+        non_negative("smoke.rise", s.rise)?;
+        let (r, g, b, a) = s.color;
+        unit_rgb("smoke.color", (r, g, b))?;
+        trauma("smoke.color alpha", a)?;
+        let (x, y, z) = s.hood;
+        if ![x, y, z].iter().all(|v| v.is_finite()) {
+            return Err("smoke.hood must be finite".into());
+        }
+        Ok(())
     }
 }
 
@@ -237,6 +273,8 @@ impl ShakeConfig {
         trauma("shake.hurt_trauma", self.hurt_trauma)?;
         trauma("shake.death_trauma", self.death_trauma)?;
         positive("shake.death_radius", self.death_radius)?;
+        positive("shake.crash_trauma_per_mps", self.crash_trauma_per_mps)?;
+        non_negative("shake.crash_min_speed", self.crash_min_speed)?;
         positive("shake.decay_per_s", self.decay_per_s)?;
         non_negative("shake.max_yaw_deg", self.max_yaw_deg)?;
         non_negative("shake.max_pitch_deg", self.max_pitch_deg)?;
@@ -311,5 +349,10 @@ mod tests {
         fails("vignette.max", |c| c.vignette.max = 1.5);
         fails("star_pulse.scale", |c| c.star_pulse.scale = 0.9);
         fails("shake.death_radius", |c| c.shake.death_radius = -1.0);
+        fails("shake.crash_trauma_per_mps", |c| {
+            c.shake.crash_trauma_per_mps = 0.0
+        });
+        fails("smoke.interval", |c| c.smoke.interval = 0.0);
+        fails("smoke.color alpha", |c| c.smoke.color.3 = 1.5);
     }
 }

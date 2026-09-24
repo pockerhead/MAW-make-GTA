@@ -3,6 +3,7 @@
 
 mod config;
 mod cues;
+mod engine;
 #[cfg(test)]
 mod event_gate;
 #[cfg(test)]
@@ -19,7 +20,10 @@ pub struct GameAudioPlugin;
 impl Plugin for GameAudioPlugin {
     fn build(&self, app: &mut App) {
         // `SoundCuesPlugin` creates `Synth` assets while it builds.
-        app.add_audio_source::<synth::Synth>()
-            .add_plugins((cues::SoundCuesPlugin, loops::SoundLoopsPlugin));
+        app.add_audio_source::<synth::Synth>().add_plugins((
+            cues::SoundCuesPlugin,
+            loops::SoundLoopsPlugin,
+            engine::EngineSoundPlugin,
+        ));
     }
 }

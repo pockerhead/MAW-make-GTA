@@ -113,6 +113,16 @@
 - 2026-09-24 (TASK-014) — a spawner that "refreshes an existing entity, else spawns" in one MessageReader loop
   cannot see its own spawns from the same run: dedupe by key with a local set (8 damage arcs per shotgun blast).
 
+- 2026-09-25 (TASK-015) — vendored bevy-tnua-avian3d `apply_motors_system` did `return` on the first disabled
+  entity (fixed to `continue`, ADR-001): any `TnuaToggle::Disabled` entity silently skipped every later motor.
+- 2026-09-25 (TASK-015) — avian impact speed must use PRE-step velocities (snapshot in FixedPostUpdate before
+  `PhysicsSystems::First`); after the step the closing speed is ~0. `ColliderDisabled` is per entity: child
+  colliders (head hitbox) need their own.
+- 2026-09-25 (TASK-015) — a raycast car's chassis box within the speculative margin of a convex-hull curb gets a
+  diagonal contact normal and stops before any wheel ray reaches the curb (flat cuboid slabs do NOT reproduce it):
+  keep chassis clearance well above step heights (hull underbody lift + chamfer). Sight/fire checks through cars
+  skip the car containing either endpoint; movement checks stay walls-only.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

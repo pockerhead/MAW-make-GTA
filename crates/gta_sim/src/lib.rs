@@ -13,6 +13,7 @@ pub mod player;
 pub mod police;
 pub mod population;
 pub(crate) mod tactics;
+pub mod vehicle;
 pub mod wanted;
 pub mod world;
 
@@ -34,6 +35,7 @@ use perception::{PERCEPTION_CONFIG, PerceptionConfig, PerceptionPlugin};
 use player::PlayerPlugin;
 use police::{EscalationConfig, POLICE_CONFIG, PolicePlugin};
 use population::{POPULATION_CONFIG, PopulationConfig, PopulationPlugin};
+use vehicle::{DAMAGE_CONFIG, DamageConfig, VEHICLE_CONFIG, VehicleConfig, VehiclePlugin};
 use wanted::{WANTED_CONFIG, WantedConfig, WantedPlugin};
 use world::{CITY_CONFIG, CityParams, CityParamsRes, WorldPlugin, WorldSource};
 
@@ -117,6 +119,16 @@ pub fn compose_sim(
             path: root.path(POLICE_CONFIG),
             message,
         })?;
+    let vehicle = load_config::<VehicleConfig>(&root, VEHICLE_CONFIG)?;
+    vehicle.validate().map_err(|message| ConfigError {
+        path: root.path(VEHICLE_CONFIG),
+        message,
+    })?;
+    let vehicle_damage = load_config::<DamageConfig>(&root, DAMAGE_CONFIG)?;
+    vehicle_damage.validate().map_err(|message| ConfigError {
+        path: root.path(DAMAGE_CONFIG),
+        message,
+    })?;
     // A witness starts calling within `slots` ticks of the stimulus (Bevy's default fixed tick, never overridden).
     let tick = Time::<Fixed>::default().timestep().as_secs_f32();
     let call_delay = f32::from(perception.slots) * tick + civilian.call_seconds;
@@ -134,10 +146,13 @@ pub fn compose_sim(
     };
     if let WorldSource::City { .. } = source {
         let params = load_config::<CityParams>(&root, CITY_CONFIG)?;
-        params.validate().map_err(|message| ConfigError {
-            path: root.path(CITY_CONFIG),
-            message,
-        })?;
+        params
+            .validate()
+            .and_then(|()| parking_fits(&params, &vehicle))
+            .map_err(|message| ConfigError {
+                path: root.path(CITY_CONFIG),
+                message,
+            })?;
         app.insert_resource(CityParamsRes(params));
     }
     app.insert_resource(root)
@@ -154,6 +169,8 @@ pub fn compose_sim(
         .insert_resource(gangs)
         .insert_resource(wanted)
         .insert_resource(police)
+        .insert_resource(vehicle)
+        .insert_resource(vehicle_damage)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),
@@ -170,5 +187,21 @@ pub fn compose_sim(
             PolicePlugin { seed: combat_seed },
             WantedPlugin,
         ));
+    // Outside the tuple: `Plugins` is implemented for tuples of at most 15.
+    app.add_plugins(VehiclePlugin);
+    Ok(())
+}
+
+/// A parked car stays inside its curb lane: the centre at least half a car width from the curb,
+/// the far side inside the lane.
+fn parking_fits(params: &CityParams, car: &VehicleConfig) -> Result<(), String> {
+    let half_width = car.half_extents().x;
+    let offset = params.parking.curb_offset;
+    if offset < half_width || offset + half_width > params.roads.lane_width {
+        return Err(format!(
+            "parking.curb_offset {offset} must keep a car (half width {half_width}) inside the curb lane \
+             ({half_width} <= curb_offset <= roads.lane_width - {half_width})"
+        ));
+    }
     Ok(())
 }

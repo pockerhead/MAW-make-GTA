@@ -40,3 +40,6 @@ Goal (GDD §13): `--bench-scene` (худшая сцена раздела 11), з
 - [ ] Every new tuning value lives in its GDD §12 data file, not in a `const`
 - [ ] `cargo build`, `cargo clippy -- -D warnings`, `cargo test -p gta_sim` (and `-p citygen` where touched) are green
 - [ ] Existing tests pass
+
+## Orchestrator notes (carried, binding)
+- Runtime scenario flakes to make deterministic before final acceptance: t9 (gang member in Attack does not fire within 6 s, ~1/3; fire-line starvation class), t13 (one OS mouse click lost in a 6-click burst, magazine 12→7, ~2/3 in TASK-015 fixer round 3). Every t*.py must pass N consecutive runs.

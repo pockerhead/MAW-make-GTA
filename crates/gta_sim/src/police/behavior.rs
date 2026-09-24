@@ -15,7 +15,7 @@ use crate::combat::{
 use crate::gang::Faction;
 use crate::gang::fsm::{Move, band_move};
 use crate::navigation::{NavigationConfig, Route, RouteLoad, SidewalkGraph, flat_distance, steer};
-use crate::perception::{AiClock, Perception, PerceptionConfig, sight_blocked};
+use crate::perception::{AiClock, Perception, PerceptionConfig, wall_blocked};
 use crate::player::Player;
 use crate::population::{PopulationConfig, corpse_components, spawn_points};
 use crate::tactics::{
@@ -232,7 +232,7 @@ pub(super) fn police_fsm(
                     &wanted_cfg,
                 )
             });
-            unit.dest_clear = unit.dest.is_some_and(|d| !sight_blocked(&spatial, eyes, d));
+            unit.dest_clear = unit.dest.is_some_and(|d| !wall_blocked(&spatial, eyes, d));
         }
         if live_player.is_none() {
             unit.sees = false;

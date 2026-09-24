@@ -7,4 +7,5 @@ pub enum GameLayer {
     World,
     Character,
     Hitbox,
+    Vehicle,
 }

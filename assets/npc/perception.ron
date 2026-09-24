@@ -5,4 +5,6 @@
     corpse_sight: 20.0,         // m, a corpse in line of sight
     aimed_distance: 15.0,       // m, a gun aimed at the civilian
     aimed_cone_deg: 10.0,       // half-angle between the aim ray and the civilian's chest
+    car_distance: 12.0,         // m, a moving car on the sidewalk (GDD §6.2)
+    car_speed: 3.0,             // m/s, slower cars on the sidewalk are no threat
 )

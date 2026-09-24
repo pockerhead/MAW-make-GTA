@@ -2,7 +2,7 @@
 
 use crate::combat::aim_yaw;
 use crate::flow::{GameState, NEW_CITY, NpcSystems};
-use crate::perception::{AiSystems, sight_blocked};
+use crate::perception::{AiSystems, wall_blocked};
 use crate::world::{City, CityParamsRes};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -320,7 +320,7 @@ pub fn avoid_offset(
         let offset = k * step;
         *rays += 1;
         let probe = chest + yaw_forward(yaw + offset) * cfg.avoid_distance;
-        if !sight_blocked(spatial, chest, probe) {
+        if !wall_blocked(spatial, chest, probe) {
             return offset;
         }
     }

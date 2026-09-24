@@ -14,4 +14,11 @@
     aim_fov_deg: 55.0,
     aim_transition: 0.15,
     aim_sensitivity_scale: 0.7,
+    // Car camera (GDD §5.1): distance and pivot height over the car centre, m; resting pitch, deg;
+    // half-life of the swing back behind the car, s; mouse-idle seconds before it swings back.
+    car_distance: 6.5,
+    car_pivot_height: 1.0,
+    car_pitch_deg: -8.0,
+    car_yaw_half_life: 0.2,
+    car_look_return: 1.5,
 )
