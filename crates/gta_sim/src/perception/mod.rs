@@ -59,12 +59,21 @@ pub enum ThreatKind {
     Hurt,
 }
 
+/// What produced a threat: an attack id (`AttackSerial`) or a corpse.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cause {
+    Attack(u32),
+    Body(Entity),
+}
+
 /// A perceived threat: where it is and how far from the perceiver.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq)]
 pub struct Threat {
     pub kind: ThreatKind,
     pub at: Vec3,
     pub distance: f32,
+    /// `None` for an aimed gun: aiming is no crime.
+    pub cause: Option<Cause>,
 }
 
 /// Perception state of one NPC; `pending` is consumed by its decision system in the same tick.
@@ -86,9 +95,9 @@ pub struct AiClock {
 #[derive(Resource, Default)]
 struct SlotCursor(u8);
 
-/// Sounds of the last `slots` ticks: `(tick, kind, point)`.
+/// Sounds of the last `slots` ticks: `(tick, kind, point, attack)`.
 #[derive(Resource, Default)]
-pub struct StimulusLog(pub Vec<(u64, ThreatKind, Vec3)>);
+pub struct StimulusLog(pub Vec<(u64, ThreatKind, Vec3, u32)>);
 
 /// Work `perceive` did in the current tick.
 #[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
@@ -130,6 +139,7 @@ impl Plugin for PerceptionPlugin {
             .register_type::<Perception>()
             .register_type::<Threat>()
             .register_type::<ThreatKind>()
+            .register_type::<Cause>()
             .register_type::<AiClock>()
             .register_type::<PerceptionLoad>()
             .add_observer(assign_slot)
@@ -184,16 +194,16 @@ fn collect_stimuli(
 ) {
     let tick = clock.tick;
     let slots = u64::from(cfg.slots);
-    log.0.retain(|&(then, _, _)| then + slots > tick);
+    log.0.retain(|&(then, ..)| then + slots > tick);
     log.0.extend(
         shots
             .read()
-            .map(|shot| (tick, ThreatKind::Gunshot, shot.muzzle)),
+            .map(|shot| (tick, ThreatKind::Gunshot, shot.muzzle, shot.attack)),
     );
     log.0.extend(
         fights
             .read()
-            .map(|hit| (tick, ThreatKind::Fight, hit.point)),
+            .map(|hit| (tick, ThreatKind::Fight, hit.point, hit.attack)),
     );
     for hit in damage.read() {
         let Ok((civilian, mut perception)) = victims.get_mut(hit.target) else {
@@ -207,6 +217,7 @@ fn collect_stimuli(
             kind: ThreatKind::Hurt,
             at,
             distance: 0.0,
+            cause: Some(Cause::Attack(hit.shot)),
         });
     }
 }
@@ -220,7 +231,7 @@ fn perceive(
     spatial: SpatialQuery,
     mut load: ResMut<PerceptionLoad>,
     mut agents: Query<(Entity, &Civilian, &Position, &mut Perception)>,
-    corpses: Query<&Position, With<Corpse>>,
+    corpses: Query<(Entity, &Position), With<Corpse>>,
     aimers: Query<(Entity, &Position, &AimIntent, &Loadout), Without<Dead>>,
 ) {
     *load = PerceptionLoad::default();
@@ -240,12 +251,17 @@ fn perceive(
         let chest = position.0;
         let eyes = chest - Vec3::Y * loco.float_height + Vec3::Y * loco.head_height;
         let mut nearest: Option<Threat> = None;
-        let mut offer = |kind: ThreatKind, at: Vec3, distance: f32| {
+        let mut offer = |kind: ThreatKind, at: Vec3, distance: f32, cause: Option<Cause>| {
             if nearest.is_none_or(|n| distance < n.distance) {
-                nearest = Some(Threat { kind, at, distance });
+                nearest = Some(Threat {
+                    kind,
+                    at,
+                    distance,
+                    cause,
+                });
             }
         };
-        for &(_, kind, at) in &log.0 {
+        for &(_, kind, at, attack) in &log.0 {
             let radius = match kind {
                 ThreatKind::Gunshot => cfg.hearing_radius,
                 ThreatKind::Fight => cfg.fight_hearing_radius,
@@ -253,7 +269,7 @@ fn perceive(
             };
             let distance = chest.distance(at);
             if distance <= radius {
-                offer(kind, at, distance);
+                offer(kind, at, distance, Some(Cause::Attack(attack)));
             }
         }
         // A caller is already reporting the bodies in sight; only a new sound, aim or hit interrupts.
@@ -261,13 +277,13 @@ fn perceive(
         let corpse = corpses
             .iter()
             .filter(|_| !reporting)
-            .map(|p| (p.0, chest.distance(p.0)))
-            .filter(|&(_, d)| d <= cfg.corpse_sight)
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        if let Some((at, distance)) = corpse {
+            .map(|(body, p)| (body, p.0, chest.distance(p.0)))
+            .filter(|&(_, _, d)| d <= cfg.corpse_sight)
+            .min_by(|a, b| a.2.total_cmp(&b.2));
+        if let Some((body, at, distance)) = corpse {
             load.rays += 1;
             if !sight_blocked(&spatial, eyes, at) {
-                offer(ThreatKind::Corpse, at, distance);
+                offer(ThreatKind::Corpse, at, distance, Some(Cause::Body(body)));
             }
         }
         for (aimer, at, aim, loadout) in &aimers {
@@ -281,7 +297,7 @@ fn perceive(
             }
             load.rays += 1;
             if !sight_blocked(&spatial, eyes, at.0) {
-                offer(ThreatKind::Aimed, at.0, distance);
+                offer(ThreatKind::Aimed, at.0, distance, None);
             }
         }
         perception.pending = nearest;

@@ -89,6 +89,12 @@
 - 2026-09-24 (TASK-010) — 30 FPS in QA on this host is the only monitor `\.\DISPLAY9` at 30 Hz under Fifo (recurred
   after TASK-002). Read FPS only through `Game.frame_report()` (refresh + present mode + no-vsync frame cost).
 
+- 2026-09-24 (TASK-011) — avian3d 0.7 requires `Position -> Transform` and copies `GlobalTransform` into
+  `Position` every step: a test fixture spawned with only `Position` snaps to the origin (cop gates passed
+  vacuously). A posed fixture carries a matching `Transform`; assert its position after one tick.
+- 2026-09-24 (TASK-011) — gates that exercise only the first row of a table (heat <= 50 → 1 star) leave rows 2..N
+  untested: a flip to `rows[0]` stayed green. Table-driven rules get one case per row.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

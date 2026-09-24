@@ -74,6 +74,7 @@ mod tests {
                 kind,
                 at: Vec3::ZERO,
                 distance,
+                cause: None,
             };
             let t = Temperament {
                 flee,

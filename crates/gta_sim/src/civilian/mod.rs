@@ -13,7 +13,7 @@ use crate::navigation::{
     GraphWalker, NavigationConfig, SidewalkGraph, flat_distance, flee_next, flee_start,
     lane_target, steer, wander_next,
 };
-use crate::perception::{AiSystems, Perception, Threat};
+use crate::perception::{AiSystems, Cause, Perception, Threat};
 use crate::population::{Appearance, NpcRng, Offscreen, corpse_components};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -122,11 +122,21 @@ pub enum CivilianState {
         from: Vec3,
         left: f32,
     },
-    /// Phoning the police; `progress` goes 0 -> 1 over `call_seconds`.
+    /// Phoning the police; `progress` goes 0 -> 1 over `call_seconds`, `about` names the crime
+    /// being phoned in.
     Report {
         progress: f32,
+        about: Option<Cause>,
     },
     Dead,
+}
+
+/// A completed witness call (GDD §6.2); `wanted` turns it into heat.
+#[derive(Message, Reflect, Clone, Copy, Debug)]
+#[reflect(Message)]
+pub struct PoliceCall {
+    pub caller: Entity,
+    pub about: Cause,
 }
 
 /// Per-civilian multipliers of the reaction weights.
@@ -192,6 +202,8 @@ impl Plugin for CivilianPlugin {
         app.register_type::<Civilian>()
             .register_type::<CivilianState>()
             .register_type::<Temperament>()
+            .register_type::<PoliceCall>()
+            .add_message::<PoliceCall>()
             .add_systems(
                 FixedUpdate,
                 (
@@ -255,7 +267,10 @@ fn react(
             from: threat.at,
             left: roll(rng, ctx.cfg.cower_seconds),
         },
-        Reaction::Report => CivilianState::Report { progress: 0.0 },
+        Reaction::Report => CivilianState::Report {
+            progress: 0.0,
+            about: threat.cause,
+        },
     }
 }
 
@@ -297,12 +312,12 @@ fn next_state(
                 CivilianState::Idle { left }
             }
         }
-        (CivilianState::Report { progress }, None) => {
+        (CivilianState::Report { progress, about }, None) => {
             let progress = progress + ctx.dt / cfg.call_seconds;
             if progress >= 1.0 {
                 CivilianState::Wander
             } else {
-                CivilianState::Report { progress }
+                CivilianState::Report { progress, about }
             }
         }
         (CivilianState::Flee { from, left }, None) => {
@@ -362,7 +377,9 @@ fn civilian_fsm(
     graph: Res<SidewalkGraph>,
     time: Res<Time<Fixed>>,
     mut rng: ResMut<NpcRng>,
+    mut calls: MessageWriter<PoliceCall>,
     mut civilians: Query<(
+        Entity,
         &mut Civilian,
         &mut Perception,
         &mut GraphWalker,
@@ -372,7 +389,8 @@ fn civilian_fsm(
     )>,
 ) {
     let dt = time.timestep().as_secs_f32();
-    for (mut civilian, mut perception, mut walker, mut intent, position, velocity) in &mut civilians
+    for (entity, mut civilian, mut perception, mut walker, mut intent, position, velocity) in
+        &mut civilians
     {
         let threat = perception.pending.take();
         if civilian.state == CivilianState::Dead {
@@ -385,6 +403,19 @@ fn civilian_fsm(
             speed: Vec2::new(velocity.x, velocity.z).length(),
         };
         let state = next_state(&civilian, threat, &mut walker, &ctx, &mut rng);
+        // Report -> Wander only by completion: an interrupted call goes through `react`, never to Wander.
+        if let (
+            CivilianState::Report {
+                about: Some(about), ..
+            },
+            CivilianState::Wander,
+        ) = (civilian.state, state)
+        {
+            calls.write(PoliceCall {
+                caller: entity,
+                about,
+            });
+        }
         let state = arrive(state, &mut walker, position.0, &nav, &ctx, &mut rng);
         civilian.state = state;
         let gait = match state {

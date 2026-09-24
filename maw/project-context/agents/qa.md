@@ -39,4 +39,6 @@ Scratch probes (disk): build any probe crate/workspace copy with `CARGO_TARGET_D
 
 Holding keys over BRP: bevy_brp_extras gives every `send_keys` call its own uncancellable release timer, so re-pressing a held key lets the OLD timer release it (TASK-023: a phantom "player stalls at a crossing" bug). Hold once for the whole window (max 60000 ms); `brp.py` refuses overlapping holds. Before filing a runtime movement stall, sample `MoveIntent` next to `Position`. Offline harness test: `python -m unittest tools/qa/test_brp.py`.
 
+BRP `world.mutate_components` on a despawned entity PANICS the game (bevy_remote 0.19.1). Civilians are recycled at any tick: move the player next to the NPC and re-query it right before mutating.
+
 Sub-agent discipline: the harness launches every `Agent` call asynchronously and the report arrives later as a hand-back message. Count your launches and do not end your turn until every one has reported; state `children: N launched / N reported` before your final hand-back. A `Bash` command whose result your deliverable needs runs in the FOREGROUND — never `run_in_background=true` for it, and never end your turn waiting on a background run.

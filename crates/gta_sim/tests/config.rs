@@ -11,6 +11,7 @@ use gta_sim::{
     navigation::{NAVIGATION_CONFIG, NavigationConfig},
     perception::{PERCEPTION_CONFIG, PerceptionConfig},
     population::{POPULATION_CONFIG, PopulationConfig},
+    wanted::{WANTED_CONFIG, WantedConfig},
     world::{CITY_CONFIG, CityParams},
 };
 use std::{
@@ -614,4 +615,88 @@ fn direct_seek_distance_is_positive() {
         NavigationConfig::validate,
     );
     assert!(error.contains("direct_seek_distance"), "{error}");
+}
+
+#[test]
+fn shipped_wanted_config_loads_and_validates() {
+    load_config::<WantedConfig>(&assets_root(), WANTED_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+/// Load error of the shipped wanted.ron with `from` replaced by `to`.
+fn wanted_load_error(tag: &str, from: &str, to: &str) -> String {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_wanted_{tag}_{}_{unique}",
+        std::process::id()
+    )));
+    let file = root.path(WANTED_CONFIG);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = fs::read_to_string(assets_root().path(WANTED_CONFIG)).unwrap();
+    assert!(
+        original.contains(from),
+        "GATE BROKEN: shipped wanted.ron has no {from:?}"
+    );
+    fs::write(&file, original.replacen(from, to, 1)).unwrap();
+    let loaded = load_config::<WantedConfig>(&root, WANTED_CONFIG);
+    fs::remove_dir_all(&root.0).unwrap();
+    loaded.unwrap_err().to_string()
+}
+
+#[test]
+fn unknown_wanted_field_names_file_and_field() {
+    let error = wanted_load_error(
+        "unknown",
+        "shooting_radius: 15.0,",
+        "shooting_radius: 15.0, bogus: 1,",
+    );
+    assert!(
+        error.contains("wanted.ron") && error.contains("bogus"),
+        "{error}"
+    );
+}
+
+#[test]
+fn star_thresholds_must_increase() {
+    let error = sabotaged::<WantedConfig>(
+        WANTED_CONFIG,
+        "wanted_order",
+        "(heat: 180,",
+        "(heat: 30,",
+        WantedConfig::validate,
+    );
+    assert!(error.contains("stars[1].heat"), "{error}");
+}
+
+#[test]
+fn five_star_rows_required() {
+    let error = wanted_load_error(
+        "four_rows",
+        "(heat: 2400, search_radius: 180.0, clear_seconds: 30.0),",
+        "",
+    );
+    assert!(error.contains("length 5"), "{error}");
+}
+
+#[test]
+fn incident_memory_must_outlast_a_civilian_call() {
+    let root = assets_root();
+    let civilian = load_config::<CivilianConfig>(&root, CIVILIAN_CONFIG).unwrap();
+    let perception = load_config::<PerceptionConfig>(&root, PERCEPTION_CONFIG).unwrap();
+    // Same bound as compose_sim: perception slots at 64 Hz, then the call itself.
+    let call_delay = f32::from(perception.slots) / 64.0 + civilian.call_seconds;
+    assert_eq!(call_delay, 4.0625, "GATE BROKEN: shipped call delay changed");
+    let mut wanted = load_config::<WantedConfig>(&root, WANTED_CONFIG).unwrap();
+    wanted.validate_call_delay(call_delay).unwrap();
+    // Passes the wanted.ron-only checks, but forgets a crime before its witness finishes the call.
+    wanted.shooting_merge_seconds = 0.0;
+    wanted.incident_memory_seconds = 4.0;
+    wanted.validate().unwrap();
+    let error = wanted.validate_call_delay(call_delay).unwrap_err();
+    assert!(error.contains("incident_memory_seconds"), "{error}");
 }

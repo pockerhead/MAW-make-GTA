@@ -1,0 +1,18 @@
+(
+    // Heat of a witnessed crime by the player (GDD §6.4). Cop rows come with T11, car rows with T14/T15.
+    heat: (punch_civilian: 5, shooting_near_people: 10, wound_civilian: 30, kill_person: 40),
+    // Stars 1..5: heat threshold, search circle radius (m), seconds unseen outside the circle to clear.
+    stars: (
+        (heat: 40,   search_radius: 40.0,  clear_seconds: 10.0),
+        (heat: 180,  search_radius: 70.0,  clear_seconds: 15.0),
+        (heat: 550,  search_radius: 100.0, clear_seconds: 20.0),
+        (heat: 1200, search_radius: 140.0, clear_seconds: 25.0),
+        (heat: 2400, search_radius: 180.0, clear_seconds: 30.0),
+    ),
+    shooting_radius: 15.0,          // m: a person this close to the muzzle at the shot makes it a crime
+    shooting_merge_seconds: 5.0,    // a shot this soon after the offender's last one joins that shooting incident
+    incident_memory_seconds: 60.0,  // an incident untouched this long is forgotten; keep well above call_seconds
+    cop_witness_distance: 50.0,     // m, LOS, any direction: a cop witnesses a crime (GDD §6.4)
+    cop_view_distance: 35.0,        // m on foot: a cop sees the player (search)
+    cop_view_cone_deg: 110.0,       // full cone of that view
+)

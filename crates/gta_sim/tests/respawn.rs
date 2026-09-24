@@ -7,7 +7,7 @@ use gta_sim::{
     combat::{Dummy, GunSlot, Loadout, Pickup, Weapon, WeaponPickup, WeaponsConfig},
     flow::{GameState, RespawnConfig, WastedPhase},
     player::Player,
-    wanted::WantedLevel,
+    wanted::{WantedConfig, WantedLevel},
     world::{CityBlock, CityBuilding, CityEdgeWall, CityGround, HospitalSpawn},
 };
 
@@ -94,7 +94,8 @@ fn death_wasted_respawn_at_hospital() {
         ..default()
     };
     app.world_mut().entity_mut(entity).insert(armed.clone());
-    app.world_mut().resource_mut::<WantedLevel>().stars = 3;
+    let three_stars = app.world().resource::<WantedConfig>().stars[2].heat;
+    app.world_mut().resource_mut::<WantedLevel>().heat = three_stars;
     let scale = app.world().resource::<RespawnConfig>().wasted_time_scale;
 
     let u1_ticks = kill(&mut app);
@@ -104,7 +105,8 @@ fn death_wasted_respawn_at_hospital() {
         "k=0: slow motion starts on entering Wasted"
     );
     assert!(app.world().get::<Dead>(entity).is_some());
-    assert_eq!(app.world().resource::<WantedLevel>().stars, 0);
+    let wanted = *app.world().resource::<WantedLevel>();
+    assert_eq!((wanted.heat, wanted.stars), (0, 0), "{wanted:?}");
     assert_eq!(wasted_phase(&app), Some(WastedPhase::SlowMo));
 
     let run = run_wasted(&mut app, u1_ticks);

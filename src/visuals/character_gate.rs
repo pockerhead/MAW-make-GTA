@@ -489,6 +489,7 @@ fn armed_animator_layers_arm_clips() {
             shooter: player,
             weapon,
             muzzle: Vec3::ZERO,
+            attack: 0,
         });
         app.update();
         let active = active_nodes(&app, animator);

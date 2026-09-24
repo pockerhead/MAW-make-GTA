@@ -76,13 +76,18 @@ fn bar_lives_exactly_as_long_as_the_call() {
     let width = ui().hud.witness_bar.width;
     let caller = app
         .world_mut()
-        .spawn(civilian(CivilianState::Report { progress: 0.5 }))
+        .spawn(civilian(CivilianState::Report {
+            progress: 0.5,
+            about: None,
+        }))
         .id();
     let walker = app.world_mut().spawn(civilian(CivilianState::Wander)).id();
     app.update();
     assert_eq!(bars(&mut app), vec![(caller, px(width * 0.5))]);
-    app.world_mut().get_mut::<Civilian>(caller).unwrap().state =
-        CivilianState::Report { progress: 0.75 };
+    app.world_mut().get_mut::<Civilian>(caller).unwrap().state = CivilianState::Report {
+        progress: 0.75,
+        about: None,
+    };
     app.update();
     assert_eq!(bars(&mut app), vec![(caller, px(width * 0.75))]);
     app.world_mut().get_mut::<Civilian>(caller).unwrap().state = CivilianState::Flee {
@@ -94,8 +99,10 @@ fn bar_lives_exactly_as_long_as_the_call() {
         bars(&mut app).is_empty(),
         "bar kept after the call was interrupted"
     );
-    app.world_mut().get_mut::<Civilian>(walker).unwrap().state =
-        CivilianState::Report { progress: 0.0 };
+    app.world_mut().get_mut::<Civilian>(walker).unwrap().state = CivilianState::Report {
+        progress: 0.0,
+        about: None,
+    };
     app.update();
     assert_eq!(bars(&mut app), vec![(walker, px(0.0))]);
     app.world_mut().entity_mut(walker).despawn();

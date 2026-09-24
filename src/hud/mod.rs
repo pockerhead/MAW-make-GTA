@@ -1,3 +1,4 @@
+mod stars;
 mod wasted;
 mod weapon;
 mod witness;
@@ -12,7 +13,8 @@ use gta_sim::{
     player::Player,
 };
 
-/// Health and armour bars (top right), ammo, crosshair, hit marker, witness bars and the "ПОТРАЧЕНО" screen.
+/// Health and armour bars (top right), ammo, wanted stars, crosshair, hit marker, witness bars and the
+/// "ПОТРАЧЕНО" screen.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -23,7 +25,7 @@ impl Plugin for HudPlugin {
                     exited: GameState::Loading,
                     entered: GameState::Playing,
                 },
-                (spawn_hud, weapon::spawn_weapon_hud),
+                (spawn_hud, weapon::spawn_weapon_hud, stars::spawn_stars),
             )
             .add_systems(
                 Update,
@@ -32,6 +34,7 @@ impl Plugin for HudPlugin {
                     weapon::update_ammo,
                     weapon::update_crosshair,
                     weapon::update_hit_marker,
+                    stars::update_stars,
                 ),
             )
             .add_systems(OnEnter(WastedPhase::Screen), wasted::spawn_wasted_screen)

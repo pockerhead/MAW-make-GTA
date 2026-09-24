@@ -108,6 +108,7 @@ fn bench(count: usize) -> Report {
                     shooter,
                     weapon: Weapon::Pistol,
                     muzzle,
+                    attack: 0,
                 });
             }
         }

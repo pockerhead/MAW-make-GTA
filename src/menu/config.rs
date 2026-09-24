@@ -51,6 +51,7 @@ pub struct HudLayout {
     pub hit_marker_color: Rgb,
     pub kill_marker_color: Rgb,
     pub witness_bar: WitnessBarConfig,
+    pub stars: StarsConfig,
 }
 
 /// Progress bar over a civilian in `Report` (GDD §6.2).
@@ -64,6 +65,26 @@ pub struct WitnessBarConfig {
     pub head_offset: f32,
     pub fill_color: Rgb,
     pub back_color: Rgba,
+}
+
+/// Wanted stars under the ammo counter (GDD §6.4, §7).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct StarsConfig {
+    /// Text of one star; the font must have the glyph.
+    pub glyph: String,
+    /// Font size, px.
+    pub size: f32,
+    /// Gap between stars, px.
+    pub gap: f32,
+    /// An earned star while a cop sees the player.
+    pub lit_color: Rgb,
+    /// The bright phase of an earned star's blink while no cop sees the player.
+    pub gray_color: Rgb,
+    /// A star not earned, and the dark phase of the blink.
+    pub off_color: Rgba,
+    /// Real seconds of one blink phase.
+    pub blink_seconds: f32,
 }
 
 fn positive(field: &str, value: f32) -> Result<(), String> {
@@ -125,6 +146,26 @@ impl UiConfig {
                 witness.head_offset
             ));
         }
+        let stars = &hud.stars;
+        if stars.glyph.is_empty() {
+            return Err("hud.stars.glyph is empty".into());
+        }
+        positive("hud.stars.size", stars.size)?;
+        positive("hud.stars.blink_seconds", stars.blink_seconds)?;
+        if !(stars.gap.is_finite() && stars.gap >= 0.0) {
+            return Err(format!(
+                "hud.stars.gap must be a finite number >= 0, got {}",
+                stars.gap
+            ));
+        }
+        for (field, (r, g, b)) in [
+            ("hud.stars.lit_color", stars.lit_color),
+            ("hud.stars.gray_color", stars.gray_color),
+        ] {
+            unit(field, &[r, g, b])?;
+        }
+        let (r, g, b, a) = stars.off_color;
+        unit("hud.stars.off_color", &[r, g, b, a])?;
         let (r, g, b) = witness.fill_color;
         unit("hud.witness_bar.fill_color", &[r, g, b])?;
         let (r, g, b, a) = witness.back_color;

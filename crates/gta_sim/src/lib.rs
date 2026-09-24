@@ -31,7 +31,7 @@ use navigation::{NAVIGATION_CONFIG, NavigationConfig, NavigationPlugin};
 use perception::{PERCEPTION_CONFIG, PerceptionConfig, PerceptionPlugin};
 use player::PlayerPlugin;
 use population::{POPULATION_CONFIG, PopulationConfig, PopulationPlugin};
-use wanted::WantedPlugin;
+use wanted::{WANTED_CONFIG, WantedConfig, WantedPlugin};
 use world::{CITY_CONFIG, CityParams, CityParamsRes, WorldPlugin, WorldSource};
 
 /// Adds the headless simulation. The caller adds `StatesPlugin` first (`DefaultPlugins` has it).
@@ -95,6 +95,20 @@ pub fn compose_sim(
         path: root.path(GANG_CONFIG),
         message,
     })?;
+    let wanted = load_config::<WantedConfig>(&root, WANTED_CONFIG)?;
+    wanted.validate().map_err(|message| ConfigError {
+        path: root.path(WANTED_CONFIG),
+        message,
+    })?;
+    // A witness starts calling within `slots` ticks of the stimulus (Bevy's default fixed tick, never overridden).
+    let tick = Time::<Fixed>::default().timestep().as_secs_f32();
+    let call_delay = f32::from(perception.slots) * tick + civilian.call_seconds;
+    wanted
+        .validate_call_delay(call_delay)
+        .map_err(|message| ConfigError {
+            path: root.path(WANTED_CONFIG),
+            message,
+        })?;
     // A city run rolls from its own seed; the fixed test level always rolls the same sequence.
     let combat_seed = match source {
         WorldSource::City { seed } => seed,
@@ -120,6 +134,7 @@ pub fn compose_sim(
         .insert_resource(navigation)
         .insert_resource(civilian)
         .insert_resource(gangs)
+        .insert_resource(wanted)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),

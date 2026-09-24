@@ -286,6 +286,8 @@ pub struct MeleeHit {
     pub target: Entity,
     pub point: Vec3,
     pub knockdown: bool,
+    /// Attack id (`AttackSerial`), equal to `DamageDealt.shot` of this hit.
+    pub attack: u32,
 }
 
 /// A sweep that reached a live target; applied in the same fixed tick.
@@ -538,6 +540,7 @@ pub(super) fn apply_strikes(
             target: strike.target,
             point: strike.point,
             knockdown: strike.knockdown,
+            attack: strike.attack,
         });
     }
 }

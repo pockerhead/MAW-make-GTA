@@ -59,6 +59,8 @@ pub struct ShotFired {
     pub shooter: Entity,
     pub weapon: Weapon,
     pub muzzle: Vec3,
+    /// Attack id (`AttackSerial`), equal to `DamageDealt.shot` of its pellets.
+    pub attack: u32,
 }
 
 /// One pellet's path from the muzzle to where it stopped (tracer).
@@ -222,6 +224,7 @@ pub(super) fn fire_weapons(
             shooter,
             weapon,
             muzzle: from,
+            attack: shot,
         });
         for _ in 0..stats.pellets {
             let (u, v) = (unit_f32(&mut rng.0), unit_f32(&mut rng.0));

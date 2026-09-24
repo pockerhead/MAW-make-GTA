@@ -103,6 +103,14 @@ fn shoot_into_the_air(app: &mut App) -> u64 {
     panic!("GATE BROKEN: the pistol did not fire");
 }
 
+/// Call progress of a civilian in `Report`, whatever it is about.
+fn call_progress(state: CivilianState) -> Option<f32> {
+    match state {
+        CivilianState::Report { progress, .. } => Some(progress),
+        _ => None,
+    }
+}
+
 fn hold_idle(app: &mut App, entity: Entity) {
     set_civilian_state(app, entity, CivilianState::Idle { left: 1.0e6 });
 }
@@ -339,18 +347,13 @@ fn report_completes_after_call_seconds() {
     );
     shoot_into_the_air(&mut app);
     await_reaction(&mut app, witness, CivilianState::Wander);
-    assert_eq!(
-        civilian_state(&app, witness),
-        CivilianState::Report { progress: 0.0 }
-    );
+    assert_eq!(call_progress(civilian_state(&app, witness)), Some(0.0));
     let per_tick = step / call_seconds;
     for k in 1..ticks {
         run_ticks(&mut app, 1);
         assert_eq!(
-            civilian_state(&app, witness),
-            CivilianState::Report {
-                progress: k as f32 * per_tick
-            },
+            call_progress(civilian_state(&app, witness)),
+            Some(k as f32 * per_tick),
             "tick {k}"
         );
     }
@@ -382,6 +385,7 @@ fn corpse_witness_app() -> (App, Entity) {
         kind: ThreatKind::Corpse,
         at: body,
         distance: d,
+        cause: None,
     };
     let cfg = civilian_cfg(&app);
     assert!(
@@ -398,7 +402,7 @@ fn corpse_witness_app() -> (App, Entity) {
     let slots = perception_cfg(&app).slots;
     for _ in 0..=slots {
         run_ticks(&mut app, 1);
-        if civilian_state(&app, witness) == (CivilianState::Report { progress: 0.0 }) {
+        if call_progress(civilian_state(&app, witness)) == Some(0.0) {
             return (app, witness);
         }
     }
@@ -422,10 +426,8 @@ fn corpse_in_sight_does_not_cancel_its_own_call() {
     for k in 1..ticks {
         run_ticks(&mut app, 1);
         assert_eq!(
-            civilian_state(&app, witness),
-            CivilianState::Report {
-                progress: k as f32 * per_tick
-            },
+            call_progress(civilian_state(&app, witness)),
+            Some(k as f32 * per_tick),
             "tick {k}"
         );
     }

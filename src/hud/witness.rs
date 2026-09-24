@@ -1,5 +1,5 @@
 //! Witness bar: a progress bar over each civilian phoning the police (GDD §6.2). The sim owns the
-//! call (`CivilianState::Report { progress }`); this only draws it.
+//! call (`CivilianState::Report { progress, .. }`); this only draws it.
 
 use super::{rgb, rgba};
 use crate::camera::{OrbitCamera, follow_player};
@@ -38,7 +38,7 @@ pub(super) fn bar_fill_width(progress: f32, width: f32) -> f32 {
 
 fn call_progress(state: CivilianState) -> Option<f32> {
     match state {
-        CivilianState::Report { progress } => Some(progress),
+        CivilianState::Report { progress, .. } => Some(progress),
         _ => None,
     }
 }
