@@ -132,6 +132,9 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
 - TASK-013 (T12): готов — круглая мини-карта (территории банд, круг поиска, конусы копов, значки), главное меню
   (без `--seed`), пауза по Esc с новым городом по seed, настройки (чувствительность, инверсия Y, громкость, без
   вспышек, меньше тряски) сохраняются между запусками.
+  <!-- SHOWCASE:minimap:START -->
+  <img src="https://raw.githubusercontent.com/pockerhead/MAW-make-GTA/media/minimap.gif?v=27982461" width="480" alt="Мини-карта вращается с камерой, при розыске на ней круг поиска и конусы копов; Esc, новый seed — другой город"><br><sub>Мини-карта вращается с камерой, при розыске на ней круг поиска и конусы копов; Esc, новый seed — другой город</sub>
+  <!-- SHOWCASE:minimap:END -->
 - Следующий: TASK-025 — утечка сенсоров Tnua, потом TASK-014 (T13) звук и juice.
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
 
