@@ -126,6 +126,9 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
 - TASK-012 (T11): готов — полиция: копы приходят по розыску (1-5 звёзд, SWAT на 4-5), ищут по последней известной
   позиции, арестовывают пассивного игрока (BUSTED, участок, изъятие оружия), стреляют, если сопротивляться;
   вырваться можно спринтом. Копы и бандиты не стреляют через своих.
+  <!-- SHOWCASE:police:START -->
+  <img src="https://raw.githubusercontent.com/pockerhead/MAW-make-GTA/media/police.gif?v=30589991" width="480" alt="Полиция: звезда розыска мигает, патрульные прибегают пешком, арест и экран &quot;BUSTED&quot;"><br><sub>Полиция: звезда розыска мигает, патрульные прибегают пешком, арест и экран &quot;BUSTED&quot;</sub>
+  <!-- SHOWCASE:police:END -->
 - Следующий: TASK-013 (T12) — мини-карта и меню.
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
 
