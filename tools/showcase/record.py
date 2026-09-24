@@ -96,7 +96,8 @@ class ShowcaseGame(Game):
         env["BEVY_ASSET_ROOT"] = str(REPO)
         env["BRP_EXTRAS_PORT"] = str(self.port)
         self.process = subprocess.Popen(
-            [str(self.exe), "--seed", str(self.seed), "--window-title", self.title],
+            [str(self.exe), "--seed", str(self.seed), "--window-title", self.title,
+             "--settings-id", "com.github.pockerhead.maw-make-gta.qa"],
             cwd=self.exe.parent, env=env, stdout=self.log_file, stderr=subprocess.STDOUT,
         )
 

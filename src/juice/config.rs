@@ -52,6 +52,8 @@ pub struct ShakeConfig {
     pub max_roll_deg: f32,
     /// Noise lattice steps per second.
     pub noise_hz: f32,
+    /// Share of the shake left with the "reduce shake" setting, [0, 1].
+    pub reduced_scale: f32,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug)]
@@ -157,7 +159,14 @@ impl ShakeConfig {
         non_negative("shake.max_yaw_deg", self.max_yaw_deg)?;
         non_negative("shake.max_pitch_deg", self.max_pitch_deg)?;
         non_negative("shake.max_roll_deg", self.max_roll_deg)?;
-        positive("shake.noise_hz", self.noise_hz)
+        positive("shake.noise_hz", self.noise_hz)?;
+        if !(0.0..=1.0).contains(&self.reduced_scale) {
+            return Err(format!(
+                "shake.reduced_scale must be in [0, 1], got {}",
+                self.reduced_scale
+            ));
+        }
+        Ok(())
     }
 }
 

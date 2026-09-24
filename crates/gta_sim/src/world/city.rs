@@ -1,4 +1,4 @@
-use super::{HospitalSpawn, PlayerSpawn, PoliceStationSpawn};
+use super::{CityScoped, HospitalSpawn, PlayerSpawn, PoliceStationSpawn};
 use crate::character::HealthConfig;
 use crate::flow::GameState;
 use avian3d::prelude::*;
@@ -31,6 +31,7 @@ pub struct City(pub CityLayout);
 pub struct CityParamsRes(pub CityParams);
 
 #[derive(Component)]
+#[require(CityScoped)]
 pub struct CityBuilding {
     pub size: Vec3,
     pub district: DistrictKind,
@@ -38,13 +39,16 @@ pub struct CityBuilding {
 }
 
 #[derive(Component)]
+#[require(CityScoped)]
 pub struct CityGround;
 
 #[derive(Component)]
+#[require(CityScoped)]
 pub struct CityEdgeWall;
 
 /// Raised curb-and-sidewalk prism of one city block (one convex static collider).
 #[derive(Component)]
+#[require(CityScoped)]
 pub struct CityBlock;
 
 /// Landmark points of the generated city; read by QA over BRP.

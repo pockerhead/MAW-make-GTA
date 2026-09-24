@@ -8,6 +8,7 @@ mod hash;
 mod landmarks;
 mod layout;
 mod lots;
+pub mod minimap;
 mod params;
 mod pois;
 mod rng;

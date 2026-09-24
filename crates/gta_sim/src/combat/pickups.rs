@@ -2,7 +2,7 @@ use super::melee::MeleeWeapon;
 use super::weapons::{Loadout, Weapon, WeaponsConfig, acquire};
 use crate::character::{CharacterBody, Dead, Health, HealthConfig};
 use crate::player::Player;
-use crate::world::HospitalSpawn;
+use crate::world::{CityScoped, HospitalSpawn};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
@@ -15,6 +15,7 @@ pub enum PickupKind {
 /// A medkit or armour pickup; taken when the player's feet come within `pickups.radius`.
 #[derive(Component, Reflect, Debug)]
 #[reflect(Component)]
+#[require(CityScoped)]
 pub struct Pickup {
     pub kind: PickupKind,
     /// Seconds until the pickup is available again.
@@ -85,6 +86,7 @@ pub(super) fn collect_pickups(
 /// A gun (or only its ammo) lying on the shooting range.
 #[derive(Component, Reflect, Debug)]
 #[reflect(Component)]
+#[require(CityScoped)]
 pub struct WeaponPickup {
     pub weapon: Weapon,
     pub ammo_only: bool,
@@ -175,6 +177,7 @@ pub(super) fn expire_dropped(
 /// The bat lying on the shooting range; shares the gun pickups' radius and respawn.
 #[derive(Component, Reflect, Debug, Default)]
 #[reflect(Component)]
+#[require(CityScoped)]
 pub struct BatPickup {
     /// Seconds until the pickup is available again.
     pub cooldown: f32,

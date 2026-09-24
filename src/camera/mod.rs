@@ -3,13 +3,14 @@ pub use config::{CAMERA_CONFIG, CameraConfig};
 
 use crate::input::CursorCaptured;
 use crate::juice::{CameraRecoil, CameraShake};
+use crate::settings::GameSettings;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use bevy_enhanced_input::prelude::*;
 use gta_sim::{
     character::{AimIntent, CharacterBody},
-    flow::GameState,
+    flow::{GameState, NEW_CITY},
     layers::GameLayer,
     player::Player,
     population::{CameraView, ViewCone},
@@ -42,6 +43,7 @@ impl Plugin for CameraPlugin {
             .add_systems(Update, apply_mouse_look)
             .add_systems(OnExit(GameState::Wasted), reset_pivot)
             .add_systems(OnExit(GameState::Busted), reset_pivot)
+            .add_systems(NEW_CITY, reset_pivot)
             .add_systems(
                 PostUpdate,
                 (
@@ -76,6 +78,7 @@ fn spawn_camera(mut commands: Commands, config: Res<CameraConfig>) {
 pub fn apply_mouse_look(
     captured: Res<CursorCaptured>,
     config: Res<CameraConfig>,
+    settings: Res<GameSettings>,
     look: Single<&Action<crate::input::Look>>,
     mut camera: Single<&mut OrbitCamera>,
 ) {
@@ -84,9 +87,11 @@ pub fn apply_mouse_look(
     }
     let delta = **look;
     let scale = 1.0 + (config.aim_sensitivity_scale - 1.0) * camera.aim_weight();
-    let sensitivity = config.mouse_sensitivity_deg.to_radians() * scale;
+    let sensitivity =
+        config.mouse_sensitivity_deg.to_radians() * scale * settings.mouse_sensitivity;
+    let pitch_sign = if settings.invert_y { -1.0 } else { 1.0 };
     camera.yaw -= delta.x * sensitivity;
-    camera.pitch = (camera.pitch - delta.y * sensitivity).clamp(
+    camera.pitch = (camera.pitch - pitch_sign * delta.y * sensitivity).clamp(
         config.pitch_min_deg.to_radians(),
         config.pitch_max_deg.to_radians(),
     );

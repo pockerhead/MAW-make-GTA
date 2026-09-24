@@ -5,18 +5,24 @@ pub use city::{
     City, CityBlock, CityBuilding, CityEdgeWall, CityGround, CityLandmarks, CityLayoutHash,
     CityParamsRes, CitySeed,
 };
+pub use citygen::minimap::{Raster, RasterStyle, heading_on_map, map_px, project, rasterize};
 pub use citygen::{
     BuildingKind, CityLayout, CityParams, DistrictKind, Landmarks, RoadClass, Tier, centroid,
     contains_convex,
 };
 
-use crate::flow::GameState;
+use crate::flow::{GameState, NEW_CITY};
 use bevy::prelude::*;
 use city::{apply_city_generation, start_city_generation};
 use test_area::spawn_test_area;
 
 /// Path of the city generator parameters, relative to the assets root.
 pub const CITY_CONFIG: &str = "world/city.ron";
+
+/// Lives as long as the current city: despawned on `flow::NEW_CITY`.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct CityScoped;
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -76,7 +82,8 @@ impl Plugin for WorldPlugin {
             })
             .register_type::<HospitalSpawn>()
             .register_type::<PoliceStationSpawn>()
-            .register_type::<Block>();
+            .register_type::<Block>()
+            .register_type::<CityScoped>();
         match self.source {
             WorldSource::TestArea => {
                 app.add_systems(
@@ -97,10 +104,25 @@ impl Plugin for WorldPlugin {
                     .add_systems(
                         Update,
                         apply_city_generation.in_set(WorldSystems::Generation),
-                    );
+                    )
+                    .add_systems(NEW_CITY, (despawn_city, drop_city));
             }
         }
     }
+}
+
+// A scoped child of a scoped parent is already gone with its parent: `try_despawn`.
+fn despawn_city(mut commands: Commands, scoped: Query<Entity, With<CityScoped>>) {
+    for entity in &scoped {
+        commands.entity(entity).try_despawn();
+    }
+}
+
+/// QA and menus never read the old city's hash while the new one loads.
+fn drop_city(mut commands: Commands) {
+    commands.remove_resource::<City>();
+    commands.remove_resource::<CityLayoutHash>();
+    commands.remove_resource::<CityLandmarks>();
 }
 
 fn finish_loading(mut next: ResMut<NextState<GameState>>) {

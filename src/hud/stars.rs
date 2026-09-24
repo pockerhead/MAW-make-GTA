@@ -4,7 +4,10 @@
 use super::{rgb, rgba};
 use crate::menu::{StarsConfig, UiConfig, UiFonts};
 use bevy::prelude::*;
-use gta_sim::wanted::{STARS, WantedLevel};
+use gta_sim::{
+    wanted::{STARS, WantedLevel},
+    world::CityScoped,
+};
 
 #[derive(Component)]
 pub(super) struct StarRow;
@@ -58,6 +61,7 @@ pub(super) fn spawn_stars(mut commands: Commands, ui: Res<UiConfig>, fonts: Res<
     commands
         .spawn((
             Name::new("Wanted stars"),
+            CityScoped,
             StarRow,
             Node {
                 position_type: PositionType::Absolute,

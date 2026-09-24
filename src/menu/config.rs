@@ -1,10 +1,12 @@
+use super::menu_config::MenuConfig;
+use crate::minimap::MinimapConfig;
 use bevy::prelude::*;
 use serde::Deserialize;
 
 pub const UI_CONFIG: &str = "ui/strings.ron";
 
-type Rgb = (f32, f32, f32);
-type Rgba = (f32, f32, f32, f32);
+pub(crate) type Rgb = (f32, f32, f32);
+pub(crate) type Rgba = (f32, f32, f32, f32);
 
 /// On-screen texts, fonts and HUD layout (Q1: HUD numbers live here, no separate hud.ron).
 #[derive(Resource, Deserialize, Clone, Debug)]
@@ -29,6 +31,7 @@ pub struct UiConfig {
     /// Label of a headshot damage number; `{damage}` is replaced with the value.
     pub damage_crit: String,
     pub hud: HudLayout,
+    pub menu: MenuConfig,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -55,6 +58,7 @@ pub struct HudLayout {
     pub kill_marker_color: Rgb,
     pub witness_bar: WitnessBarConfig,
     pub stars: StarsConfig,
+    pub minimap: MinimapConfig,
 }
 
 /// Progress bar over a civilian in `Report` (GDD §6.2).
@@ -95,7 +99,7 @@ pub struct StarsConfig {
     pub blink_seconds: f32,
 }
 
-fn positive(field: &str, value: f32) -> Result<(), String> {
+pub(crate) fn positive(field: &str, value: f32) -> Result<(), String> {
     if value.is_finite() && value > 0.0 {
         Ok(())
     } else {
@@ -103,7 +107,7 @@ fn positive(field: &str, value: f32) -> Result<(), String> {
     }
 }
 
-fn unit(field: &str, values: &[f32]) -> Result<(), String> {
+pub(crate) fn unit(field: &str, values: &[f32]) -> Result<(), String> {
     if values.iter().all(|v| (0.0..=1.0).contains(v)) {
         Ok(())
     } else {
@@ -215,7 +219,8 @@ impl UiConfig {
         ] {
             unit(field, &[r, g, b])?;
         }
-        Ok(())
+        hud.minimap.validate()?;
+        self.menu.validate()
     }
 
     /// Font asset paths, each of which must be a third-party manifest file.

@@ -8,7 +8,7 @@ pub use crimes::{Crime, Crimes, Incident};
 pub(crate) use search::{cop_sees, eye, witnesses};
 
 use crate::civilian::PoliceCall;
-use crate::flow::{GameState, PlayingSystems};
+use crate::flow::{GameState, NEW_CITY, PlayingSystems};
 use crate::perception::AiSystems;
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -172,6 +172,22 @@ pub fn stars_for(heat: u32, rows: &[StarRow; STARS]) -> u8 {
     rows.iter().filter(|row| heat >= row.heat).count() as u8
 }
 
+/// The row whose search rule applies at `stars`; heat below the first star uses the first row.
+pub fn search_row(rows: &[StarRow; STARS], stars: u8) -> &StarRow {
+    &rows[usize::from(stars.max(1)) - 1]
+}
+
+impl WantedLevel {
+    /// Centre and radius of the search circle; `None` without stars or a last known position.
+    pub fn search_circle(&self, rows: &[StarRow; STARS]) -> Option<(Vec3, f32)> {
+        if self.stars == 0 {
+            return None;
+        }
+        let centre = self.last_known?;
+        Some((centre, search_row(rows, self.stars).search_radius))
+    }
+}
+
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WantedSystems;
 
@@ -201,7 +217,8 @@ impl Plugin for WantedPlugin {
             )
             .add_systems(OnEnter(GameState::Wasted), reset_wanted)
             .add_systems(OnExit(GameState::Wasted), drop_queued_calls)
-            .add_systems(OnExit(GameState::Busted), (reset_wanted, drop_queued_calls));
+            .add_systems(OnExit(GameState::Busted), (reset_wanted, drop_queued_calls))
+            .add_systems(NEW_CITY, (reset_wanted, drop_queued_calls));
     }
 }
 
@@ -251,5 +268,47 @@ mod tests {
         ] {
             assert_eq!(stars_for(heat, &cfg.stars), stars, "heat {heat}");
         }
+    }
+
+    #[test]
+    fn search_circle_per_star() {
+        let cfg: WantedConfig = ron::from_str(include_str!("../../../../assets/wanted/wanted.ron"))
+            .unwrap_or_else(|e| panic!("GATE BROKEN: wanted.ron: {e}"));
+        let radii = cfg.stars.each_ref().map(|row| row.search_radius);
+        for i in 1..STARS {
+            assert!(
+                !radii[..i].contains(&radii[i]),
+                "GATE BROKEN: shipped search radii must differ per star: {radii:?}"
+            );
+        }
+        let centre = Vec3::new(12.0, 0.2, -7.0);
+        let at = |stars: u8, last_known: Option<Vec3>| WantedLevel {
+            heat: 1,
+            stars,
+            last_known,
+            ..default()
+        };
+        assert_eq!(
+            at(1, Some(centre)).search_circle(&cfg.stars),
+            Some((centre, radii[0]))
+        );
+        assert_eq!(
+            at(2, Some(centre)).search_circle(&cfg.stars),
+            Some((centre, radii[1]))
+        );
+        assert_eq!(
+            at(3, Some(centre)).search_circle(&cfg.stars),
+            Some((centre, radii[2]))
+        );
+        assert_eq!(
+            at(4, Some(centre)).search_circle(&cfg.stars),
+            Some((centre, radii[3]))
+        );
+        assert_eq!(
+            at(5, Some(centre)).search_circle(&cfg.stars),
+            Some((centre, radii[4]))
+        );
+        assert_eq!(at(0, Some(centre)).search_circle(&cfg.stars), None);
+        assert_eq!(at(3, None).search_circle(&cfg.stars), None);
     }
 }

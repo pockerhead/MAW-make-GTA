@@ -1,0 +1,8 @@
+# Golden minimap raster hashes: "seed 0xhash", one per line; style is the literal in tests/minimap.rs.
+# Changes only together with an intended change of the generator, the rasterizer or assets/world/city.ron.
+# Update with the bless procedure: raster_marks_known_places green, then
+#   cargo test -p citygen --test minimap -- --ignored bless_print_minimap_golden --nocapture
+# and paste the printed lines here by hand.
+1 0x39f7feed108ed967
+2 0x131dd89c48c80c48
+42 0xe0c02d11b499a777

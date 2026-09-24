@@ -1,69 +1,35 @@
-use super::{rgb, rgba};
-use crate::menu::{UiConfig, UiFonts};
+use super::rgba;
+use crate::menu::{UiConfig, UiFonts, title_screen};
 use bevy::{
     prelude::*,
     render::view::{ColorGrading, ColorGradingGlobal},
 };
 use gta_sim::flow::{BustedPhase, WastedPhase};
 
-pub(super) fn spawn_wasted_screen(commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
-    let (text, color) = (ui.wasted.clone(), ui.wasted_color);
+pub(super) fn spawn_wasted_screen(mut commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
+    let title = (ui.wasted.clone(), ui.wasted_size, ui.wasted_color);
     title_screen(
-        commands,
+        &mut commands,
         &ui,
         &fonts,
         "Wasted screen",
-        text,
-        color,
+        title,
+        rgba(ui.wasted_backdrop),
         WastedPhase::Screen,
     );
 }
 
-pub(super) fn spawn_busted_screen(commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
-    let (text, color) = (ui.busted.clone(), ui.busted_color);
+pub(super) fn spawn_busted_screen(mut commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
+    let title = (ui.busted.clone(), ui.wasted_size, ui.busted_color);
     title_screen(
-        commands,
+        &mut commands,
         &ui,
         &fonts,
         "Busted screen",
-        text,
-        color,
+        title,
+        rgba(ui.wasted_backdrop),
         BustedPhase::Screen,
     );
-}
-
-/// A full-screen title over the wasted backdrop, gone when `exit` is left.
-fn title_screen(
-    mut commands: Commands,
-    ui: &UiConfig,
-    fonts: &UiFonts,
-    name: &'static str,
-    text: String,
-    color: (f32, f32, f32),
-    exit: impl States,
-) {
-    commands.spawn((
-        Name::new(name),
-        Node {
-            width: percent(100),
-            height: percent(100),
-            position_type: PositionType::Absolute,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        BackgroundColor(rgba(ui.wasted_backdrop)),
-        DespawnOnExit(exit),
-        children![(
-            Text::new(text),
-            TextFont {
-                font: FontSource::Handle(fonts.title.clone()),
-                font_size: FontSize::from(ui.wasted_size),
-                ..default()
-            },
-            TextColor(rgb(color)),
-        )],
-    ));
 }
 
 pub(super) fn desaturate(ui: Res<UiConfig>, mut cameras: Query<&mut ColorGrading, With<Camera3d>>) {

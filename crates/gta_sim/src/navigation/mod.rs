@@ -1,7 +1,7 @@
 //! Sidewalk graph and graph steering for NPCs (GDD §6.2, §6.6).
 
 use crate::combat::aim_yaw;
-use crate::flow::{GameState, NpcSystems};
+use crate::flow::{GameState, NEW_CITY, NpcSystems};
 use crate::perception::{AiSystems, sight_blocked};
 use crate::world::{City, CityParamsRes};
 use avian3d::prelude::*;
@@ -354,8 +354,13 @@ impl Plugin for NavigationPlugin {
                     entered: GameState::Playing,
                 },
                 build_sidewalk_graph.run_if(resource_exists::<City>),
-            );
+            )
+            .add_systems(NEW_CITY, drop_sidewalk_graph);
     }
+}
+
+fn drop_sidewalk_graph(mut commands: Commands) {
+    commands.remove_resource::<SidewalkGraph>();
 }
 
 fn reset_route_load(mut load: ResMut<RouteLoad>) {

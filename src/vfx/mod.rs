@@ -1,7 +1,7 @@
 //! Muzzle flash and bullet tracers: short-lived meshes sharing one mesh and material each.
 //! Both start at the visible barrel of the shooter's held gun; gameplay rays keep the sim muzzle.
 
-use crate::{juice::JuiceConfig, visuals::HeldGun};
+use crate::{juice::JuiceConfig, settings::GameSettings, visuals::HeldGun};
 use bevy::{light::NotShadowCaster, prelude::*};
 use gta_sim::combat::{BulletTrace, ShotFired};
 
@@ -72,9 +72,14 @@ fn spawn_flashes(
     mut commands: Commands,
     mut shots: MessageReader<ShotFired>,
     juice: Res<JuiceConfig>,
+    settings: Res<GameSettings>,
     assets: Res<VfxAssets>,
     guns: Guns,
 ) {
+    if settings.no_flashes {
+        shots.clear();
+        return;
+    }
     let flash = &juice.flash;
     let (r, g, b) = flash.color;
     for shot in shots.read() {

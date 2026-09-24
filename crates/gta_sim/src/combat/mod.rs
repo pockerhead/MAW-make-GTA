@@ -21,8 +21,8 @@ pub use weapons::{
 };
 
 use crate::character::HealthSystems;
-use crate::flow::{GameState, PlayingSystems};
-use crate::world::CityLandmarks;
+use crate::flow::{GameState, NEW_CITY, PlayingSystems};
+use crate::world::{CityLandmarks, CitySeed};
 use bevy::prelude::*;
 use bevy_tnua::prelude::*;
 
@@ -70,6 +70,11 @@ impl Plugin for CombatPlugin {
             .register_type::<BatPickup>()
             .add_systems(OnExit(GameState::Wasted), melee::reset_player_melee)
             .add_systems(OnExit(GameState::Busted), melee::reset_player_melee)
+            .add_systems(NEW_CITY, clear_combat_messages)
+            .add_systems(
+                OnEnter(GameState::Loading),
+                reseed_combat.run_if(resource_exists::<CitySeed>),
+            )
             .add_systems(
                 OnTransition {
                     exited: GameState::Loading,
@@ -108,4 +113,22 @@ impl Plugin for CombatPlugin {
                     .in_set(PlayingSystems),
             );
     }
+}
+
+fn clear_combat_messages(
+    mut shots: ResMut<Messages<ShotFired>>,
+    mut traces: ResMut<Messages<BulletTrace>>,
+    mut damage: ResMut<Messages<DamageDealt>>,
+    mut hits: ResMut<Messages<MeleeHit>>,
+    mut strikes: ResMut<Messages<melee::Strike>>,
+) {
+    shots.clear();
+    traces.clear();
+    damage.clear();
+    hits.clear();
+    strikes.clear();
+}
+
+fn reseed_combat(seed: Res<CitySeed>, mut rng: ResMut<CombatRng>) {
+    *rng = CombatRng::seeded(seed.0);
 }

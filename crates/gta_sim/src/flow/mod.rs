@@ -10,9 +10,13 @@ use bevy::prelude::*;
 /// Top-level game flow. The app starts in `Loading` and enters `Playing` once the world is built.
 #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug, Reflect)]
 pub enum GameState {
+    /// Waiting for a seed; no city exists. The client starts here without `--seed`.
+    MainMenu,
     #[default]
     Loading,
     Playing,
+    /// `Time<Virtual>` is paused; entered only from `Playing` through `pause_request`.
+    Paused,
     /// The player died: slow motion, then the "ПОТРАЧЕНО" screen, then respawn at the hospital.
     Wasted,
     /// Arrested: the arrest scene, the BUSTED screen, then respawn at the police station without
@@ -43,7 +47,9 @@ pub enum BustedPhase {
 pub struct PlayingSystems;
 
 /// NPC gameplay; keeps running while the player is wasted or busted. A new state that pauses gameplay must
-/// join this condition or clear the NPC message readers' backlog on exit.
+/// join this condition or clear the NPC message readers' backlog on exit. `Paused` needs no entry: the
+/// fixed loop does not advance while paused (the frame that enters `Paused` may still run one tick with
+/// every gated set off), and `NEW_CITY` clears the buffers.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NpcSystems;
 
@@ -54,6 +60,33 @@ pub struct WastedSystems;
 /// Frame systems that run only in `GameState::Busted`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BustedSystems;
+
+/// `Paused -> Loading` ("Новый город"): every domain drops its city-lifetime state here.
+pub const NEW_CITY: OnTransition<GameState> = OnTransition {
+    exited: GameState::Paused,
+    entered: GameState::Loading,
+};
+
+/// The state an Esc press asks for; `None` while a transition is pending, because a death or arrest
+/// set in this frame's fixed tick must win (`NextState::set` overwrites).
+pub fn pause_request(state: &GameState, next: &NextState<GameState>) -> Option<GameState> {
+    let NextState::Unchanged = next else {
+        return None;
+    };
+    match state {
+        GameState::Playing => Some(GameState::Paused),
+        GameState::Paused => Some(GameState::Playing),
+        _ => None,
+    }
+}
+
+fn pause_time(mut time: ResMut<Time<Virtual>>) {
+    time.pause();
+}
+
+fn resume_time(mut time: ResMut<Time<Virtual>>) {
+    time.unpause();
+}
 
 pub struct FlowPlugin;
 
@@ -98,6 +131,9 @@ impl Plugin for FlowPlugin {
                     wasted::drop_queued_input,
                 ),
             )
+            .add_systems(OnEnter(GameState::Paused), pause_time)
+            .add_systems(OnExit(GameState::Paused), resume_time)
+            .add_systems(NEW_CITY, wasted::drop_queued_damage)
             .add_systems(OnEnter(GameState::Busted), busted::enter_busted)
             .add_systems(Update, busted::advance_busted.in_set(BustedSystems))
             .add_systems(
@@ -108,5 +144,25 @@ impl Plugin for FlowPlugin {
                     wasted::drop_queued_input,
                 ),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pause_request_table() {
+        let unchanged = NextState::<GameState>::Unchanged;
+        let pending = |s: GameState| NextState::Pending(s);
+        use GameState::*;
+        assert_eq!(pause_request(&Playing, &unchanged), Some(Paused));
+        assert_eq!(pause_request(&Playing, &pending(Wasted)), None);
+        assert_eq!(pause_request(&Playing, &pending(Busted)), None);
+        assert_eq!(pause_request(&Paused, &unchanged), Some(Playing));
+        assert_eq!(pause_request(&Wasted, &unchanged), None);
+        assert_eq!(pause_request(&Busted, &unchanged), None);
+        assert_eq!(pause_request(&Loading, &unchanged), None);
+        assert_eq!(pause_request(&MainMenu, &unchanged), None);
     }
 }

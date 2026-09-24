@@ -16,9 +16,9 @@ use gta_sim::{
         ConfigRoot, load_config,
         manifest::{THIRD_PARTY_MANIFEST, ThirdPartyManifest},
     },
-    flow::GameState,
+    flow::{GameState, pause_request},
     player::{DebugDamage, Player},
-    world::{City, CityBuilding, CityParamsRes, WorldSource},
+    world::{City, CityBuilding, CityParamsRes, CitySeed, WorldSource},
 };
 use std::{
     collections::{BTreeSet, HashSet},
@@ -39,8 +39,8 @@ fn render_config() -> RenderConfig {
     config
 }
 
-/// Sim composition plus the production `CityVisualsPlugin`, updated until the city is spawned.
-fn city_visuals_app(seed: u64) -> App {
+/// Sim composition plus the production `CityVisualsPlugin`, not updated yet.
+fn visuals_app(seed: u64) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -60,19 +60,27 @@ fn city_visuals_app(seed: u64) -> App {
         .add_plugins(CityVisualsPlugin);
     app.finish();
     app.cleanup();
+    app
+}
+
+/// `Playing` with the city meshes built and spawned.
+fn city_built(world: &World) -> bool {
+    *world.resource::<State<GameState>>().get() == GameState::Playing
+        && !world.contains_resource::<CityMeshTask>()
+        && !world.contains_resource::<PendingCitySpawn>()
+        && world.contains_resource::<City>()
+}
+
+/// Updates until `done` holds after an update (120 s at most).
+fn update_until(app: &mut App, done: impl Fn(&World) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         app.update();
         if let Some(exit) = app.should_exit() {
             panic!("GATE BROKEN: app exited: {exit:?}");
         }
-        let world = app.world();
-        let done = *world.resource::<State<GameState>>().get() == GameState::Playing
-            && !world.contains_resource::<CityMeshTask>()
-            && !world.contains_resource::<PendingCitySpawn>()
-            && world.contains_resource::<City>();
-        if done {
-            return app;
+        if done(app.world()) {
+            return;
         }
         assert!(
             Instant::now() < deadline,
@@ -80,6 +88,13 @@ fn city_visuals_app(seed: u64) -> App {
         );
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+/// Sim composition plus the production `CityVisualsPlugin`, updated until the city is spawned.
+fn city_visuals_app(seed: u64) -> App {
+    let mut app = visuals_app(seed);
+    update_until(&mut app, city_built);
+    app
 }
 
 fn count<F: QueryFilter>(app: &mut App) -> usize {
@@ -261,4 +276,91 @@ fn city_is_built_once_across_respawn() {
         "prop entities changed across respawn"
     );
     assert_eq!(count::<With<Player>>(&mut app), 1);
+}
+
+/// Esc through the sim rule; returns once `State == Paused`.
+fn pause(app: &mut App) {
+    let target = pause_request(
+        app.world().resource::<State<GameState>>().get(),
+        app.world().resource::<NextState<GameState>>(),
+    );
+    assert_eq!(target, Some(GameState::Paused), "GATE BROKEN: cannot pause");
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Paused);
+    for _ in 0..3 {
+        app.update();
+        if *app.world().resource::<State<GameState>>().get() == GameState::Paused {
+            return;
+        }
+    }
+    panic!("GATE BROKEN: not paused after 3 updates");
+}
+
+/// "Новый город" with `seed`: one update through `Paused -> Loading`.
+fn new_city(app: &mut App, seed: u64) {
+    app.world_mut().resource_mut::<CitySeed>().0 = seed;
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Loading);
+    app.update();
+}
+
+fn chunk_grid(app: &App) -> usize {
+    let size = app.world().resource::<CityParamsRes>().0.size;
+    // Worked example of `city_meshes_are_merged_per_chunk`: 1200 / 128 -> 10 -> 100 chunks.
+    let n = (size / render_config().chunk_size).ceil() as usize;
+    n * n
+}
+
+#[test]
+fn new_city_replaces_city_visuals() {
+    let mut app = city_visuals_app(1);
+    let chunks = city_entities::<With<CityChunk>>(&mut app);
+    let props = city_entities::<With<CityProp>>(&mut app);
+    assert!(
+        !chunks.is_empty() && !props.is_empty(),
+        "GATE BROKEN: no city"
+    );
+    pause(&mut app);
+    new_city(&mut app, 2);
+    update_until(&mut app, city_built);
+
+    let new_chunks = city_entities::<With<CityChunk>>(&mut app);
+    let new_props = city_entities::<With<CityProp>>(&mut app);
+    assert_eq!(new_chunks.len(), chunk_grid(&app), "chunks of the new city");
+    assert!(
+        new_chunks.is_disjoint(&chunks),
+        "chunks of the old city survived"
+    );
+    assert!(!new_props.is_empty(), "no props in the new city");
+    assert!(
+        new_props.is_disjoint(&props),
+        "props of the old city survived"
+    );
+    assert_eq!(count::<With<Player>>(&mut app), 1);
+}
+
+#[test]
+fn new_city_cancels_pending_city_spawn() {
+    let mut app = visuals_app(1);
+    update_until(&mut app, |world| {
+        assert!(
+            !city_built(world),
+            "GATE BROKEN: the city spawned without a visible PendingCitySpawn frame"
+        );
+        world.contains_resource::<PendingCitySpawn>()
+    });
+    pause(&mut app);
+    assert!(
+        app.world().contains_resource::<PendingCitySpawn>(),
+        "GATE BROKEN: the old city finished spawning before the new city"
+    );
+    new_city(&mut app, 2);
+    update_until(&mut app, city_built);
+    assert_eq!(
+        city_entities::<With<CityChunk>>(&mut app).len(),
+        chunk_grid(&app),
+        "chunks after a new city started mid-spawn"
+    );
 }

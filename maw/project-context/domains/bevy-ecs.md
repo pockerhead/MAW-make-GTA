@@ -99,6 +99,11 @@
   Seed-1 sidewalk graph: 11 us mean, <= 215 us worst per search → synchronous K-per-tick cap
   (`navigation.ron route_requests_per_tick`), no async markers needed.
 
+- 2026-09-24 (TASK-013) — bevy-tnua 0.32 sensor entities (`TnuaSensorsSet`, `sensor_sets.rs:98-107`) are NOT
+  `linked_spawn`: despawning a character orphans its `TnuaProximitySensor` entity (not reflected, no Transform, so
+  BRP queries and Transform-based leak detectors miss it; ~1/s from civilian recycling). Every character despawn
+  path also despawns its sensor targets; leak audits count all entities, not only reflected queries.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

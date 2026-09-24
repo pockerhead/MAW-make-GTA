@@ -8,10 +8,12 @@ mod gangs;
 use crate::character::{CharacterControlConfig, Dead, HealthConfig, LocomotionConfig};
 use crate::civilian::{Civilian, CivilianConfig, CivilianState, civilian_bundle, roll_temperament};
 use crate::combat::unit_f32;
+use crate::flow::{GameState, NEW_CITY};
 use crate::gang::GangSystems;
 use crate::navigation::{GraphWalker, SidewalkGraph, flat_distance, wander_next};
 use crate::perception::sight_blocked;
 use crate::player::Player;
+use crate::world::CitySeed;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy_tnua::TnuaToggle;
@@ -306,8 +308,23 @@ impl Plugin for PopulationPlugin {
                     .after(spawn_civilians)
                     .in_set(PopulationSystems)
                     .in_set(GangSystems),
+            )
+            .add_systems(NEW_CITY, reset_population)
+            .add_systems(
+                OnEnter(GameState::Loading),
+                reseed_population.run_if(resource_exists::<CitySeed>),
             );
     }
+}
+
+/// The new city gets its load-time fill; a stale view would place it against the old camera.
+fn reset_population(mut phase: ResMut<PopulationPhase>, mut view: ResMut<CameraView>) {
+    *phase = PopulationPhase::InitialFill;
+    *view = CameraView(None);
+}
+
+fn reseed_population(seed: Res<CitySeed>, mut rng: ResMut<NpcRng>) {
+    *rng = NpcRng::seeded(seed.0);
 }
 
 fn age_corpses(

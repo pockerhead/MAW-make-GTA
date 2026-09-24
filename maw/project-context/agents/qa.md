@@ -41,4 +41,6 @@ Holding keys over BRP: bevy_brp_extras gives every `send_keys` call its own unca
 
 BRP `world.mutate_components` on a despawned entity PANICS the game (bevy_remote 0.19.1). Civilians are recycled at any tick: move the player next to the NPC and re-query it right before mutating.
 
+While `GameState::Paused` (virtual clock frozen) BRP key/mouse holds never release: send each key at most once per pause, use `type_text` for fields, and drive menus with real OS input (`SendInput`, TASK-013 `scratch/qa/osinput.py`, window found by `--window-title`). Always run the game with `--settings-id .qa`; the owner's settings must never be written.
+
 Sub-agent discipline: the harness launches every `Agent` call asynchronously and the report arrives later as a hand-back message. Count your launches and do not end your turn until every one has reported; state `children: N launched / N reported` before your final hand-back. A `Bash` command whose result your deliverable needs runs in the FOREGROUND — never `run_in_background=true` for it, and never end your turn waiting on a background run.

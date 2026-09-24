@@ -13,6 +13,8 @@ from urllib import request
 REPO = Path(__file__).resolve().parents[2]
 # The game-side release timer runs on game time, which can lag the wall clock after a hitch.
 KEY_RELEASE_MARGIN_S = 0.25
+# QA never reads or writes the owner's settings (%LOCALAPPDATA%\com.github.pockerhead.maw-make-gta).
+QA_SETTINGS_ID = "com.github.pockerhead.maw-make-gta.qa"
 
 
 class Game:
@@ -53,7 +55,7 @@ class Game:
         env["BEVY_ASSET_ROOT"] = str(REPO)
         env["BRP_EXTRAS_PORT"] = str(self.port)
         self.process = subprocess.Popen(
-            [str(executable), *self.args], cwd=REPO, env=env,
+            [str(executable), "--settings-id", QA_SETTINGS_ID, *self.args], cwd=REPO, env=env,
             stdout=self.log_file, stderr=subprocess.STDOUT,
         )
 
@@ -155,6 +157,10 @@ class Game:
         for key in keys:
             self.held_until[key] = released_by
         return result
+
+    def type_text(self, text):
+        """Types `text` one key per frame into the focused text field (no hold timer)."""
+        return self.call("brp_extras/type_text", {"text": text})
 
     def move_mouse(self, dx, dy):
         return self.call("brp_extras/move_mouse", {"delta": [dx, dy]})

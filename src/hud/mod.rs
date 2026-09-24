@@ -11,6 +11,7 @@ use gta_sim::{
     character::{Health, HealthConfig},
     flow::{BustedPhase, GameState, WastedPhase},
     player::Player,
+    world::CityScoped,
 };
 
 /// Health and armour bars (top right), ammo, wanted stars, crosshair, hit marker, witness bars and the
@@ -87,6 +88,7 @@ fn spawn_hud(mut commands: Commands, ui: Res<UiConfig>) {
     };
     commands.spawn((
         Name::new("Hud"),
+        CityScoped,
         Node {
             position_type: PositionType::Absolute,
             top: px(hud.margin),

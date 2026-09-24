@@ -6,8 +6,10 @@ mod hud;
 mod input;
 mod juice;
 mod menu;
+mod minimap;
 #[cfg(feature = "dev")]
 mod remote;
+mod settings;
 mod vfx;
 mod visuals;
 
@@ -20,12 +22,13 @@ use gta_sim::{
         ConfigRoot, load_config,
         manifest::{THIRD_PARTY_MANIFEST, ThirdPartyManifest},
     },
+    flow::GameState,
     world::WorldSource,
 };
 use input::PlayerInputPlugin;
 use juice::{JUICE_CONFIG, JuiceConfig, JuicePlugin};
-use menu::{MenuPlugin, UI_CONFIG, UiConfig};
-use std::time::{SystemTime, UNIX_EPOCH};
+use menu::{MenuPlugin, UI_CONFIG, UiConfig, clock_seed};
+use settings::{GameSettingsPlugin, SETTINGS_APP_ID};
 use visuals::{
     CHARACTER_VISUAL_CONFIG, CharacterClips, CharacterVisualConfig, RENDER_CONFIG, RenderConfig,
     VisualsPlugin,
@@ -46,18 +49,15 @@ fn flag_value(flag: &str) -> Result<Option<String>, String> {
     Ok(None)
 }
 
-/// `--seed N` from the command line; without the flag a seed is taken from the clock.
-fn parse_seed() -> Result<u64, String> {
-    if let Some(value) = flag_value("--seed")? {
-        return value
-            .parse()
-            .map_err(|_| format!("--seed expects an unsigned integer, got {value:?}"));
-    }
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
-        .as_nanos();
-    Ok(nanos as u64)
+/// `--seed N` from the command line; `None` without the flag (the game starts in the main menu).
+fn cli_seed() -> Result<Option<u64>, String> {
+    let Some(value) = flag_value("--seed")? else {
+        return Ok(None);
+    };
+    value
+        .parse()
+        .map(Some)
+        .map_err(|_| format!("--seed expects an unsigned integer, got {value:?}"))
 }
 
 /// Checks the render, character and UI configs, that every third-party asset they name is listed
@@ -163,8 +163,16 @@ fn preflight(
 }
 
 fn main() -> AppExit {
-    let seed = match parse_seed() {
+    let cli = match cli_seed() {
         Ok(seed) => seed,
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
+    let seed = cli.unwrap_or_else(clock_seed);
+    let settings_id = match flag_value("--settings-id") {
+        Ok(id) => id.unwrap_or_else(|| SETTINGS_APP_ID.into()),
         Err(error) => {
             eprintln!("{error}");
             return AppExit::error();
@@ -187,6 +195,9 @@ fn main() -> AppExit {
     if let Err(error) = compose_sim(&mut app, root.clone(), WorldSource::City { seed }) {
         eprintln!("{error}");
         return AppExit::error();
+    }
+    if cli.is_none() {
+        app.insert_state(GameState::MainMenu);
     }
     let camera_config = match load_config::<CameraConfig>(&root, CAMERA_CONFIG) {
         Ok(config) => config,
@@ -256,6 +267,9 @@ fn main() -> AppExit {
         .insert_resource(juice_config)
         .insert_resource(mix_config)
         .add_plugins((
+            GameSettingsPlugin {
+                app_id: settings_id,
+            },
             bevy_enhanced_input::prelude::EnhancedInputPlugin,
             PlayerInputPlugin,
             CameraPlugin,
@@ -265,6 +279,7 @@ fn main() -> AppExit {
             JuicePlugin,
             vfx::VfxPlugin,
             ShotAudioPlugin,
+            minimap::MinimapPlugin,
         ));
     #[cfg(feature = "dev")]
     app.add_plugins(remote::QaRemotePlugin);

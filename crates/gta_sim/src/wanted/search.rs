@@ -1,6 +1,6 @@
 //! Cop sight and the search circle (GDD §6.4: hybrid of IV's circle and V's view cones).
 
-use super::{STARS, StarRow, WantedConfig, WantedLevel, stars_for};
+use super::{STARS, StarRow, WantedConfig, WantedLevel, search_row, stars_for};
 use crate::character::{Dead, LocomotionConfig};
 use crate::gang::Faction;
 use crate::navigation::flat_distance;
@@ -76,7 +76,7 @@ pub(crate) fn search_step(
         return;
     }
     w.stars = stars_for(w.heat, rows);
-    let row = &rows[usize::from(w.stars.max(1)) - 1];
+    let row = search_row(rows, w.stars);
     let centre = *w.last_known.get_or_insert(player);
     w.seen = seen;
     if seen {

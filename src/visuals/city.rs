@@ -9,8 +9,8 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
 };
 use gta_sim::{
-    flow::GameState,
-    world::{City, CityParamsRes},
+    flow::{GameState, NEW_CITY},
+    world::{City, CityParamsRes, CityScoped},
 };
 
 /// Owns all city geometry on the render side: merged chunk meshes and props.
@@ -21,7 +21,7 @@ impl Plugin for CityVisualsPlugin {
         app.register_type::<CityChunk>()
             .register_type::<CityProp>()
             .add_systems(Startup, (create_facade_material, load_prop_assets))
-            // Once per session: returning from `Wasted` must not build the city a second time.
+            // Once per city: returning from `Wasted` must not build it again.
             .add_systems(
                 OnTransition {
                     exited: GameState::Loading,
@@ -29,6 +29,7 @@ impl Plugin for CityVisualsPlugin {
                 },
                 start_city_mesh_build,
             )
+            .add_systems(NEW_CITY, cancel_city_build)
             .add_systems(
                 Update,
                 (
@@ -43,6 +44,7 @@ impl Plugin for CityVisualsPlugin {
 /// One merged mesh of city geometry (ground, blocks, buildings, markings) per render chunk.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
+#[require(CityScoped)]
 pub struct CityChunk {
     pub coord: UVec2,
 }
@@ -82,6 +84,12 @@ fn start_city_mesh_build(
         )
     });
     commands.insert_resource(CityMeshTask(task));
+}
+
+/// Dropping the task cancels it; the old city's pending chunks must not spawn into the new one.
+fn cancel_city_build(mut commands: Commands) {
+    commands.remove_resource::<CityMeshTask>();
+    commands.remove_resource::<PendingCitySpawn>();
 }
 
 fn poll_city_mesh_build(mut commands: Commands, mut task: ResMut<CityMeshTask>) {

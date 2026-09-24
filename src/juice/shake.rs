@@ -3,6 +3,7 @@
 //! written before the shake is applied.
 
 use super::{JuiceConfig, config::ShakeConfig};
+use crate::settings::GameSettings;
 use bevy::prelude::*;
 use gta_sim::{combat::MeleeHit, player::Player};
 
@@ -29,13 +30,19 @@ pub(super) fn add_melee_trauma(
 pub(super) fn shake_camera(
     real: Res<Time<Real>>,
     juice: Res<JuiceConfig>,
+    settings: Res<GameSettings>,
     mut shake: ResMut<CameraShake>,
 ) {
     let cfg = &juice.shake;
     shake.trauma = (shake.trauma - cfg.decay_per_s * real.delta_secs()).max(0.0);
     // Wrapped (1 h) so f32 noise time keeps its precision in long sessions.
     let t = real.elapsed_secs_wrapped() * cfg.noise_hz;
-    shake.rotation = shake_rotation(shake.trauma, t, cfg);
+    let scale = if settings.reduce_shake {
+        cfg.reduced_scale
+    } else {
+        1.0
+    };
+    shake.rotation = Quat::IDENTITY.slerp(shake_rotation(shake.trauma, t, cfg), scale);
 }
 
 /// Camera shake rotation at `trauma` and noise time `t` (lattice steps).
@@ -80,6 +87,7 @@ mod tests {
             max_pitch_deg: 3.0,
             max_roll_deg: 5.0,
             noise_hz: 15.0,
+            reduced_scale: 0.3,
         }
     }
 

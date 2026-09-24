@@ -1,6 +1,12 @@
 mod config;
+mod menu_config;
+mod screens;
+mod widgets;
 
+pub(crate) use config::{Rgb, Rgba, positive, unit};
 pub use config::{StarsConfig, UI_CONFIG, UiConfig};
+pub use widgets::clock_seed;
+pub(crate) use widgets::title_screen;
 
 use bevy::prelude::*;
 use gta_sim::{flow::GameState, world::CitySeed};
@@ -25,12 +31,39 @@ impl FromWorld for UiFonts {
     }
 }
 
+/// Screen of `GameState::Paused`; read by QA over BRP.
+#[derive(SubStates, Default, Clone, PartialEq, Eq, Hash, Debug, Reflect)]
+#[source(GameState = GameState::Paused)]
+pub enum PauseMenu {
+    #[default]
+    Main,
+    Settings,
+}
+
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiFonts>()
-            .add_systems(OnEnter(GameState::Loading), spawn_loading_screen);
+            .add_sub_state::<PauseMenu>()
+            .register_type_state::<PauseMenu>()
+            .add_systems(OnEnter(GameState::Loading), spawn_loading_screen)
+            .add_systems(OnEnter(GameState::MainMenu), screens::spawn_main_menu)
+            .add_systems(OnEnter(PauseMenu::Main), screens::spawn_pause_menu)
+            .add_systems(OnEnter(PauseMenu::Settings), screens::spawn_settings_screen)
+            .add_systems(OnExit(PauseMenu::Settings), screens::save_on_close)
+            .add_systems(
+                Update,
+                (
+                    screens::escape,
+                    screens::submit_seed
+                        .run_if(in_state(GameState::MainMenu).or_else(in_state(PauseMenu::Main))),
+                    screens::press_buttons,
+                    screens::hover_buttons,
+                    screens::update_setting_labels
+                        .run_if(resource_changed::<crate::settings::GameSettings>),
+                ),
+            );
     }
 }
 

@@ -17,7 +17,7 @@ pub struct CharacterVisualConfig {
     /// Asset paths of the police models; patrol and SWAT differ by tint.
     pub(crate) police_models: Vec<String>,
     /// Base colour multipliers of a patrol cop and a SWAT unit.
-    pub(super) police_tint: (f32, f32, f32),
+    pub(crate) police_tint: (f32, f32, f32),
     pub(super) swat_tint: (f32, f32, f32),
     /// Civilian base colour multipliers of `tinted_mesh`.
     pub(super) civilian_tints: Vec<(f32, f32, f32)>,

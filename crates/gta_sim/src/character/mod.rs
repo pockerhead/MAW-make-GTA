@@ -13,6 +13,7 @@ pub use locomotion::{LOCOMOTION_CONFIG, LocomotionConfig};
 
 use crate::combat::{HitReaction, Melee, MeleeConfig};
 use crate::layers::GameLayer;
+use crate::world::CityScoped;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use bevy_tnua::builtins::{TnuaBuiltinJump, TnuaBuiltinKnockback, TnuaBuiltinWalk};
@@ -36,7 +37,8 @@ pub enum CharacterScheme {
     JumpBuffer,
     AnimState,
     HitReaction,
-    Melee
+    Melee,
+    CityScoped
 )]
 pub struct Character;
 

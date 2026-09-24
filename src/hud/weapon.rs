@@ -7,6 +7,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use gta_sim::{
     combat::{DamageDealt, Loadout},
     player::Player,
+    world::CityScoped,
 };
 
 #[derive(Component)]
@@ -47,6 +48,7 @@ pub(super) fn spawn_weapon_hud(mut commands: Commands, ui: Res<UiConfig>, fonts:
     };
     commands.spawn((
         Name::new("Ammo"),
+        CityScoped,
         AmmoText,
         Text::new(""),
         font(hud.ammo_size),
@@ -62,6 +64,7 @@ pub(super) fn spawn_weapon_hud(mut commands: Commands, ui: Res<UiConfig>, fonts:
     let color = BackgroundColor(rgba(hud.crosshair_color));
     commands.spawn((
         Name::new("Crosshair dot"),
+        CityScoped,
         CrosshairDot,
         centred(hud.crosshair_dot, hud.crosshair_dot),
         color,
@@ -75,6 +78,7 @@ pub(super) fn spawn_weapon_hud(mut commands: Commands, ui: Res<UiConfig>, fonts:
         };
         commands.spawn((
             Name::new("Crosshair arm"),
+            CityScoped,
             CrosshairArm(dir),
             centred(w, h),
             color,
@@ -83,6 +87,7 @@ pub(super) fn spawn_weapon_hud(mut commands: Commands, ui: Res<UiConfig>, fonts:
     }
     commands.spawn((
         Name::new("Hit marker"),
+        CityScoped,
         HitMarker::default(),
         Text::new("×"),
         font(hud.hit_marker_size),

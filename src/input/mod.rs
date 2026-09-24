@@ -75,18 +75,21 @@ impl Plugin for PlayerInputPlugin {
     fn build(&self, app: &mut App) {
         app.add_input_context::<OnFoot>()
             .insert_resource(CursorCaptured(true))
-            .add_systems(Startup, (spawn_input, capture_cursor))
+            .add_systems(Startup, spawn_input)
             .add_systems(
                 Update,
                 (
-                    cursor_toggle,
                     write_move_intent.after(apply_mouse_look),
-                    // Before `cursor_toggle`: the click that recaptures the cursor must not fire.
-                    write_action_intent
-                        .after(apply_mouse_look)
-                        .before(cursor_toggle),
+                    write_action_intent.after(apply_mouse_look),
                 ),
             )
+            .add_systems(OnEnter(GameState::Playing), capture_cursor)
+            .add_systems(
+                OnEnter(GameState::Paused),
+                (release_cursor, deactivate_input),
+            )
+            .add_systems(OnExit(GameState::Paused), activate_input)
+            .add_systems(OnEnter(GameState::MainMenu), release_cursor)
             .add_systems(OnEnter(GameState::Wasted), release_held_actions)
             .add_systems(OnEnter(GameState::Busted), release_held_actions);
     }
@@ -117,26 +120,35 @@ fn spawn_input(mut commands: Commands) {
     ));
 }
 
-fn capture_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+fn capture_cursor(
+    mut captured: ResMut<CursorCaptured>,
+    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+) {
+    captured.0 = true;
     cursor.grab_mode = CursorGrabMode::Locked;
     cursor.visible = false;
 }
 
-fn cursor_toggle(
-    keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
+fn release_cursor(
     mut captured: ResMut<CursorCaptured>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        captured.0 = false;
-        cursor.grab_mode = CursorGrabMode::None;
-        cursor.visible = true;
-    } else if !captured.0 && buttons.just_pressed(MouseButton::Left) {
-        captured.0 = true;
-        cursor.grab_mode = CursorGrabMode::Locked;
-        cursor.visible = false;
-    }
+    captured.0 = false;
+    cursor.grab_mode = CursorGrabMode::None;
+    cursor.visible = true;
+}
+
+// `write_move_intent` has no capture check: Space during the pause would latch a jump for the resume.
+fn deactivate_input(mut commands: Commands, input: Single<Entity, With<OnFoot>>) {
+    commands
+        .entity(*input)
+        .insert(ContextActivity::<OnFoot>::INACTIVE);
+}
+
+fn activate_input(mut commands: Commands, input: Single<Entity, With<OnFoot>>) {
+    commands
+        .entity(*input)
+        .insert(ContextActivity::<OnFoot>::ACTIVE);
 }
 
 fn write_move_intent(
@@ -185,7 +197,7 @@ fn write_action_intent(
     if !captured.0 {
         action.fire_held = false;
         aim_intent.aiming = false;
-        // The click that recaptures the cursor stays held: it must be released before it fires.
+        // The click that closes a menu stays held: it must be released before it fires.
         *wait_release = true;
         return;
     }

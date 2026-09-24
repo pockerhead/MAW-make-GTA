@@ -12,12 +12,12 @@ use crate::character::{
     character_components,
 };
 use crate::combat::{Loadout, Weapon, WeaponsConfig, acquire, unit_f32};
-use crate::flow::{GameState, NpcSystems};
+use crate::flow::{GameState, NEW_CITY, NpcSystems};
 use crate::navigation::Route;
 use crate::perception::{AiSystems, Perception};
 use crate::population::{Appearance, Offscreen};
 use crate::tactics::Discipline;
-use crate::world::City;
+use crate::world::{City, CitySeed};
 use bevy::prelude::*;
 use rand_chacha::{
     ChaCha8Rng,
@@ -555,6 +555,25 @@ impl Plugin for GangPlugin {
                     .in_set(AiSystems::Decide)
                     .in_set(GangSystems),
             ),
+        )
+        .add_systems(NEW_CITY, drop_gang_city)
+        .add_systems(
+            OnEnter(GameState::Loading),
+            reseed_gangs.run_if(resource_exists::<CitySeed>),
         );
     }
+}
+
+fn drop_gang_city(
+    mut commands: Commands,
+    mut heat: ResMut<GangHeat>,
+    mut territory: ResMut<PlayerTerritory>,
+) {
+    commands.remove_resource::<GangTerritories>();
+    heat.left.fill(0.0);
+    *territory = PlayerTerritory::default();
+}
+
+fn reseed_gangs(seed: Res<CitySeed>, mut rng: ResMut<GangRng>) {
+    *rng = GangRng::seeded(seed.0);
 }

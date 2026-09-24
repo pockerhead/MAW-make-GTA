@@ -1,7 +1,7 @@
 use super::config::RenderConfig;
 use bevy::{camera::visibility::VisibilityRange, gltf::GltfAssetLabel, prelude::*};
 use gta_sim::world::{
-    BuildingKind, CityLayout, CityParams, DistrictKind, RoadClass, contains_convex,
+    BuildingKind, CityLayout, CityParams, CityScoped, DistrictKind, RoadClass, contains_convex,
 };
 use std::collections::HashMap;
 
@@ -26,6 +26,7 @@ pub(super) struct PropPlacement {
 /// Marker of a spawned prop (visual only, no collider until T14).
 #[derive(Component, Reflect)]
 #[reflect(Component)]
+#[require(CityScoped)]
 pub struct CityProp;
 
 #[derive(Resource)]

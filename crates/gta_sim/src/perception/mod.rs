@@ -129,7 +129,7 @@ pub struct PerceptionPlugin;
 impl Plugin for PerceptionPlugin {
     fn build(&self, app: &mut App) {
         use crate::character::HealthSystems;
-        use crate::flow::NpcSystems;
+        use crate::flow::{NEW_CITY, NpcSystems};
         use crate::population::PopulationSystems;
         use bevy_tnua::prelude::TnuaUserControlsSystems;
         app.init_resource::<AiClock>()
@@ -159,8 +159,13 @@ impl Plugin for PerceptionPlugin {
                 (advance_clock, collect_stimuli, perceive)
                     .chain()
                     .in_set(AiSystems::Perceive),
-            );
+            )
+            .add_systems(NEW_CITY, clear_stimuli);
     }
+}
+
+fn clear_stimuli(mut log: ResMut<StimulusLog>) {
+    log.0.clear();
 }
 
 fn assign_slot(

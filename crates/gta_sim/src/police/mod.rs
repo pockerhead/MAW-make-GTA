@@ -13,13 +13,14 @@ use crate::character::{
     character_components,
 };
 use crate::combat::{Loadout, Weapon, WeaponsConfig, acquire, unit_f32};
-use crate::flow::{GameState, NpcSystems, PlayingSystems};
+use crate::flow::{GameState, NEW_CITY, NpcSystems, PlayingSystems};
 use crate::gang::Faction;
 use crate::navigation::Route;
 use crate::perception::{AiSystems, Perception};
 use crate::population::{Appearance, Offscreen, PopulationSystems};
 use crate::tactics::Discipline;
 use crate::wanted::{STARS, WantedSystems};
+use crate::world::CitySeed;
 use bevy::prelude::*;
 use rand_chacha::{
     ChaCha8Rng,
@@ -458,6 +459,19 @@ impl Plugin for PolicePlugin {
                 ),
             )
             .add_systems(OnEnter(GameState::Wasted), arrest::reset_arrest)
-            .add_systems(OnExit(GameState::Busted), arrest::reset_arrest);
+            .add_systems(OnExit(GameState::Busted), arrest::reset_arrest)
+            .add_systems(NEW_CITY, (arrest::reset_arrest, reset_dispatcher))
+            .add_systems(
+                OnEnter(GameState::Loading),
+                reseed_police.run_if(resource_exists::<CitySeed>),
+            );
     }
+}
+
+fn reset_dispatcher(mut dispatcher: ResMut<PoliceDispatcher>) {
+    *dispatcher = PoliceDispatcher::default();
+}
+
+fn reseed_police(seed: Res<CitySeed>, mut rng: ResMut<PoliceRng>) {
+    *rng = PoliceRng::seeded(seed.0);
 }

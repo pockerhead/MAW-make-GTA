@@ -126,7 +126,8 @@ pub fn compose_sim(
             path: root.path(WANTED_CONFIG),
             message,
         })?;
-    // A city run rolls from its own seed; the fixed test level always rolls the same sequence.
+    // A city run rolls from `CitySeed` (reseeded at every load); the fixed test level always rolls the
+    // same sequence.
     let combat_seed = match source {
         WorldSource::City { seed } => seed,
         WorldSource::TestArea => 0,
