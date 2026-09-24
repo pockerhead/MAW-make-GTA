@@ -12,6 +12,8 @@ pub struct CharacterVisualConfig {
     pub(crate) model: String,
     /// Asset paths of the civilian models; each builds its own animation graph from its own clips.
     pub(crate) civilian_models: Vec<String>,
+    /// Asset paths of the gang models; the tint comes from `gang/gangs.ron`.
+    pub(crate) gang_models: Vec<String>,
     /// Civilian base colour multipliers of `tinted_mesh`.
     pub(super) civilian_tints: Vec<(f32, f32, f32)>,
     /// Head top of the model in model units (feet at 0).
@@ -139,6 +141,9 @@ impl CharacterVisualConfig {
         if self.civilian_models.is_empty() {
             return Err("civilian_models must name at least one model".into());
         }
+        if self.gang_models.is_empty() {
+            return Err("gang_models must name at least one model".into());
+        }
         if self.civilian_tints.is_empty() {
             return Err("civilian_tints must name at least one tint".into());
         }
@@ -167,7 +172,7 @@ impl CharacterVisualConfig {
     }
 
     /// Resolves every clip name against the manifest rig of `model`, and checks that every civilian
-    /// model resolves to the same clips; collects all errors.
+    /// and gang model resolves to the same clips; collects all errors.
     pub fn resolve(&self, manifest: &ThirdPartyManifest) -> Result<CharacterClips, Vec<String>> {
         let clips = self.resolve_model(manifest, &self.model)?;
         let mut errors = Vec::new();
@@ -176,6 +181,16 @@ impl CharacterVisualConfig {
                 Ok(own) if own == clips => {}
                 Ok(_) => errors.push(format!(
                     "civilian model {civilian} resolves clips differently from {}",
+                    self.model
+                )),
+                Err(own) => errors.extend(own),
+            }
+        }
+        for gang in &self.gang_models {
+            match self.resolve_model(manifest, gang) {
+                Ok(own) if own == clips => {}
+                Ok(_) => errors.push(format!(
+                    "gang model {gang} resolves clips differently from {}",
                     self.model
                 )),
                 Err(own) => errors.extend(own),

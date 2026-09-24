@@ -13,6 +13,7 @@ use gta_sim::{
     character::{AnimState, CharacterBody, Dead},
     civilian::{Civilian, CivilianState},
     combat::{HitReaction, Loadout, Melee, MeleeWeapon, ShotFired, Swing, Weapon},
+    gang::{GangConfig, GangMember},
     population::Appearance,
 };
 use std::time::Duration;
@@ -62,7 +63,8 @@ impl Plugin for CharacterVisualsPlugin {
 /// plays the clip of `AnimState` `i`.
 #[derive(Resource)]
 pub(super) struct CharacterAnimations {
-    /// Indexed by `ModelKey`: 0 = `model` (player, dummies), 1.. = `civilian_models`.
+    /// Indexed by `ModelKey`: 0 = `model` (player, dummies), 1..=C = `civilian_models`, C+1.. =
+    /// `gang_models`.
     pub(super) graphs: Vec<Handle<AnimationGraph>>,
     /// Scene of each model, by `ModelKey`; loaded up front so civilians never wait on asset IO.
     pub(super) scenes: Vec<Handle<WorldAsset>>,
@@ -154,6 +156,7 @@ impl FromWorld for CharacterAnimations {
         let asset_server = world.resource::<AssetServer>().clone();
         let models = std::iter::once(&config.model)
             .chain(&config.civilian_models)
+            .chain(&config.gang_models)
             .collect::<Vec<_>>();
         let mut graphs = Vec::with_capacity(models.len());
         let mut scenes = Vec::with_capacity(models.len());
@@ -228,24 +231,71 @@ pub(super) fn model_transform(float_height: f32, scale: f32) -> Transform {
         .with_scale(Vec3::splat(scale))
 }
 
-/// Model key of a body: a civilian's `Appearance` picks one of the civilian models, others use 0.
-pub(super) fn model_key(appearance: Option<Appearance>, civilian_models: usize) -> usize {
-    appearance.map_or(0, |a| 1 + a.0 as usize % civilian_models)
+/// Model key and tint of a body: a civilian's `Appearance` picks a civilian model and tint, a gang
+/// member's a gang model under its gang's tint; everyone else is model 0 under `tint`.
+pub(super) fn body_look(
+    appearance: Option<Appearance>,
+    civilian: bool,
+    gang: Option<u8>,
+    config: &CharacterVisualConfig,
+    gangs: &GangConfig,
+) -> (usize, (f32, f32, f32)) {
+    let Some(a) = appearance.map(|a| a.0 as usize) else {
+        return (0, config.tint);
+    };
+    let c = config.civilian_models.len();
+    if civilian {
+        let tint = config.civilian_tints[(a / c) % config.civilian_tints.len()];
+        return (1 + a % c, tint);
+    }
+    let Some(spec) = gang.and_then(|g| gangs.gangs.get(g as usize)) else {
+        return (0, config.tint);
+    };
+    (1 + c + a % config.gang_models.len(), spec.tint)
+}
+
+/// Look inputs of a body: appearance, civilian, gang.
+type LookQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static Appearance>,
+        Has<Civilian>,
+        Option<&'static GangMember>,
+    ),
+>;
+
+fn look_of(
+    looks: &LookQuery,
+    entity: Entity,
+    config: &CharacterVisualConfig,
+    gangs: &GangConfig,
+) -> (usize, (f32, f32, f32)) {
+    let Ok((appearance, civilian, member)) = looks.get(entity) else {
+        return (0, config.tint);
+    };
+    body_look(
+        appearance.copied(),
+        civilian,
+        member.map(|m| m.gang),
+        config,
+        gangs,
+    )
 }
 
 fn spawn_character_model(
     event: On<Add, CharacterBody>,
     bodies: Query<&CharacterBody>,
-    civilians: Query<&Appearance, With<Civilian>>,
+    looks: LookQuery,
     config: Res<CharacterVisualConfig>,
+    gangs: Res<GangConfig>,
     animations: Res<CharacterAnimations>,
     mut commands: Commands,
 ) {
     let Ok(body) = bodies.get(event.entity) else {
         return;
     };
-    let appearance = civilians.get(event.entity).ok().copied();
-    let key = model_key(appearance, config.civilian_models.len());
+    let (key, _) = look_of(&looks, event.entity, &config, &gangs);
     let scene = animations.scenes[key].clone();
     let transform = model_transform(body.float_height, config.scale());
     commands
@@ -263,29 +313,18 @@ fn spawn_character_model(
         });
 }
 
-/// Tint of a body's tinted mesh: a civilian's `Appearance` picks one of the civilian tints.
-pub(super) fn body_tint(
-    appearance: Option<Appearance>,
-    config: &CharacterVisualConfig,
-) -> (f32, f32, f32) {
-    let Some(a) = appearance else {
-        return config.tint;
-    };
-    let n = config.civilian_models.len();
-    config.civilian_tints[(a.0 as usize / n) % config.civilian_tints.len()]
-}
-
 #[allow(clippy::too_many_arguments)]
 fn on_model_ready(
     ready: On<WorldInstanceReady>,
     models: Query<(&ChildOf, &ModelKey), With<CharacterModel>>,
-    appearances: Query<&Appearance, With<Civilian>>,
+    looks: LookQuery,
     children: Query<&Children>,
     mut players: Query<&mut AnimationPlayer>,
     meshes: Query<(&GltfMeshName, &MeshMaterial3d<StandardMaterial>)>,
     targets: Query<(&Name, &AnimationTargetId)>,
     animations: Res<CharacterAnimations>,
     config: Res<CharacterVisualConfig>,
+    gangs: Res<GangConfig>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     mut commands: Commands,
@@ -294,7 +333,7 @@ fn on_model_ready(
         return;
     };
     let character = child_of.parent();
-    let tint = body_tint(appearances.get(character).ok().copied(), &config);
+    let (_, tint) = look_of(&looks, character, &config, &gangs);
     let mut wired = 0;
     for entity in children.iter_descendants(ready.entity) {
         if let Ok(mut player) = players.get_mut(entity) {

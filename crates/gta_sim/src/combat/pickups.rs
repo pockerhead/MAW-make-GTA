@@ -98,15 +98,39 @@ impl WeaponPickup {
     }
 }
 
+/// A gun a dead NPC dropped: taken once, gone after `left` seconds.
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+pub struct Dropped {
+    pub left: f32,
+}
+
+/// The gun of a dead NPC lying at `feet`.
+pub fn dropped_gun(weapon: Weapon, feet: Vec3, cfg: &WeaponsConfig) -> impl Bundle {
+    (
+        WeaponPickup {
+            weapon,
+            ammo_only: false,
+            cooldown: 0.0,
+        },
+        Dropped {
+            left: cfg.pickups.drop_seconds,
+        },
+        Name::new(format!("Dropped {weapon:?}")),
+        Transform::from_translation(feet),
+    )
+}
+
 #[allow(clippy::type_complexity)]
 pub(super) fn collect_weapon_pickups(
+    mut commands: Commands,
     cfg: Res<WeaponsConfig>,
     time: Res<Time<Fixed>>,
-    mut pickups: Query<(&mut WeaponPickup, &Transform)>,
+    mut pickups: Query<(Entity, &mut WeaponPickup, &Transform, Has<Dropped>)>,
     mut players: Query<(&Position, &CharacterBody, &mut Loadout), (With<Player>, Without<Dead>)>,
 ) {
     let dt = time.delta_secs();
-    for (mut pickup, transform) in &mut pickups {
+    for (entity, mut pickup, transform, dropped) in &mut pickups {
         pickup.cooldown = (pickup.cooldown - dt).max(0.0);
         if !pickup.available() {
             continue;
@@ -121,10 +145,29 @@ pub(super) fn collect_weapon_pickups(
             if !acquire(&mut loadout.guns[weapon.index()], cfg.stats(weapon), gun) {
                 continue;
             }
-            pickup.cooldown = cfg.pickups.respawn;
             if gun && loadout.held.is_none() {
                 loadout.held = Some(weapon);
             }
+            if dropped {
+                commands.entity(entity).try_despawn();
+                break;
+            }
+            pickup.cooldown = cfg.pickups.respawn;
+        }
+    }
+}
+
+/// Counts dropped guns down and removes them at 0.
+pub(super) fn expire_dropped(
+    mut commands: Commands,
+    time: Res<Time<Fixed>>,
+    mut dropped: Query<(Entity, &mut Dropped)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut drop) in &mut dropped {
+        drop.left -= dt;
+        if drop.left <= 0.0 {
+            commands.entity(entity).try_despawn();
         }
     }
 }

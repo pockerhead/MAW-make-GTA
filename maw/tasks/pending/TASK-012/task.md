@@ -28,3 +28,7 @@ Goal (GDD §13): `PoliceDispatcher`, эскалация 1-5 из `escalation.ron
 - [ ] Every new tuning value lives in its GDD §12 data file, not in a `const`
 - [ ] `cargo build`, `cargo clippy -- -D warnings`, `cargo test -p gta_sim` (and `-p citygen` where touched) are green
 - [ ] Existing tests pass
+
+## Orchestrator note (from TASK-010)
+
+- Police reuse the gang fire-line rules (`gang/behavior/fire_line.rs`: hold fire on a non-hostile in the widened line, candidate reposition, pinned-scrum hold). Known gap from TASK-010 QA round 3: in a corridor <= 3 m wide the rear shooter's close-in fallback walks into a non-pinned groupmate and never fires (`maw/tasks/done/TASK-010/QA_REPORT.md` Bug 1). Fix it for both roles here (e.g. the close-in path treats groupmates as avoidance obstacles / picks a lateral queue slot) and gate it with the corridor layout.

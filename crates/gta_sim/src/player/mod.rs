@@ -4,6 +4,7 @@ use crate::character::{
 };
 use crate::combat::Loadout;
 use crate::flow::{GameState, PlayingSystems};
+use crate::gang::Faction;
 use crate::world::PlayerSpawn;
 use bevy::prelude::*;
 
@@ -58,6 +59,7 @@ fn spawn_player(
         character_components(&config, handle.0.clone()),
         Health::full(&health),
         Loadout::default(),
+        Faction::Player,
     ));
 }
 

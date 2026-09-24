@@ -3,9 +3,12 @@
 //! cap also calm civilians behind the view, off-frame past `recycle_distance`), corpse lifetime
 //! (GDD §6.1, §4.3).
 
+mod gangs;
+
 use crate::character::{CharacterControlConfig, Dead, HealthConfig, LocomotionConfig};
 use crate::civilian::{Civilian, CivilianConfig, CivilianState, civilian_bundle, roll_temperament};
 use crate::combat::unit_f32;
+use crate::gang::GangSystems;
 use crate::navigation::{GraphWalker, SidewalkGraph, flat_distance, wander_next};
 use crate::perception::sight_blocked;
 use crate::player::Player;
@@ -26,6 +29,8 @@ pub const POPULATION_CONFIG: &str = "npc/population.ron";
 #[serde(deny_unknown_fields)]
 pub struct PopulationConfig {
     pub max_civilians: u32,
+    /// Alive gang members at most; 0 disables gangs, below `groups.size.0` nothing spawns.
+    pub max_gang_members: u32,
     /// Steady-state spawn ring around the player (inner, outer), m.
     pub spawn_ring: (f32, f32),
     pub spawns_per_tick: u32,
@@ -293,6 +298,14 @@ impl Plugin for PopulationPlugin {
                 (age_corpses, despawn_far, spawn_civilians)
                     .chain()
                     .in_set(PopulationSystems),
+            )
+            .add_systems(
+                FixedUpdate,
+                (gangs::despawn_far_gangs, gangs::spawn_gangs)
+                    .chain()
+                    .after(spawn_civilians)
+                    .in_set(PopulationSystems)
+                    .in_set(GangSystems),
             );
     }
 }

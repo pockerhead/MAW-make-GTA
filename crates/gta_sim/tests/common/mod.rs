@@ -14,10 +14,16 @@ use gta_sim::{
         MoveIntent,
     },
     civilian::{Civilian, CivilianState, Temperament, civilian_bundle},
-    combat::{BulletTrace, DamageDealt, Loadout, ShotFired, dummy_bundle},
+    combat::{
+        BulletTrace, DamageDealt, GunSlot, Loadout, ShotFired, Weapon, WeaponsConfig, dummy_bundle,
+    },
     compose_sim,
     config::ConfigRoot,
     flow::{GameState, WastedPhase},
+    gang::{
+        Faction, GangConfig, GangHeat, GangMember, GangState, GangTerritories, Turf,
+        gang_member_bundle,
+    },
     layers::GameLayer,
     navigation::{GraphWalker, SidewalkGraph},
     player::{DebugDamage, Player},
@@ -439,4 +445,129 @@ pub fn open_street(app: &mut App, from: Vec3) -> (Vec3, f32) {
                 .unwrap()
         })
         .expect("GATE BROKEN: cast system failed")
+}
+
+/// Gang turf on the 80 x 80 m test floor.
+#[derive(Clone, Copy, Debug)]
+pub enum TurfLayout {
+    /// Gang 0 owns x in [-40, 0]; x in [2, 40] belongs to no gang.
+    WestHalf,
+    /// Gang 0 owns the whole floor.
+    WholeFloor,
+}
+
+fn square(x0: f32, x1: f32) -> Vec<citygen::Vec2> {
+    [(x0, -40.0), (x1, -40.0), (x1, 40.0), (x0, 40.0)]
+        .map(|(x, z)| citygen::Vec2::new(x, z))
+        .to_vec()
+}
+
+/// Test floor with synthetic gang territories (gang posts (-30,0,-30) / (30,0,30)), the sidewalk
+/// graph `nodes`/`edges`, and the player settled at the origin holding a pistol with a full magazine.
+pub fn gang_floor(turf: TurfLayout, nodes: Vec<Vec3>, edges: &[(u32, u32)]) -> App {
+    let mut app = headless_app();
+    test_graph(&mut app, nodes, edges);
+    let blocks = match turf {
+        TurfLayout::WestHalf => vec![(square(-40.0, 0.0), Some(0)), (square(2.0, 40.0), None)],
+        TurfLayout::WholeFloor => vec![(square(-40.0, 40.0), Some(0))],
+    };
+    let gangs = [Vec3::new(-30.0, 0.0, -30.0), Vec3::new(30.0, 0.0, 30.0)]
+        .map(|post| Turf { posts: vec![post] })
+        .to_vec();
+    let territories =
+        GangTerritories::new(gangs, blocks).expect("GATE BROKEN: invalid test territories");
+    app.world_mut().insert_resource(territories);
+    settle(&mut app);
+    let size = app.world().resource::<WeaponsConfig>().pistol.magazine;
+    set_loadout(&mut app, |l| {
+        l.held = Some(Weapon::Pistol);
+        l.guns[Weapon::Pistol.index()] = GunSlot {
+            owned: true,
+            magazine: size,
+            reserve: 0,
+            ..default()
+        };
+    });
+    app
+}
+
+/// `gang_floor` with a graph far from every fixture: (30,0,30) - (35,0,30).
+pub fn gang_floor_default(turf: TurfLayout) -> App {
+    gang_floor(
+        turf,
+        vec![Vec3::new(30.0, 0.0, 30.0), Vec3::new(35.0, 0.0, 30.0)],
+        &[(0, 1)],
+    )
+}
+
+/// An idle gang member built by the production bundle (post 0, facing -Z), feet at `spot`.
+pub fn spawn_member(app: &mut App, gang: u8, spot: Vec3, gun: Weapon) -> Entity {
+    let world = app.world();
+    let loco = world.resource::<LocomotionConfig>().clone();
+    let health = world.resource::<HealthConfig>().clone();
+    let weapons = world.resource::<WeaponsConfig>().clone();
+    let handle = world.resource::<CharacterControlConfig>().0.clone();
+    app.world_mut()
+        .spawn(gang_member_bundle(
+            &loco,
+            handle,
+            &health,
+            &weapons,
+            gang,
+            0,
+            spot,
+            0.0,
+            gun,
+            Appearance(0),
+        ))
+        .id()
+}
+
+pub fn member(app: &App, entity: Entity) -> GangMember {
+    app.world()
+        .get::<GangMember>(entity)
+        .expect("GATE BROKEN: gang member missing")
+        .clone()
+}
+
+pub fn gang_state(app: &App, entity: Entity) -> GangState {
+    member(app, entity).state
+}
+
+pub fn heat(app: &App, gang: usize) -> f32 {
+    app.world().resource::<GangHeat>().left[gang]
+}
+
+pub fn gang_cfg(app: &App) -> GangConfig {
+    app.world().resource::<GangConfig>().clone()
+}
+
+/// Named test mutation: the member attacks the player as if just provoked, the gang heated.
+pub fn provoke(app: &mut App, entity: Entity) {
+    let target = player(app);
+    let at = position(app);
+    let seconds = gang_cfg(app).hostility.heat_seconds;
+    let mut member = app
+        .world_mut()
+        .get_mut::<GangMember>(entity)
+        .expect("GATE BROKEN: gang member missing");
+    member.state = GangState::Attack { target };
+    member.last_seen = at;
+    let gang = member.gang as usize;
+    app.world_mut().resource_mut::<GangHeat>().left[gang] = seconds;
+}
+
+pub fn set_player_armor(app: &mut App, armor: f32) {
+    set_health(app, |h| h.armor = armor);
+}
+
+/// Named test mutation: flips one pair of the faction matrix.
+pub fn set_matrix(app: &mut App, a: Faction, b: Faction, hostile: bool) {
+    let mut cfg = app.world_mut().resource_mut::<GangConfig>();
+    let pair = cfg
+        .factions
+        .iter_mut()
+        .find(|p| (p.a, p.b) == (a, b) || (p.a, p.b) == (b, a))
+        .expect("GATE BROKEN: faction pair not in the matrix");
+    pair.hostile = hostile;
 }

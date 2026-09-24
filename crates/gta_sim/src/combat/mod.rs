@@ -13,7 +13,7 @@ pub use melee::{
     HitReaction, KnockbackTuning, MELEE_CONFIG, Melee, MeleeConfig, MeleeHit, MeleeHitStats,
     MeleeWeapon, MeleeWeaponStats, Swing, advance_swing, knock_back,
 };
-pub use pickups::{BatPickup, Pickup, PickupKind, WeaponPickup};
+pub use pickups::{BatPickup, Dropped, Pickup, PickupKind, WeaponPickup, dropped_gun};
 pub use range::{Dummy, dummy_bundle};
 pub use weapons::{
     FireMode, GunSlot, Loadout, WEAPONS_CONFIG, Weapon, WeaponsConfig, acquire, cycle_weapon,
@@ -57,6 +57,7 @@ impl Plugin for CombatPlugin {
             .register_type::<GunSlot>()
             .register_type::<Weapon>()
             .register_type::<WeaponPickup>()
+            .register_type::<Dropped>()
             .register_type::<Dummy>()
             .register_type::<ShotFired>()
             .register_type::<BulletTrace>()
@@ -97,6 +98,7 @@ impl Plugin for CombatPlugin {
                     (
                         pickups::collect_pickups,
                         pickups::collect_weapon_pickups,
+                        pickups::expire_dropped.after(pickups::collect_weapon_pickups),
                         pickups::collect_bat_pickups,
                     )
                         .in_set(HealthSystems::Pickup),

@@ -1,11 +1,9 @@
-//! Primitive gun, ammo and bat boxes: pickups on the range and the weapon in the player's hand.
+//! Primitive gun, ammo and bat boxes: pickups on the range and the weapon in each armed character's
+//! hand.
 
 use super::{CharacterVisualConfig, RenderConfig};
 use bevy::prelude::*;
-use gta_sim::{
-    combat::{BatPickup, Loadout, MeleeWeapon, Weapon, WeaponPickup},
-    player::Player,
-};
+use gta_sim::combat::{BatPickup, Loadout, MeleeWeapon, Weapon, WeaponPickup};
 
 #[derive(Resource)]
 pub(super) struct WeaponVisualAssets {
@@ -96,11 +94,11 @@ pub(super) fn show_available_weapon_pickups(mut pickups: Query<(&WeaponPickup, &
     }
 }
 
-/// Parents the gun to the hand joint of each player's model once the glTF instance exists.
+/// Parents the gun to the hand joint of each armed character's model once the glTF instance exists.
 /// The joint carries the model scale, so the gun undoes it to keep its size in metres.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn attach_held_gun(
-    players: Query<Entity, With<Player>>,
+    characters: Query<Entity, With<Loadout>>,
     guns: Query<&HeldGun>,
     children: Query<&Children>,
     names: Query<&Name>,
@@ -109,12 +107,12 @@ pub(super) fn attach_held_gun(
     assets: Res<WeaponVisualAssets>,
     mut commands: Commands,
 ) {
-    for player in &players {
-        if guns.iter().any(|gun| gun.owner == player) {
+    for character in &characters {
+        if guns.iter().any(|gun| gun.owner == character) {
             continue;
         }
         let Some(hand) = children
-            .iter_descendants(player)
+            .iter_descendants(character)
             .find(|e| names.get(*e).is_ok_and(|n| n.as_str() == visual.hand_joint))
         else {
             continue;
@@ -130,7 +128,7 @@ pub(super) fn attach_held_gun(
         commands.spawn((
             Name::new("Held gun"),
             HeldGun {
-                owner: player,
+                owner: character,
                 barrel: Vec3::Z * w.held_size.2 / 2.0,
             },
             ChildOf(hand),
@@ -144,9 +142,10 @@ pub(super) fn attach_held_gun(
     }
 }
 
+/// Shows each armed character's held gun or bat.
 pub(super) fn show_held_gun(
     assets: Res<WeaponVisualAssets>,
-    players: Query<&Loadout, With<Player>>,
+    loadouts: Query<&Loadout>,
     mut guns: Query<(
         &HeldGun,
         &mut Mesh3d,
@@ -155,7 +154,7 @@ pub(super) fn show_held_gun(
     )>,
 ) {
     for (gun, mut mesh, mut material, mut visibility) in &mut guns {
-        let Ok(loadout) = players.get(gun.owner) else {
+        let Ok(loadout) = loadouts.get(gun.owner) else {
             continue;
         };
         let wanted = match (loadout.held, loadout.melee) {

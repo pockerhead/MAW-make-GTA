@@ -11,6 +11,7 @@ bevy = { workspace = true, features = ["std", "multi_threaded", "bevy_state", "b
 avian3d = { workspace = true }
 bevy-tnua = { workspace = true }
 bevy-tnua-avian3d = { workspace = true }
+pathfinding = "=4.16.0"
 rand_chacha = { version = "=0.10.0", default-features = false }
 ron = { workspace = true }
 serde = { workspace = true }

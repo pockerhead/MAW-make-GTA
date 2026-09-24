@@ -170,7 +170,7 @@ def run(out):
                 "count": len(people),
                 "states": counts(people),
                 "per_model": per_model,
-                "diagnostics": game.diagnostics(),
+                "frame": game.frame_report(),
                 "screenshot": screenshot(game, out / "crowd.png"),
             }
             if len(per_model) < 2:

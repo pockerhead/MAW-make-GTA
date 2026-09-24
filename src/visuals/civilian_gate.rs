@@ -1,6 +1,6 @@
 //! Headless gates of the civilian looks: every civilian model animates from its own glTF clips (real
 //! GLBs), per-model graphs are built from their own model, and dead/cowering characters select their
-//! full-body clips.
+//! full-body clips. The GLB harness here is shared with `gang_gate`.
 
 use super::{
     CHARACTER_VISUAL_CONFIG, CharacterClips, CharacterVisualConfig,
@@ -38,16 +38,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn assets_root() -> ConfigRoot {
+pub(super) fn assets_root() -> ConfigRoot {
     ConfigRoot(Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"))
 }
 
-fn visual_config() -> CharacterVisualConfig {
+pub(super) fn visual_config() -> CharacterVisualConfig {
     load_config::<CharacterVisualConfig>(&assets_root(), CHARACTER_VISUAL_CONFIG)
         .unwrap_or_else(|e| panic!("GATE BROKEN: {e}"))
 }
 
-fn manifest() -> ThirdPartyManifest {
+pub(super) fn manifest() -> ThirdPartyManifest {
     load_config::<ThirdPartyManifest>(&assets_root(), THIRD_PARTY_MANIFEST)
         .unwrap_or_else(|e| panic!("GATE BROKEN: {e}"))
 }
@@ -59,10 +59,11 @@ fn shipped_clips() -> CharacterClips {
 }
 
 /// Model paths by `ModelKey`.
-fn models() -> Vec<String> {
+pub(super) fn models() -> Vec<String> {
     let config = visual_config();
     std::iter::once(config.model.clone())
         .chain(config.civilian_models.clone())
+        .chain(config.gang_models.clone())
         .collect()
 }
 
@@ -113,7 +114,7 @@ fn spawn_civilian(app: &mut App, graph: &SidewalkGraph, t: f32, appearance: u32)
 }
 
 /// The `CharacterModel` above `entity`, if any.
-fn model_of(app: &App, mut entity: Entity) -> Option<Entity> {
+pub(super) fn model_of(app: &App, mut entity: Entity) -> Option<Entity> {
     loop {
         if app.world().get::<CharacterModel>(entity).is_some() {
             return Some(entity);
@@ -139,8 +140,9 @@ fn leg_rotations(app: &mut App) -> Vec<(usize, Quat)> {
         .collect()
 }
 
-#[test]
-fn every_civilian_model_animates_from_its_own_clips() {
+/// Sim composition (test area) plus the production `CharacterVisualsPlugin` loading the real GLBs;
+/// the caller finishes it.
+pub(super) fn glb_app() -> App {
     require_glbs();
     let mut app = App::new();
     app.add_plugins((
@@ -164,16 +166,11 @@ fn every_civilian_model_animates_from_its_own_clips() {
     app.insert_resource(visual_config())
         .insert_resource(shipped_clips())
         .add_plugins(CharacterVisualsPlugin);
-    app.finish();
-    app.cleanup();
-    // A stop would show the idle clip during the sample window.
-    app.world_mut().resource_mut::<CivilianConfig>().idle_chance = 0.0;
-    let graph = line_graph();
-    let n = visual_config().civilian_models.len();
-    let civilians = (0..n)
-        .map(|k| spawn_civilian(&mut app, &graph, (k as f32 + 0.5) / n as f32, k as u32))
-        .collect::<Vec<_>>();
-    app.world_mut().insert_resource(graph);
+    app
+}
+
+/// Updates until `count` character models exist and each is wired to an animator.
+pub(super) fn wait_wired(app: &mut App, count: usize) {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         app.update();
@@ -187,8 +184,8 @@ fn every_civilian_model_animates_from_its_own_clips() {
             .query::<&CharacterAnimator>()
             .iter(app.world())
             .count();
-        if models == n + 1 && wired == models {
-            break;
+        if models == count && wired == models {
+            return;
         }
         assert!(
             Instant::now() < deadline,
@@ -196,38 +193,74 @@ fn every_civilian_model_animates_from_its_own_clips() {
         );
         std::thread::sleep(Duration::from_millis(1));
     }
-    let animations = app.world().resource::<CharacterAnimations>();
-    let graphs = animations.graphs.clone();
+}
+
+/// Model key and graph handle of the animator following each of `characters`.
+pub(super) fn animator_graphs(
+    app: &mut App,
+    characters: &[Entity],
+) -> Vec<(usize, Handle<AnimationGraph>)> {
     let animators = app
         .world_mut()
         .query::<(&CharacterAnimator, &ModelKey, &AnimationGraphHandle)>()
         .iter(app.world())
         .map(|(a, k, g)| (a.character, k.0, g.0.clone()))
         .collect::<Vec<_>>();
-    for (k, &civilian) in civilians.iter().enumerate() {
-        let &(_, key, ref graph) = animators
-            .iter()
-            .find(|(c, _, _)| *c == civilian)
-            .expect("civilian has no animator");
-        assert_eq!(key, 1 + k % n, "civilian {k} got the wrong model");
-        assert_eq!(
-            *graph, graphs[key],
-            "civilian {k} animates with another model's graph"
-        );
-    }
-    // Largest turn from the first pose over the window: two samples of a swinging leg can land on
-    // the same angle (either side of an extreme), and the clip phase depends on asset load timing.
-    let before = leg_rotations(&mut app);
-    let mut turns = vec![0.0_f32; n + 1];
+    characters
+        .iter()
+        .map(|&c| {
+            let (_, key, graph) = animators
+                .iter()
+                .find(|(owner, _, _)| *owner == c)
+                .unwrap_or_else(|| panic!("{c} has no animator"));
+            (*key, graph.clone())
+        })
+        .collect()
+}
+
+/// Largest `leg-left` turn from its first pose over 32 updates, per model key: two samples of a
+/// swinging leg can land on the same angle, and the clip phase depends on asset load timing.
+pub(super) fn leg_turns(app: &mut App, keys: usize) -> (Vec<(usize, Quat)>, Vec<f32>) {
+    let before = leg_rotations(app);
+    let mut turns = vec![0.0_f32; keys];
     for _ in 0..32 {
         app.update();
-        for (key, rotation) in leg_rotations(&mut app) {
+        for (key, rotation) in leg_rotations(app) {
             let Some(&(_, first)) = before.iter().find(|(k, _)| *k == key) else {
                 continue;
             };
             turns[key] = turns[key].max(first.angle_between(rotation));
         }
     }
+    (before, turns)
+}
+
+#[test]
+fn every_civilian_model_animates_from_its_own_clips() {
+    let mut app = glb_app();
+    app.finish();
+    app.cleanup();
+    // A stop would show the idle clip during the sample window.
+    app.world_mut().resource_mut::<CivilianConfig>().idle_chance = 0.0;
+    let graph = line_graph();
+    let n = visual_config().civilian_models.len();
+    let civilians = (0..n)
+        .map(|k| spawn_civilian(&mut app, &graph, (k as f32 + 0.5) / n as f32, k as u32))
+        .collect::<Vec<_>>();
+    app.world_mut().insert_resource(graph);
+    wait_wired(&mut app, n + 1);
+    let graphs = app.world().resource::<CharacterAnimations>().graphs.clone();
+    for (k, (key, graph)) in animator_graphs(&mut app, &civilians)
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(key, 1 + k % n, "civilian {k} got the wrong model");
+        assert_eq!(
+            graph, graphs[key],
+            "civilian {k} animates with another model's graph"
+        );
+    }
+    let (before, turns) = leg_turns(&mut app, n + 1);
     for (key, &turned) in turns.iter().enumerate().skip(1) {
         assert!(
             before.iter().any(|(k, _)| *k == key),

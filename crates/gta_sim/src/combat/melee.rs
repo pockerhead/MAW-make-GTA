@@ -5,6 +5,7 @@ use crate::character::{
     ActionIntent, AimIntent, Character, CharacterBody, CharacterScheme, CharacterSchemeActionState,
     Dead, Health,
 };
+use crate::gang::{Faction, GangConfig};
 use crate::layers::GameLayer;
 use crate::player::Player;
 use avian3d::prelude::*;
@@ -491,8 +492,11 @@ pub(super) fn swing_melee(
 }
 
 /// Applies strikes in message order: damage, reaction, shove, then the messages of an applied hit.
+/// A gang member's blow spares whoever its gang is not hostile to, judged at impact.
 pub(super) fn apply_strikes(
     cfg: Res<MeleeConfig>,
+    gangs: Res<GangConfig>,
+    factions: Query<&Faction>,
     mut strikes: MessageReader<Strike>,
     mut victims: Query<
         (
@@ -506,6 +510,10 @@ pub(super) fn apply_strikes(
     mut hits: MessageWriter<MeleeHit>,
 ) {
     for strike in strikes.read() {
+        let faction = |e: Entity| factions.get(e).ok().copied();
+        if gangs.spares(faction(strike.attacker), faction(strike.target)) {
+            continue;
+        }
         let Ok((mut health, mut reaction, mut controller)) = victims.get_mut(strike.target) else {
             continue;
         };

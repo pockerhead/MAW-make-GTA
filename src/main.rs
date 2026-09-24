@@ -117,6 +117,13 @@ fn preflight(
             ));
         }
     }
+    for gang in &character_config.gang_models {
+        if !manifest.contains_asset(gang) {
+            unlisted.push(format!(
+                "{CHARACTER_VISUAL_CONFIG}: gang model {gang} is not listed in {THIRD_PARTY_MANIFEST}"
+            ));
+        }
+    }
     for font in ui_config.font_paths() {
         if !manifest.contains_asset(font) {
             unlisted.push(format!(

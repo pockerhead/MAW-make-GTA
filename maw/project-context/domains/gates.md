@@ -80,6 +80,15 @@
   randomizes the phase (`civilian_gate` was RED ~35 % of runs while summaries said "38 passed" from one run).
   A stage that reports a new or touched presentation gate runs it at least 3 times.
 
+- 2026-09-24 (TASK-010) — headless GLB harness without `PbrPlugin` spawns glTF meshes with NO
+  `MeshMaterial3d<StandardMaterial>` (bevy_pbr makes them in its glTF extension handler); tint/material gates need the
+  `StandardMaterialStandIn` handler from `src/visuals/civilian_gate.rs`.
+- 2026-09-24 (TASK-010) — glTF instances re-instance on `AssetEvent<WorldAsset>::Modified` (several events while
+  scenes stream in; a 3-frame debounce). Joint-parented children (held gun) vanish and come back. Gates over such
+  children wait for quiet updates first; to force a re-instance use `Assets::get_mut` + a real `DerefMut`.
+- 2026-09-24 (TASK-010) — 30 FPS in QA on this host is the only monitor `\.\DISPLAY9` at 30 Hz under Fifo (recurred
+  after TASK-002). Read FPS only through `Game.frame_report()` (refresh + present mode + no-vsync frame cost).
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

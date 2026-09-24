@@ -9,6 +9,12 @@
         "third_party/mini-characters/character-male-c.glb",
         "third_party/mini-characters/character-male-e.glb",
     ],
+    // Gang looks: `Appearance` picks one of these models; the tint comes from gang/gangs.ron.
+    gang_models: [
+        "third_party/mini-characters/character-male-d.glb",
+        "third_party/mini-characters/character-male-f.glb",
+        "third_party/mini-characters/character-female-c.glb",
+    ],
     civilian_tints: [(1.0, 1.0, 1.0), (0.55, 0.75, 1.0), (1.0, 0.7, 0.45), (0.6, 1.0, 0.6)],
     model_height: 0.67132,
     height: 1.8,

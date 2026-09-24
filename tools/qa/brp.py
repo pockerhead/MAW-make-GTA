@@ -177,6 +177,42 @@ class Game:
         value = rows[0]["components"][window]
         return {"focused": value["focused"], "present_mode": value["present_mode"]}
 
+    def frame_report(self, samples=3):
+        """FPS under vsync is the display refresh, not the frame cost (TASK-002: a 30 Hz virtual display
+        read exactly 30 FPS). Records monitors and present mode, samples FPS as shipped, then switches the
+        window to `AutoNoVsync` (it stays there) and samples the frame cost."""
+        monitor, primary = self.component_path("Monitor"), self.component_path("PrimaryMonitor")
+        primaries = {row["entity"] for row in self.query([], with_=[primary])}
+        monitors = [
+            {"name": row["components"][monitor]["name"],
+             "refresh_hz": (row["components"][monitor]["refresh_rate_millihertz"] or 0) / 1000.0,
+             "primary": row["entity"] in primaries}
+            for row in self.query([monitor])
+        ]
+
+        def sample():
+            out = []
+            for _ in range(samples):
+                time.sleep(1.0)
+                d = self.diagnostics()
+                out.append({"fps": round(d["fps"]["average"], 1), "frame_ms": round(d["frame_time_ms"]["average"], 3)})
+            return out
+
+        shipped = self.window_state()["present_mode"]
+        as_shipped = sample()
+        window = self.component_path("Window")
+        entity = self.query([window], with_=[window])[0]["entity"]
+        self.mutate_component(entity, window, ".present_mode", "AutoNoVsync")
+        time.sleep(1.0)
+        cost = sample()
+        return {
+            "monitors": monitors,
+            "present_mode": shipped,
+            "fps_as_shipped": as_shipped,
+            "frame_cost_no_vsync": cost,
+            "frame_cost_ms_worst_avg": max(s["frame_ms"] for s in cost),
+        }
+
     def shutdown(self):
         return self.call("brp_extras/shutdown")
 

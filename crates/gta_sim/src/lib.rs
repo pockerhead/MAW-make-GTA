@@ -5,6 +5,7 @@ pub mod civilian;
 pub mod combat;
 pub mod config;
 pub mod flow;
+pub mod gang;
 pub mod layers;
 pub mod navigation;
 pub mod perception;
@@ -25,6 +26,7 @@ use combat::{
 };
 use config::{ConfigError, ConfigRoot, load_config};
 use flow::{FlowPlugin, RESPAWN_CONFIG, RespawnConfig};
+use gang::{GANG_CONFIG, GangConfig, GangPlugin};
 use navigation::{NAVIGATION_CONFIG, NavigationConfig, NavigationPlugin};
 use perception::{PERCEPTION_CONFIG, PerceptionConfig, PerceptionPlugin};
 use player::PlayerPlugin;
@@ -88,6 +90,11 @@ pub fn compose_sim(
         path: root.path(CIVILIAN_CONFIG),
         message,
     })?;
+    let gangs = load_config::<GangConfig>(&root, GANG_CONFIG)?;
+    gangs.validate().map_err(|message| ConfigError {
+        path: root.path(GANG_CONFIG),
+        message,
+    })?;
     // A city run rolls from its own seed; the fixed test level always rolls the same sequence.
     let combat_seed = match source {
         WorldSource::City { seed } => seed,
@@ -112,6 +119,7 @@ pub fn compose_sim(
         .insert_resource(perception)
         .insert_resource(navigation)
         .insert_resource(civilian)
+        .insert_resource(gangs)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),
@@ -124,6 +132,7 @@ pub fn compose_sim(
             PerceptionPlugin,
             PopulationPlugin { seed: combat_seed },
             CivilianPlugin,
+            GangPlugin { seed: combat_seed },
             WantedPlugin,
         ));
     Ok(())

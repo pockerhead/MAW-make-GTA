@@ -47,6 +47,12 @@
   the player look empty (QA: 0-3 civilians within 60 m in view with 40 alive). Visibility rules for spawning
   must be judged by what the player sees, not only by the cap count; T9/T11 spawners inherit this.
 
+- 2026-09-24 (TASK-010) — a hold-fire rule that widens the line by the spread cone makes any non-hostile body within
+  ~1.5 m of the target block it from every angle past ~2-5 m: brawling allies or a pressed bystander starve a gunman
+  by construction. Scrum/human-shield policy is a design decision (T9: gunman holds its band, liveness = group hits),
+  not a movement-rule patch. Moving shooters evaluate candidate spots by the ACTUAL rotated line to the target; a
+  sidestep is not a parallel shift of the line (T9 fixer rounds 2-3).
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

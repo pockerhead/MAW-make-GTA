@@ -2,7 +2,9 @@
 
 use crate::combat::aim_yaw;
 use crate::flow::{GameState, NpcSystems};
+use crate::perception::{AiSystems, sight_blocked};
 use crate::world::{City, CityParamsRes};
+use avian3d::prelude::*;
 use bevy::prelude::*;
 use citygen::WalkGraph;
 use serde::Deserialize;
@@ -17,6 +19,16 @@ pub struct NavigationConfig {
     pub arrive_radius: f32,
     /// Walkers keep this far right of the edge line, so opposing walkers pass without contact, m.
     pub keep_right: f32,
+    /// Gangs and police seek a visible target straight within this, else they route (GDD §6.6), m.
+    pub direct_seek_distance: f32,
+    /// A* searches per fixed tick, at most (GDD §11).
+    pub route_requests_per_tick: u32,
+    /// A route to a moving goal is re-planned at most this often, s.
+    pub route_refresh_seconds: f32,
+    /// Length of the probe ray ahead of a direct seek, m.
+    pub avoid_distance: f32,
+    /// Detour headings are tried at ±1, ±2, ±3 of this step, degrees.
+    pub avoid_step_deg: f32,
 }
 
 impl NavigationConfig {
@@ -31,6 +43,26 @@ impl NavigationConfig {
             return Err(format!(
                 "keep_right {} must be finite and >= 0",
                 self.keep_right
+            ));
+        }
+        for (field, value) in [
+            ("direct_seek_distance", self.direct_seek_distance),
+            ("route_refresh_seconds", self.route_refresh_seconds),
+            ("avoid_distance", self.avoid_distance),
+            ("avoid_step_deg", self.avoid_step_deg),
+        ] {
+            if !(value.is_finite() && value > 0.0) {
+                return Err(format!("{field} {value} must be finite and > 0"));
+            }
+        }
+        if self.route_requests_per_tick < 1 {
+            return Err("route_requests_per_tick must be >= 1".into());
+        }
+        // Three steps either way must stay within ±180°.
+        if self.avoid_step_deg >= 60.0 {
+            return Err(format!(
+                "avoid_step_deg {} must be < 60",
+                self.avoid_step_deg
             ));
         }
         Ok(())
@@ -176,11 +208,142 @@ pub fn steer(position: Vec3, target: Vec3) -> Option<f32> {
     Some(aim_yaw(d))
 }
 
+/// The node with at least one edge nearest (horizontally) to `p`; ties go to the lower id.
+pub fn nearest_node(graph: &SidewalkGraph, p: Vec3) -> Option<u32> {
+    let mut best: Option<(u32, f32)> = None;
+    for id in 0..graph.nodes().len() as u32 {
+        if graph.neighbors(id).is_empty() {
+            continue;
+        }
+        let d = flat_distance(graph.node(id), p);
+        if best.is_none_or(|(_, b)| d < b) {
+            best = Some((id, d));
+        }
+    }
+    best.map(|(id, _)| id)
+}
+
+/// Integer centimetres: `astar` needs an `Ord` cost.
+fn cost_cm(a: Vec3, b: Vec3) -> u32 {
+    (flat_distance(a, b) * 100.0) as u32
+}
+
+/// Shortest node path `from ..= to` over the graph edges (A*), `None` when unreachable.
+pub fn find_route(graph: &SidewalkGraph, from: u32, to: u32) -> Option<Vec<u32>> {
+    let goal = graph.node(to);
+    pathfinding::prelude::astar(
+        &from,
+        |&n| {
+            let at = graph.node(n);
+            graph
+                .neighbors(n)
+                .iter()
+                .map(move |&m| (m, cost_cm(at, graph.node(m))))
+        },
+        |&n| cost_cm(graph.node(n), goal),
+        |&n| n == to,
+    )
+    .map(|(path, _)| path)
+}
+
+/// The current graph route of one NPC; mutated in place.
+#[derive(Component, Reflect, Default, Clone, Debug)]
+#[reflect(Component)]
+pub struct Route {
+    /// Node the route leads to.
+    pub goal: Option<u32>,
+    pub nodes: Vec<u32>,
+    /// Index into `nodes` of the node being walked to.
+    pub next: usize,
+    /// Seconds since the route was planned.
+    pub age: f32,
+}
+
+/// Plans a route from the node nearest to `from` to `goal`, dropping the first node when `from` is
+/// already past it towards the second; `false` (no nodes) when unreachable.
+pub fn plan_route(graph: &SidewalkGraph, route: &mut Route, from: Vec3, goal: u32) -> bool {
+    route.goal = Some(goal);
+    route.next = 0;
+    route.age = 0.0;
+    route.nodes.clear();
+    let Some(start) = nearest_node(graph, from) else {
+        return false;
+    };
+    let Some(mut path) = find_route(graph, start, goal) else {
+        return false;
+    };
+    if path.len() >= 2 {
+        let (first, second) = (graph.node(path[0]), graph.node(path[1]));
+        if flat_distance(from, second) < flat_distance(first, second) {
+            path.remove(0);
+        }
+    }
+    route.nodes = path;
+    true
+}
+
+/// Point to walk to: the next route node not yet reached (within `arrive_radius`), else `destination`.
+pub fn route_point(
+    graph: &SidewalkGraph,
+    route: &mut Route,
+    from: Vec3,
+    destination: Vec3,
+    arrive_radius: f32,
+) -> Vec3 {
+    while route.next < route.nodes.len()
+        && flat_distance(from, graph.node(route.nodes[route.next])) <= arrive_radius
+    {
+        route.next += 1;
+    }
+    route
+        .nodes
+        .get(route.next)
+        .map_or(destination, |&n| graph.node(n))
+}
+
+/// Flat unit vector of a move yaw (GDD §3.2 convention).
+pub fn yaw_forward(yaw: f32) -> Vec3 {
+    Vec3::new(-yaw.sin(), 0.0, -yaw.cos())
+}
+
+/// Yaw offset of the first clear heading among `0, +s, −s, +2s, −2s, +3s, −3s` (no World geometry
+/// within `avoid_distance` of `chest`); 0 when all are blocked. Adds the rays cast to `rays`.
+pub fn avoid_offset(
+    spatial: &SpatialQuery,
+    chest: Vec3,
+    yaw: f32,
+    cfg: &NavigationConfig,
+    rays: &mut u32,
+) -> f32 {
+    let step = cfg.avoid_step_deg.to_radians();
+    for k in [0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0] {
+        let offset = k * step;
+        *rays += 1;
+        let probe = chest + yaw_forward(yaw + offset) * cfg.avoid_distance;
+        if !sight_blocked(spatial, chest, probe) {
+            return offset;
+        }
+    }
+    0.0
+}
+
+/// Route searches and avoidance rays of the current fixed tick.
+#[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Resource)]
+pub struct RouteLoad {
+    pub searches: u32,
+    pub rays: u32,
+}
+
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<GraphWalker>()
+            .init_resource::<RouteLoad>()
+            .register_type::<Route>()
+            .register_type::<RouteLoad>()
+            .add_systems(FixedUpdate, reset_route_load.in_set(AiSystems::Perceive))
             .configure_sets(
                 FixedUpdate,
                 NpcSystems.run_if(resource_exists::<SidewalkGraph>),
@@ -193,6 +356,10 @@ impl Plugin for NavigationPlugin {
                 build_sidewalk_graph.run_if(resource_exists::<City>),
             );
     }
+}
+
+fn reset_route_load(mut load: ResMut<RouteLoad>) {
+    *load = RouteLoad::default();
 }
 
 fn build_sidewalk_graph(
@@ -281,6 +448,101 @@ mod tests {
         );
         let back = lane_target(&g, GraphWalker { from: 1, to: 0 }, 0.5);
         assert!((back - Vec3::new(-0.5, 0.0, 0.0)).length() < 1e-6, "{back}");
+    }
+
+    /// n0 (0,0,0), n1 (0,0,−20), n2 (−20,0,−20), n3 (−20,0,0); edges 0-1, 1-2, 2-3, no 3-0.
+    fn open_square() -> SidewalkGraph {
+        SidewalkGraph::new(
+            vec![
+                Vec3::ZERO,
+                Vec3::new(0.0, 0.0, -20.0),
+                Vec3::new(-20.0, 0.0, -20.0),
+                Vec3::new(-20.0, 0.0, 0.0),
+            ],
+            &[(0, 1), (1, 2), (2, 3)],
+        )
+        .unwrap()
+    }
+
+    fn same_yaw(a: f32, b: f32) -> bool {
+        let diff = (a - b).rem_euclid(std::f32::consts::TAU);
+        diff.min(std::f32::consts::TAU - diff) < 1e-5
+    }
+
+    #[test]
+    fn route_goes_around_the_missing_edge() {
+        assert_eq!(find_route(&open_square(), 0, 3), Some(vec![0, 1, 2, 3]));
+    }
+
+    #[test]
+    fn route_turns_north_west_south() {
+        let g = open_square();
+        let mut route = Route::default();
+        let destination = Vec3::new(-20.0, 0.0, 5.0);
+        assert!(plan_route(&g, &mut route, Vec3::new(0.0, 0.0, 0.3), 3));
+        assert_eq!(route.nodes, vec![0, 1, 2, 3], "n0 kept: 20.3 >= 20");
+        let half = std::f32::consts::FRAC_PI_2;
+        let pi = std::f32::consts::PI;
+        for (at, yaw) in [
+            (Vec3::new(0.0, 0.0, 0.3), 0.0),
+            (Vec3::new(0.0, 0.0, -20.0), half),
+            (Vec3::new(-20.0, 0.0, -20.0), pi),
+            (Vec3::new(-20.0, 0.0, 0.0), pi),
+        ] {
+            let target = route_point(&g, &mut route, at, destination, 0.5);
+            let got = steer(at, target).unwrap();
+            assert!(same_yaw(got, yaw), "{at}: target {target}, yaw {got}");
+        }
+        assert_eq!(route.next, 4, "every node used");
+    }
+
+    #[test]
+    fn plan_route_skips_a_passed_corner() {
+        let g = open_square();
+        let mut route = Route::default();
+        assert!(plan_route(&g, &mut route, Vec3::new(0.0, 0.0, -5.0), 3));
+        assert_eq!(route.nodes, vec![1, 2, 3], "15 m to n1 < 20 m n0-n1");
+        assert_eq!(route.goal, Some(3));
+    }
+
+    #[test]
+    fn no_route_on_a_disconnected_graph() {
+        let g = SidewalkGraph::new(
+            vec![
+                Vec3::ZERO,
+                Vec3::new(10.0, 0.0, 0.0),
+                Vec3::new(50.0, 0.0, 0.0),
+                Vec3::new(60.0, 0.0, 0.0),
+            ],
+            &[(0, 1), (2, 3)],
+        )
+        .unwrap();
+        assert_eq!(find_route(&g, 0, 3), None);
+        let mut route = Route {
+            nodes: vec![7, 8],
+            ..default()
+        };
+        assert!(!plan_route(&g, &mut route, Vec3::ZERO, 3));
+        assert!(route.nodes.is_empty());
+        assert_eq!(route.goal, Some(3));
+    }
+
+    #[test]
+    fn nearest_node_prefers_the_lower_id_on_a_tie() {
+        // n0 has no edge and sits on the query point; n1 and n2 are both 5 m away.
+        let g = SidewalkGraph::new(
+            vec![
+                Vec3::ZERO,
+                Vec3::new(5.0, 0.0, 0.0),
+                Vec3::new(-5.0, 0.0, 0.0),
+            ],
+            &[(1, 2)],
+        )
+        .unwrap();
+        assert_eq!(nearest_node(&g, Vec3::ZERO), Some(1));
+        assert_eq!(nearest_node(&g, Vec3::new(-4.0, 3.0, 0.0)), Some(2));
+        let edgeless = SidewalkGraph::new(vec![Vec3::ZERO], &[]).unwrap();
+        assert_eq!(nearest_node(&edgeless, Vec3::ZERO), None);
     }
 
     #[test]

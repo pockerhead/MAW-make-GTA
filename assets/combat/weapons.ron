@@ -12,6 +12,6 @@
              magazine: 6, reload: 2.5, range: 25.0, falloff: Some((start: 10.0, min_factor: 0.3)),
              spread: (base_deg: 6.0, per_shot_deg: 2.0, max_bloom_deg: 3.0, recovery_delay: 1.0, recovery_deg_per_s: 4.0, moving_deg_per_mps: 0.2),
              max_reserve: 48, pickup_ammo: 12),
-    pickups: (radius: 1.0, respawn: 30.0),
+    pickups: (radius: 1.0, respawn: 30.0, drop_seconds: 60.0),
     range: (dummies: 3, dummy_spacing: 3.0, dummy_distance: 10.0, pickup_spacing: 2.0, dummy_reset: 3.0),
 )

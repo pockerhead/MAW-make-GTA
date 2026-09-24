@@ -1,5 +1,6 @@
 (
     max_civilians: 40,
+    max_gang_members: 12,               // GDD §6.1: bandits only in gang territories
     spawn_ring: (30.0, 120.0),          // m from the player: steady-state spawning (GDD §6.1)
     spawns_per_tick: 1,
     initial_inner_radius: 20.0,         // m; the one-shot fill at load uses [this, spawn_ring.1]

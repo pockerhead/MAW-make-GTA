@@ -92,6 +92,13 @@
   its own root name, so a clip loaded from `character-male-a.glb` silently leaves any other model in bind pose.
   Each character model needs clips/graph from its own GLB (or a root rename on load). Hits T9 gangs, T11 police.
 
+- 2026-09-24 (TASK-010) — a new NPC role draws from its own ChaCha stream (`seed_from_u64(seed)` + its own
+  `set_stream(k)`), never from `NpcRng`: `spawn_civilians` draws once per surviving candidate, so an extra draw shifts
+  every later civilian roll and moves density gates without a bug. Trigger: `ResMut<NpcRng>` outside civilian/population.
+- 2026-09-24 (TASK-010) — `pathfinding` 4.16.0 `astar` needs `C: Zero + Ord + Copy`: use integer centimetre costs.
+  Seed-1 sidewalk graph: 11 us mean, <= 215 us worst per search → synchronous K-per-tick cap
+  (`navigation.ron route_requests_per_tick`), no async markers needed.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

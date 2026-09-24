@@ -7,6 +7,7 @@ use gta_sim::{
     combat::{AIM_CONFIG, AimConfig, MELEE_CONFIG, MeleeConfig, WEAPONS_CONFIG, WeaponsConfig},
     config::{ConfigRoot, load_config},
     flow::{RESPAWN_CONFIG, RespawnConfig},
+    gang::{GANG_CONFIG, GangConfig},
     navigation::{NAVIGATION_CONFIG, NavigationConfig},
     perception::{PERCEPTION_CONFIG, PerceptionConfig},
     population::{POPULATION_CONFIG, PopulationConfig},
@@ -470,4 +471,147 @@ fn temperament_spread_below_one() {
         CivilianConfig::validate,
     );
     assert!(error.contains("temperament_spread"), "{error}");
+}
+
+#[test]
+fn shipped_gang_config_loads() {
+    load_config::<GangConfig>(&assets_root(), GANG_CONFIG)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn unknown_gang_field_names_file_and_field() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_gang_unknown_{}_{unique}",
+        std::process::id()
+    )));
+    let file = root.path(GANG_CONFIG);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = fs::read_to_string(assets_root().path(GANG_CONFIG)).unwrap();
+    assert!(
+        original.contains("spread: 1.0,"),
+        "GATE BROKEN: shipped gangs.ron has no spread: 1.0"
+    );
+    fs::write(
+        &file,
+        original.replacen("spread: 1.0,", "spread: 1.0, bogus_field: 1.0,", 1),
+    )
+    .unwrap();
+    let error = load_config::<GangConfig>(&root, GANG_CONFIG)
+        .unwrap_err()
+        .to_string();
+    fs::remove_dir_all(&root.0).unwrap();
+    assert!(
+        error.contains("gangs.ron") && error.contains("bogus_field"),
+        "{error}"
+    );
+}
+
+fn gang_error(tag: &str, from: &str, to: &str) -> String {
+    sabotaged::<GangConfig>(GANG_CONFIG, tag, from, to, GangConfig::validate)
+}
+
+#[test]
+fn exactly_two_gangs() {
+    let red = "(tint: (1.0, 0.25, 0.2), weapons: [Pistol, Shotgun]),";
+    let error = gang_error("gang_count", red, &format!("{red} {red}"));
+    assert!(error.contains("exactly 2 gangs"), "{error}");
+}
+
+#[test]
+fn faction_matrix_must_be_complete() {
+    let error = gang_error(
+        "gang_police",
+        "(a: Gang(0), b: Police, hostile: false),",
+        "",
+    );
+    assert!(error.contains("missing pair (Gang(0), Police)"), "{error}");
+}
+
+#[test]
+fn keep_distance_must_be_ordered() {
+    let error = gang_error(
+        "keep_distance",
+        "keep_distance: (8.0, 15.0),",
+        "keep_distance: (15.0, 8.0),",
+    );
+    assert!(error.contains("keep_distance"), "{error}");
+}
+
+#[test]
+fn retreat_health_is_a_share() {
+    let error = gang_error(
+        "retreat_health",
+        "retreat_health: 0.3,",
+        "retreat_health: 1.5,",
+    );
+    assert!(error.contains("retreat_health"), "{error}");
+}
+
+#[test]
+fn fire_line_margin_is_not_negative() {
+    let error = gang_error(
+        "fire_line_margin",
+        "fire_line_margin: 0.2,",
+        "fire_line_margin: -0.1,",
+    );
+    assert!(error.contains("fire_line_margin"), "{error}");
+}
+
+#[test]
+fn reposition_spots_lie_away_from_the_member() {
+    let error = gang_error(
+        "reposition_offsets",
+        "reposition_offsets: [1.5, 3.0, 4.5],",
+        "reposition_offsets: [1.5, -3.0, 4.5],",
+    );
+    assert!(error.contains("reposition_offsets"), "{error}");
+    let error = gang_error(
+        "reposition_step",
+        "reposition_step: 2.0,",
+        "reposition_step: -2.0,",
+    );
+    assert!(error.contains("reposition_step"), "{error}");
+}
+
+#[test]
+fn dropped_guns_need_a_lifetime() {
+    let error = sabotaged::<WeaponsConfig>(
+        WEAPONS_CONFIG,
+        "drop_seconds",
+        "drop_seconds: 60.0",
+        "drop_seconds: 0.0",
+        WeaponsConfig::validate,
+    );
+    assert!(error.contains("pickups.drop_seconds"), "{error}");
+}
+
+#[test]
+fn route_search_budget_is_at_least_one() {
+    let error = sabotaged::<NavigationConfig>(
+        NAVIGATION_CONFIG,
+        "route_requests",
+        "route_requests_per_tick: 2,",
+        "route_requests_per_tick: 0,",
+        NavigationConfig::validate,
+    );
+    assert!(error.contains("route_requests_per_tick"), "{error}");
+}
+
+#[test]
+fn direct_seek_distance_is_positive() {
+    let error = sabotaged::<NavigationConfig>(
+        NAVIGATION_CONFIG,
+        "direct_seek",
+        "direct_seek_distance: 25.0,",
+        "direct_seek_distance: -1.0,",
+        NavigationConfig::validate,
+    );
+    assert!(error.contains("direct_seek_distance"), "{error}");
 }

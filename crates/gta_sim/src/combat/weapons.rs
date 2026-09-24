@@ -92,6 +92,8 @@ pub struct WeaponPickupConfig {
     pub radius: f32,
     /// Seconds until a taken pickup is available again.
     pub respawn: f32,
+    /// Seconds a gun dropped by a dead NPC lies before it vanishes.
+    pub drop_seconds: f32,
 }
 
 /// Target dummies and pickups in the central park.
@@ -170,6 +172,7 @@ impl WeaponsConfig {
             ("headshot_multiplier", self.headshot_multiplier),
             ("pickups.radius", p.radius),
             ("pickups.respawn", p.respawn),
+            ("pickups.drop_seconds", p.drop_seconds),
             ("range.dummy_spacing", r.dummy_spacing),
             ("range.dummy_distance", r.dummy_distance),
             ("range.pickup_spacing", r.pickup_spacing),
@@ -182,6 +185,7 @@ impl WeaponsConfig {
         check(self.headshot_multiplier >= 1.0, "headshot_multiplier")?;
         check(p.radius > 0.0, "pickups.radius")?;
         check(p.respawn >= 0.0, "pickups.respawn")?;
+        check(p.drop_seconds > 0.0, "pickups.drop_seconds")?;
         check(r.dummies >= 1, "range.dummies")?;
         check(r.dummy_spacing > 0.0, "range.dummy_spacing")?;
         check(r.dummy_distance > 0.0, "range.dummy_distance")?;

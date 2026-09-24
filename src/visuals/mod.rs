@@ -10,6 +10,8 @@ mod city_mesh;
 mod civilian_gate;
 mod config;
 mod facade;
+#[cfg(test)]
+mod gang_gate;
 mod pickups;
 mod props;
 mod sky;
@@ -55,8 +57,8 @@ impl Plugin for VisualsPlugin {
                 pickups::show_available_pickups,
                 weapons::show_available_weapon_pickups,
                 weapons::show_available_bat_pickups,
-                weapons::attach_held_gun,
-                weapons::show_held_gun,
+                // Chained: a gun attached this update is shown in the same update, not a frame later.
+                (weapons::attach_held_gun, weapons::show_held_gun).chain(),
             ),
         )
         .add_observer(visualize_block)
