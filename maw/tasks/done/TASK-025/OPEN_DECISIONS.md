@@ -1,0 +1,1 @@
+- 2026-09-24: code review PASS (orchestrator-level: minors — SLACK 10 in the long gate, no dedicated gang far-despawn / corpse-limit gates — accepted: the four exact path gates carry the protection and the observer is relation-level). QA skipped: implementer already ran t8 + a 3-min runtime idle census (0 orphans), reviewer re-ran the flips. PCTX folded → gates.

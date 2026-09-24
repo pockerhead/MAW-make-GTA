@@ -16,6 +16,7 @@ use crate::layers::GameLayer;
 use crate::world::CityScoped;
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use bevy_tnua::TnuaSensorsSet;
 use bevy_tnua::builtins::{TnuaBuiltinJump, TnuaBuiltinKnockback, TnuaBuiltinWalk};
 use bevy_tnua::controller::TnuaActionFlowStatus;
 use bevy_tnua::prelude::*;
@@ -106,6 +107,7 @@ impl Plugin for CharacterPlugin {
                 )
                     .chain(),
             )
+            .add_observer(despawn_tnua_sensors)
             .add_systems(
                 FixedUpdate,
                 drive_characters.in_set(TnuaUserControlsSystems),
@@ -115,6 +117,21 @@ impl Plugin for CharacterPlugin {
                 FixedPostUpdate,
                 anim::update_anim_state.after(PhysicsSystems::Last),
             );
+    }
+}
+
+/// bevy-tnua 0.32 relates its sensor entities without `linked_spawn`: without this every despawned
+/// controller leaves them behind.
+fn despawn_tnua_sensors(
+    despawn: On<Despawn, TnuaSensorsSet>,
+    sets: Query<&TnuaSensorsSet>,
+    mut commands: Commands,
+) {
+    let Ok(set) = sets.get(despawn.entity) else {
+        return;
+    };
+    for sensor in set.iter() {
+        commands.entity(sensor).try_despawn();
     }
 }
 

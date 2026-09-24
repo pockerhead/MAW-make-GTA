@@ -103,6 +103,10 @@
 - 2026-09-24 (TASK-012) — runtime "stuck"/"arrived" trackers use physical distance, never FSM state (t11 counted a
   cop in Attack at 30 m as arrived).
 
+- 2026-09-24 (TASK-025) — leak gates diff ALL entities (`World::iter_entities`) minus `IsResource` (in Bevy 0.19
+  resources are entities); a component query missed the Tnua sensor orphans. "New city" is `Paused -> Loading`:
+  pause first, a direct `Playing -> Loading` keeps the old city alive and fails for the wrong reason.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).
