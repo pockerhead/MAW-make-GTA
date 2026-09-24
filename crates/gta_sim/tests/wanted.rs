@@ -7,9 +7,10 @@ use bevy::prelude::*;
 use common::*;
 use gta_sim::{
     character::{ActionIntent, AimIntent},
-    civilian::{CivilianConfig, CivilianState},
+    civilian::{CivilianConfig, CivilianState, Temperament},
     combat::{Loadout, MeleeHit, Weapon},
-    perception::{Cause, StimulusLog, ThreatKind},
+    perception::{Cause, PerceptionConfig, StimulusLog, ThreatKind},
+    population::PopulationConfig,
     wanted::Crime,
 };
 use wanted_support::*;
@@ -59,8 +60,8 @@ fn unwitnessed_kill_is_zero_heat() {
         "liveness: the crimes were recorded"
     );
     assert!(list.iter().all(|i| i.offender == player));
-    let call = ticks_in(&app, app.world().resource::<CivilianConfig>().call_seconds);
-    probe.run(&mut app, 2 * call + 16);
+    let longest = longest_call_ticks(&app);
+    probe.run(&mut app, longest + 16);
     let w = wanted(&app);
     assert_eq!((w.heat, w.stars), (0, 0), "{w:?}");
     assert!(probe.call_log.is_empty(), "{:?}", probe.call_log);
@@ -113,6 +114,184 @@ fn attack_call_then_body_call_counts_each_incident_once() {
     assert_eq!(calls_about(&probe, Cause::Attack(attack)), 1);
     let w = wanted(&app);
     assert_eq!(w.heat, 40 + 10, "{w:?}");
+}
+
+/// Flee-prone: flight beats a call, and past `panic_distance` a crouch.
+const FLEER: Temperament = Temperament {
+    flee: 1.5,
+    cower: 0.5,
+    report: 0.5,
+};
+
+#[test]
+fn delayed_calls_about_one_kill_count_once() {
+    // Three parallel dead-end runs east of the body, clear of the test-area boxes: no head-on jams.
+    let runs = [-12.0, -10.0, -8.0].map(|z| (Vec3::new(20.0, 0.0, z), Vec3::new(36.0, 0.0, z)));
+    let mut app = graph_app(10.0, &runs);
+    assert_shipped(&app);
+    arm(&mut app, Weapon::Pistol);
+    let victim = spawn_civilian(&mut app, SIDES[0], 0.8, calm());
+    hold_idle(&mut app, victim);
+    // Named test mutation: every witness calls once its flight ends.
+    app.world_mut()
+        .resource_mut::<CivilianConfig>()
+        .call_after_flee = 1.0;
+    let witnesses: Vec<Entity> = (0..3)
+        .map(|k| spawn_civilian(&mut app, segment(k), 0.2, FLEER))
+        .collect();
+    for &w in &witnesses {
+        hold_idle(&mut app, w);
+    }
+    run_ticks(&mut app, 8);
+    let mut probe = Probe::new(&app);
+    kill_with_one_shot(&mut app, &mut probe, victim);
+    probe.run(&mut app, 5);
+    for &w in &witnesses {
+        assert!(
+            matches!(
+                civilian_state(&app, w),
+                CivilianState::Flee { about: Some(Cause::Body(v)), .. } if v == victim
+            ),
+            "GATE BROKEN: witness {w} did not flee from the crime: {:?}",
+            civilian_state(&app, w)
+        );
+    }
+    let longest = longest_call_ticks(&app);
+    probe.run_until_calls(&mut app, witnesses.len(), longest);
+    probe.run(&mut app, 16);
+    assert!(
+        probe.call_log.iter().all(|c| witnesses.contains(&c.caller)),
+        "{:?}",
+        probe.call_log
+    );
+    let shooting_reported = crimes_of(&app).contains(&(Crime::Shooting, true));
+    assert!(crimes_of(&app).contains(&(Crime::Kill, true)));
+    let w = wanted(&app);
+    assert_eq!(
+        w.heat,
+        40 + if shooting_reported { 10 } else { 0 },
+        "{} calls: {:?}; {w:?}",
+        probe.call_log.len(),
+        probe.call_log
+    );
+}
+
+/// Crouch-prone: inside `panic_distance` of a shot or a body it cowers, never calls at once.
+const COWERER: Temperament = Temperament {
+    flee: 0.2,
+    cower: 1.5,
+    report: 0.1,
+};
+
+#[test]
+fn cowering_witness_calls_once_the_crouch_ends() {
+    let mut app = graph_app(10.0, &[]);
+    assert_shipped(&app);
+    arm(&mut app, Weapon::Pistol);
+    let witness = spawn_civilian(&mut app, SIDES[0], 0.2, COWERER);
+    let victim = spawn_civilian(&mut app, SIDES[0], 0.8, calm());
+    hold_idle(&mut app, witness);
+    hold_idle(&mut app, victim);
+    // Named test mutation: every witness calls once its crouch ends.
+    app.world_mut()
+        .resource_mut::<CivilianConfig>()
+        .call_after_flee = 1.0;
+    run_ticks(&mut app, 16);
+    let mut probe = Probe::new(&app);
+    kill_with_one_shot(&mut app, &mut probe, victim);
+    let slots = u32::from(app.world().resource::<PerceptionConfig>().slots);
+    probe.run(&mut app, 2 * slots);
+    assert!(
+        matches!(
+            civilian_state(&app, witness),
+            CivilianState::Cower { about: Some(Cause::Body(v)), .. } if v == victim
+        ),
+        "GATE BROKEN: the witness did not cower at the body: {:?}",
+        civilian_state(&app, witness)
+    );
+    let cfg = app.world().resource::<CivilianConfig>().clone();
+    let corpse_seconds = app.world().resource::<PopulationConfig>().corpse_seconds;
+    let limit_s = cfg.cower_seconds.1 + cfg.call_seconds;
+    assert!(
+        limit_s + 1.0 < corpse_seconds,
+        "GATE BROKEN: the body despawns inside the window"
+    );
+    // The body stays in sight the whole time: a crouch it keeps re-arming never ends before it despawns.
+    let limit = ticks_in(&app, limit_s.ceil()) + 2 * slots;
+    for _ in 0..limit {
+        if !probe.call_log.is_empty() {
+            break;
+        }
+        let state = civilian_state(&app, witness);
+        assert!(
+            matches!(
+                state,
+                CivilianState::Cower { .. } | CivilianState::Report { .. }
+            ),
+            "the witness left its crouch without a call: {state:?}"
+        );
+        probe.run(&mut app, 1);
+    }
+    assert_eq!(
+        probe
+            .call_log
+            .iter()
+            .map(|c| (c.caller, c.about))
+            .collect::<Vec<_>>(),
+        vec![(witness, Cause::Body(victim))],
+        "no call within {limit} ticks: {:?}",
+        civilian_state(&app, witness)
+    );
+    assert_eq!(wanted(&app).heat, 40);
+}
+
+#[test]
+fn flight_from_an_aimed_gun_is_never_phoned_in() {
+    let mut app = graph_app(10.0, &[]);
+    assert_shipped(&app);
+    arm(&mut app, Weapon::Pistol);
+    let target = spawn_civilian(&mut app, SIDES[0], 0.5, FLEER);
+    hold_idle(&mut app, target);
+    // Named test mutation: every witness of a crime calls once its flight ends.
+    app.world_mut()
+        .resource_mut::<CivilianConfig>()
+        .call_after_flee = 1.0;
+    run_ticks(&mut app, 16);
+    let mut probe = Probe::new(&app);
+    let origin = position(&mut app);
+    let at = position_of(&app, target);
+    set_aim(&mut app, origin, at);
+    let player = player(&mut app);
+    app.world_mut().get_mut::<AimIntent>(player).unwrap().aiming = true;
+    let slots = u32::from(app.world().resource::<PerceptionConfig>().slots);
+    probe.run(&mut app, 2 * slots);
+    assert!(
+        matches!(civilian_state(&app, target), CivilianState::Flee { .. }),
+        "GATE BROKEN: the target did not flee from the gun: {:?}",
+        civilian_state(&app, target)
+    );
+    app.world_mut().get_mut::<AimIntent>(player).unwrap().aiming = false;
+    let limit = longest_call_ticks(&app);
+    let mut ended = false;
+    for _ in 0..limit {
+        let state = civilian_state(&app, target);
+        assert!(
+            !matches!(state, CivilianState::Report { .. }),
+            "a flight from an aimed gun started a call"
+        );
+        if calm_state(state) {
+            ended = true;
+            break;
+        }
+        probe.run(&mut app, 1);
+    }
+    assert!(
+        ended,
+        "GATE BROKEN: the flight did not end in {limit} ticks"
+    );
+    probe.run(&mut app, 16);
+    assert!(probe.call_log.is_empty(), "{:?}", probe.call_log);
+    assert_eq!(wanted(&app).heat, 0);
 }
 
 /// `graph_app(10)` with an idle victim at (0,0,-10) and the player 1 m north of it.

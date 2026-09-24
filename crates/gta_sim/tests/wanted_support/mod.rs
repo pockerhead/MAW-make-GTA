@@ -11,6 +11,7 @@ use gta_sim::{
     gang::Faction,
     navigation::GraphWalker,
     perception::{Cause, PerceptionConfig},
+    population::PopulationConfig,
     wanted::{Incident, WantedConfig, WantedLevel},
 };
 
@@ -115,6 +116,19 @@ pub fn ticks_in(app: &App, seconds: f32) -> u32 {
         "GATE BROKEN: {seconds} s is not a whole tick count"
     );
     ticks
+}
+
+/// Fixed ticks from a crime to the end of the slowest civilian call about it (`longest_call_delay`).
+pub fn longest_call_ticks(app: &App) -> u32 {
+    let world = app.world();
+    let civilian = world.resource::<CivilianConfig>();
+    let step = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
+    let slots = f32::from(world.resource::<PerceptionConfig>().slots) * step;
+    let flee_speed = world
+        .resource::<LocomotionConfig>()
+        .speed(civilian.flee_gait);
+    let corpse_seconds = world.resource::<PopulationConfig>().corpse_seconds;
+    (civilian.longest_call_delay(corpse_seconds, slots, flee_speed) / step).ceil() as u32
 }
 
 /// The shipped numbers every worked example of the wanted gates assumes.

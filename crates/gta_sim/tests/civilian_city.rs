@@ -490,6 +490,7 @@ fn recycle_at_cap_only_calm_and_far() {
         CivilianState::Cower {
             from: player_feet,
             left: 1.0e6,
+            about: None,
         },
     );
     let calm_near = place(

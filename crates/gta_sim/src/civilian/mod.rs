@@ -13,7 +13,7 @@ use crate::navigation::{
     GraphWalker, NavigationConfig, SidewalkGraph, flat_distance, flee_next, flee_start,
     lane_target, steer, wander_next,
 };
-use crate::perception::{AiSystems, Cause, Perception, Threat};
+use crate::perception::{AiSystems, Cause, Perception, Threat, ThreatKind};
 use crate::population::{Appearance, NpcRng, Offscreen, corpse_components};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -36,6 +36,8 @@ pub struct CivilianConfig {
     pub cower_seconds: (f32, f32),
     /// Duration of a police call (`Report`), s.
     pub call_seconds: f32,
+    /// Chance that a witness of a crime calls once its flight or crouch ends.
+    pub call_after_flee: f32,
     pub reaction: ReactionConfig,
 }
 
@@ -77,6 +79,12 @@ impl CivilianConfig {
                 self.idle_chance
             ));
         }
+        if !(0.0..=1.0).contains(&self.call_after_flee) {
+            return Err(format!(
+                "call_after_flee {} must be in [0, 1]",
+                self.call_after_flee
+            ));
+        }
         if !(self.call_seconds.is_finite() && self.call_seconds > 0.0) {
             return Err(format!(
                 "call_seconds {} must be finite and > 0",
@@ -113,6 +121,21 @@ impl CivilianConfig {
         Ok(())
     }
 
+    /// Upper bound from a crime to the end of a call about it: its body stays in sight up to `corpse_seconds`,
+    /// then perception, a full crouch and a full flight, the call.
+    pub fn longest_call_delay(
+        &self,
+        corpse_seconds: f32,
+        perception_seconds: f32,
+        flee_speed: f32,
+    ) -> f32 {
+        corpse_seconds
+            + perception_seconds
+            + self.cower_seconds.1
+            + self.flee_distance.1 / flee_speed
+            + self.call_seconds
+    }
+
     /// A fight is heard up to `fight_hearing_radius` m; a report threshold at or past it phones in no punch.
     pub fn validate_fight_hearing(&self, fight_hearing_radius: f32) -> Result<(), String> {
         let min = self.reaction.fight_report_min_distance;
@@ -132,13 +155,17 @@ pub enum CivilianState {
     Idle {
         left: f32,
     },
+    /// `about`: the crime this civilian may phone in when the flight ends.
     Flee {
         from: Vec3,
         left: f32,
+        about: Option<Cause>,
     },
+    /// `about`: the crime this civilian may phone in when the crouch ends.
     Cower {
         from: Vec3,
         left: f32,
+        about: Option<Cause>,
     },
     /// Phoning the police; `progress` goes 0 -> 1 over `call_seconds`, `about` names the crime
     /// being phoned in.
@@ -280,10 +307,11 @@ fn react(
         allow_report,
     );
     match reaction {
-        Reaction::Flee => flee(threat.at, walker, ctx, rng),
+        Reaction::Flee => flee(threat.at, witnessed(&threat), walker, ctx, rng),
         Reaction::Cower => CivilianState::Cower {
             from: threat.at,
             left: roll(rng, ctx.cfg.cower_seconds),
+            about: witnessed(&threat),
         },
         Reaction::Report => CivilianState::Report {
             progress: 0.0,
@@ -292,12 +320,44 @@ fn react(
     }
 }
 
-fn flee(from: Vec3, walker: &mut GraphWalker, ctx: &Context, rng: &mut NpcRng) -> CivilianState {
+fn flee(
+    from: Vec3,
+    about: Option<Cause>,
+    walker: &mut GraphWalker,
+    ctx: &Context,
+    rng: &mut NpcRng,
+) -> CivilianState {
     *walker = flee_start(ctx.graph, *walker, from);
     CivilianState::Flee {
         from,
         left: roll(rng, ctx.cfg.flee_distance),
+        about,
     }
+}
+
+/// The crime a threat shows: a shot, a fight or a body; aim, a hit on oneself and cars are not phoned in later.
+fn witnessed(threat: &Threat) -> Option<Cause> {
+    match threat.kind {
+        ThreatKind::Gunshot | ThreatKind::Fight | ThreatKind::Corpse => threat.cause,
+        ThreatKind::Aimed | ThreatKind::Hurt | ThreatKind::Car => None,
+    }
+}
+
+/// The crime a flight or crouch is already about, seen again (a body in sight): it runs its course.
+fn already_fleeing(state: CivilianState, threat: &Threat) -> bool {
+    let (CivilianState::Flee { about, .. } | CivilianState::Cower { about, .. }) = state else {
+        return false;
+    };
+    about.is_some() && witnessed(threat) == about
+}
+
+/// A calmed-down witness of `about` starts a call with chance `call_after_flee`.
+fn call_later(about: Option<Cause>, ctx: &Context, rng: &mut NpcRng) -> Option<CivilianState> {
+    let about = about?;
+    (rng.unit() < ctx.cfg.call_after_flee).then_some(CivilianState::Report {
+        progress: 0.0,
+        about: Some(about),
+    })
 }
 
 /// Next state of a live civilian; `threat` is this tick's perception.
@@ -309,6 +369,7 @@ fn next_state(
     rng: &mut NpcRng,
 ) -> CivilianState {
     let cfg = ctx.cfg;
+    let threat = threat.filter(|t| !already_fleeing(civilian.state, t));
     match (civilian.state, threat) {
         (CivilianState::Wander | CivilianState::Idle { .. }, Some(threat)) => {
             react(threat, civilian, walker, true, ctx, rng)
@@ -317,10 +378,13 @@ fn next_state(
             react(threat, civilian, walker, false, ctx, rng)
         }
         // Commitment: a new threat only refreshes the running flight or crouch.
-        (CivilianState::Flee { .. }, Some(threat)) => flee(threat.at, walker, ctx, rng),
-        (CivilianState::Cower { .. }, Some(threat)) => CivilianState::Cower {
+        (CivilianState::Flee { about, .. }, Some(threat)) => {
+            flee(threat.at, witnessed(&threat).or(about), walker, ctx, rng)
+        }
+        (CivilianState::Cower { about, .. }, Some(threat)) => CivilianState::Cower {
             from: threat.at,
             left: roll(rng, cfg.cower_seconds),
+            about: witnessed(&threat).or(about),
         },
         (CivilianState::Idle { left }, None) => {
             let left = left - ctx.dt;
@@ -338,21 +402,19 @@ fn next_state(
                 CivilianState::Report { progress, about }
             }
         }
-        (CivilianState::Flee { from, left }, None) => {
+        (CivilianState::Flee { from, left, about }, None) => {
             let left = left - ctx.speed * ctx.dt;
-            if left <= 0.0 {
-                CivilianState::Wander
-            } else {
-                CivilianState::Flee { from, left }
+            if left > 0.0 {
+                return CivilianState::Flee { from, left, about };
             }
+            call_later(about, ctx, rng).unwrap_or(CivilianState::Wander)
         }
-        (CivilianState::Cower { from, left }, None) => {
+        (CivilianState::Cower { from, left, about }, None) => {
             let left = left - ctx.dt;
-            if left <= 0.0 {
-                flee(from, walker, ctx, rng)
-            } else {
-                CivilianState::Cower { from, left }
+            if left > 0.0 {
+                return CivilianState::Cower { from, left, about };
             }
+            call_later(about, ctx, rng).unwrap_or_else(|| flee(from, None, walker, ctx, rng))
         }
         (state @ CivilianState::Wander, None) | (state @ CivilianState::Dead, _) => state,
     }

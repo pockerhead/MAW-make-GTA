@@ -421,6 +421,7 @@ fn dead_and_cower_select_their_nodes() {
     app.world_mut().get_mut::<Civilian>(civilian).unwrap().state = CivilianState::Cower {
         from: Vec3::ZERO,
         left: 100.0,
+        about: None,
     };
     app.update();
     assert_eq!(main_node(&app, crouching), Some(cower));

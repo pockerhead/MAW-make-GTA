@@ -129,9 +129,13 @@ pub fn compose_sim(
         path: root.path(DAMAGE_CONFIG),
         message,
     })?;
-    // A witness starts calling within `slots` ticks of the stimulus (Bevy's default fixed tick, never overridden).
+    // A witness perceives within `slots` ticks of the stimulus (Bevy's default fixed tick, never overridden).
     let tick = Time::<Fixed>::default().timestep().as_secs_f32();
-    let call_delay = f32::from(perception.slots) * tick + civilian.call_seconds;
+    let call_delay = civilian.longest_call_delay(
+        population.corpse_seconds,
+        f32::from(perception.slots) * tick,
+        cfg.speed(civilian.flee_gait),
+    );
     wanted
         .validate_call_delay(call_delay)
         .map_err(|message| ConfigError {

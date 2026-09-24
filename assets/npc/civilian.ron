@@ -6,10 +6,11 @@
     flee_distance: (30.0, 60.0),   // m of travelled path
     cower_seconds: (3.0, 6.0),
     call_seconds: 4.0,             // Report duration (GDD §6.2)
+    call_after_flee: 0.8,          // chance a witness of a crime calls once its flight or crouch ends
     reaction: (
         flee: 1.0,
         cower: 1.5,
-        report: 0.8,
+        report: 1.0,               // = flee: a gunshot witness in the report band calls half the time
         temperament_spread: 0.5,   // each temperament factor in [1 - s, 1 + s]
         panic_distance: 15.0,      // cower weight 0 at and beyond this, m
         report_min_distance: 25.0, // a gunshot closer than this is never phoned in, m

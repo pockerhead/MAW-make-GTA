@@ -117,6 +117,9 @@
   semi-auto pistol). Runtime scenarios never hard-code enum lists: derive them from source/data (t13 broke on a new
   SoundClass).
 
+- 2026-09-25 (TASK-026) — test graph `graph_app(10)` corner (10,0,10) sits on the test-area 1 m box: fleeing
+  civilians jam there and a stuck fleer never ends its flight. Delayed-call fixtures use dead-end runs east of x=20.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

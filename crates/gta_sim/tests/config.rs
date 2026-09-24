@@ -447,6 +447,18 @@ fn temperament_spread_below_one() {
 }
 
 #[test]
+fn call_after_flee_is_a_chance() {
+    let error = sabotaged::<CivilianConfig>(
+        CIVILIAN_CONFIG,
+        "call_after_flee",
+        "call_after_flee: 0.8,",
+        "call_after_flee: 1.5,",
+        CivilianConfig::validate,
+    );
+    assert!(error.contains("call_after_flee"), "{error}");
+}
+
+#[test]
 fn fight_report_distance_below_fight_hearing() {
     let shipped = assets_root();
     let hearing = load_config::<PerceptionConfig>(&shipped, PERCEPTION_CONFIG)
@@ -730,19 +742,89 @@ fn incident_memory_must_outlast_a_civilian_call() {
     let root = assets_root();
     let civilian = load_config::<CivilianConfig>(&root, CIVILIAN_CONFIG).unwrap();
     let perception = load_config::<PerceptionConfig>(&root, PERCEPTION_CONFIG).unwrap();
-    // Same bound as compose_sim: perception slots at 64 Hz, then the call itself.
-    let call_delay = f32::from(perception.slots) / 64.0 + civilian.call_seconds;
-    assert_eq!(
-        call_delay, 4.0625,
-        "GATE BROKEN: shipped call delay changed"
+    let loco = load_config::<LocomotionConfig>(&root, LOCOMOTION_CONFIG).unwrap();
+    let corpse_seconds = load_config::<PopulationConfig>(&root, POPULATION_CONFIG)
+        .unwrap()
+        .corpse_seconds;
+    let slots = f32::from(perception.slots) / 64.0;
+    let flee_speed = loco.speed(civilian.flee_gait);
+    // Same bound as compose_sim: a body in sight until it despawns (30 s), perception slots at 64 Hz,
+    // a full crouch (6 s), a full flight (60 m at 4.5 m/s), then the call (4 s).
+    let call_delay = civilian.longest_call_delay(corpse_seconds, slots, flee_speed);
+    assert!(
+        (call_delay - (30.0 + 0.0625 + 6.0 + 60.0 / 4.5 + 4.0)).abs() < 1e-4,
+        "GATE BROKEN: shipped call delay changed: {call_delay}"
     );
     let mut wanted = load_config::<WantedConfig>(&root, WANTED_CONFIG).unwrap();
     wanted.validate_call_delay(call_delay).unwrap();
-    // Passes the wanted.ron-only checks, but forgets a crime before its witness finishes the call.
+    // Passes the wanted.ron-only checks and outlasts a call counted from the last stimulus, but
+    // forgets a kill before a witness who first sees the body late finishes its call.
     wanted.shooting_merge_seconds = 0.0;
-    wanted.incident_memory_seconds = 4.0;
+    wanted.incident_memory_seconds = 40.0;
     wanted.validate().unwrap();
+    let from_stimulus = civilian.longest_call_delay(0.0, slots, flee_speed);
+    assert!(
+        wanted.validate_call_delay(from_stimulus).is_ok(),
+        "GATE BROKEN: 40 s does not outlast the per-stimulus bound {from_stimulus}"
+    );
     let error = wanted.validate_call_delay(call_delay).unwrap_err();
     assert!(error.contains("incident_memory_seconds"), "{error}");
     assert!(!error.contains("  "), "a run of spaces in: {error}");
+}
+
+/// Copies every config under the shipped assets root (no third-party assets) into a fresh temp root.
+fn config_copy(tag: &str) -> ConfigRoot {
+    fn copy_ron(from: &std::path::Path, to: &std::path::Path) {
+        for entry in fs::read_dir(from).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap();
+            if path.is_dir() && name != "third_party" {
+                copy_ron(&path, &to.join(name));
+            } else if path.extension().is_some_and(|e| e == "ron") {
+                fs::create_dir_all(to).unwrap();
+                fs::copy(&path, to.join(name)).unwrap();
+            }
+        }
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_{tag}_{}_{}",
+        std::process::id(),
+        unique
+    )));
+    copy_ron(&assets_root().0, &root.0);
+    root
+}
+
+#[test]
+fn compose_counts_the_call_delay_from_the_crime() {
+    let root = config_copy("call_delay");
+    let wanted = root.path(WANTED_CONFIG);
+    let original = fs::read_to_string(&wanted).unwrap();
+    let from = "incident_memory_seconds: 60.0,";
+    assert!(
+        original.contains(from),
+        "GATE BROKEN: shipped {WANTED_CONFIG} has no {from:?}"
+    );
+    // Longer than a call from the last stimulus (23.4 s), shorter than one from the kill (53.4 s).
+    fs::write(
+        &wanted,
+        original.replacen(from, "incident_memory_seconds: 40.0,", 1),
+    )
+    .unwrap();
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        TransformPlugin,
+        AssetPlugin::default(),
+        StatesPlugin,
+    ));
+    let composed = compose_sim(&mut app, root.clone(), WorldSource::TestArea);
+    fs::remove_dir_all(&root.0).unwrap();
+    let error = composed.expect_err("compose_sim accepted a memory shorter than a late body call");
+    assert!(error.path.ends_with(WANTED_CONFIG), "{error}");
+    assert!(error.message.contains("incident_memory_seconds"), "{error}");
 }

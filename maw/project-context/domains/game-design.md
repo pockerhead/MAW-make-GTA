@@ -58,6 +58,11 @@
   apart through the player, exactly at SMG range. Routes walked to their end must still re-plan when the NPC is
   displaced (`head_for`: skip the age re-plan only while the nearest node is still the goal).
 
+- 2026-09-25 (TASK-026) — a visible corpse is re-offered to every civilian in sight on each perception cycle: an
+  FSM arm that "refreshes on a threat" refreshes forever while a body lies in view (a cowering witness stayed
+  crouched for 30 s). Refresh only on a NEW cause (`civilian::already_fleeing`). Tuning goal for witnesses: a street
+  kill with people around gets a star (94/100 seeds), gated on 100 seeds, never on 20 (thin margins flake).
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

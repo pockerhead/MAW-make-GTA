@@ -96,6 +96,33 @@ mod tests {
         }
     }
 
+    /// Past `panic_distance` the cower weight is 0 and Report wins iff `report * R > flee * F`, with R, F
+    /// iid uniform on `[1 - s, 1 + s]`: equal weights give exactly 1/2 by symmetry (0.8 vs 1.0 gave 0.306).
+    #[test]
+    fn report_band_calls_half_the_time() {
+        let cfg = shipped().reaction;
+        assert!(
+            cfg.report_min_distance > cfg.panic_distance,
+            "GATE BROKEN: cower competes in the report band"
+        );
+        let threat = Threat {
+            kind: ThreatKind::Gunshot,
+            at: Vec3::ZERO,
+            distance: cfg.report_min_distance + 5.0,
+            cause: None,
+        };
+        let mut rng = crate::population::NpcRng::seeded(7);
+        let n = 20_000;
+        let reports = (0..n)
+            .filter(|_| {
+                let t = super::super::roll_temperament(&mut rng, cfg.temperament_spread);
+                choose_reaction(&threat, &t, &cfg, true) == Reaction::Report
+            })
+            .count();
+        let share = reports as f32 / n as f32;
+        assert!((0.47..=0.53).contains(&share), "Report share {share}");
+    }
+
     #[test]
     fn temperament_stays_in_its_spread() {
         let spread = shipped().reaction.temperament_spread;

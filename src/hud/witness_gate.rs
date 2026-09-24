@@ -93,6 +93,7 @@ fn bar_lives_exactly_as_long_as_the_call() {
     app.world_mut().get_mut::<Civilian>(caller).unwrap().state = CivilianState::Flee {
         from: Vec3::ZERO,
         left: 10.0,
+        about: None,
     };
     app.update();
     assert!(

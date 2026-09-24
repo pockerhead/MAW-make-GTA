@@ -1,0 +1,4 @@
+- 2026-09-25: implementer accepted (18/20 stars in 15 s vs 11/20 before; already_fleeing filter accepted — cowering until the corpse despawns was the real blocker). GDD §6.2 updated by the orchestrator (flee-then-call).
+- 2026-09-25: code review NEEDS_WORK accepted. I-1: measure on 100 seeds; if rate < 0.9 raise call_after_flee rather than lowering the threshold (owner goal: a street kill almost always gets a star); gate 85/100. I-2..I-4 and both missing gates fixed too.
+- 2026-09-25: fixer accepted: call_after_flee raised to 0.8 (94/100 vs 53/100 old rules), gate 85/100; delay bound from the crime (53.4 s < 60 s memory).
+- 2026-09-25: QA SHIP; PCTX folded (corpse re-offer refresh, 100-seed gating → game-design; graph_app corner jam → gates).
