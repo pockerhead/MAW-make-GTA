@@ -124,6 +124,13 @@ fn preflight(
             ));
         }
     }
+    for police in &character_config.police_models {
+        if !manifest.contains_asset(police) {
+            unlisted.push(format!(
+                "{CHARACTER_VISUAL_CONFIG}: police model {police} is not listed in {THIRD_PARTY_MANIFEST}"
+            ));
+        }
+    }
     for font in ui_config.font_paths() {
         if !manifest.contains_asset(font) {
             unlisted.push(format!(

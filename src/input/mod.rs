@@ -87,7 +87,8 @@ impl Plugin for PlayerInputPlugin {
                         .before(cursor_toggle),
                 ),
             )
-            .add_systems(OnEnter(GameState::Wasted), release_held_actions);
+            .add_systems(OnEnter(GameState::Wasted), release_held_actions)
+            .add_systems(OnEnter(GameState::Busted), release_held_actions);
     }
 }
 

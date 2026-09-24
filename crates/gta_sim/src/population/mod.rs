@@ -393,15 +393,18 @@ fn despawn_far(
 }
 
 /// A spawn point: node `from` itself, or the point at fraction `t` of edge `from -> to`.
-struct SpawnPoint {
-    from: u32,
-    edge: Option<(u32, f32)>,
-    at: Vec3,
+pub(crate) struct SpawnPoint {
+    pub(crate) from: u32,
+    pub(crate) edge: Option<(u32, f32)>,
+    pub(crate) at: Vec3,
 }
 
 /// Every node with an edge, plus points every `spacing` m inside each edge (none closer than
 /// `spacing / 2` to an end).
-fn spawn_points(graph: &SidewalkGraph, spacing: f32) -> impl Iterator<Item = SpawnPoint> + '_ {
+pub(crate) fn spawn_points(
+    graph: &SidewalkGraph,
+    spacing: f32,
+) -> impl Iterator<Item = SpawnPoint> + '_ {
     let nodes = (0..graph.nodes().len() as u32)
         .filter(|&n| !graph.neighbors(n).is_empty())
         .map(|n| SpawnPoint {

@@ -8,6 +8,7 @@ use crate::combat::{DamageDealt, MeleeHit, ShotFired};
 use crate::gang::{Faction, GangMember};
 use crate::perception::Cause;
 use crate::player::Player;
+use crate::police::PoliceUnit;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::collections::HashSet;
@@ -18,6 +19,9 @@ pub enum Crime {
     Shooting,
     Wound,
     Kill,
+    PunchCop,
+    WoundCop,
+    KillCop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -115,7 +119,9 @@ impl Crimes {
             .iter()
             .filter(|i| match cause {
                 Cause::Attack(a) => i.attacks.iter().any(|&(id, _)| id == a),
-                Cause::Body(v) => i.crime == Crime::Kill && i.victim == Some(v),
+                Cause::Body(v) => {
+                    matches!(i.crime, Crime::Kill | Crime::KillCop) && i.victim == Some(v)
+                }
             })
             .map(|i| i.id)
             .collect()
@@ -135,6 +141,7 @@ impl Crimes {
 pub(crate) enum Victim {
     Civilian,
     Gang,
+    Cop,
     Other,
 }
 
@@ -144,6 +151,9 @@ pub(crate) fn classify(victim: Victim, melee: bool, killed: bool) -> Option<Crim
         (Victim::Civilian | Victim::Gang, true) => Some(Crime::Kill),
         (Victim::Civilian, false) if melee => Some(Crime::Punch),
         (Victim::Civilian, false) => Some(Crime::Wound),
+        (Victim::Cop, true) => Some(Crime::KillCop),
+        (Victim::Cop, false) if melee => Some(Crime::PunchCop),
+        (Victim::Cop, false) => Some(Crime::WoundCop),
         _ => None,
     }
 }
@@ -160,8 +170,11 @@ pub(super) fn record_crimes(
     mut hits: MessageReader<MeleeHit>,
     mut dealt: MessageReader<DamageDealt>,
     players: Query<&Position, With<Player>>,
-    kinds: Query<(Has<Civilian>, Has<GangMember>)>,
-    persons: Query<(Entity, &Position, &Health), Or<(With<Civilian>, With<GangMember>)>>,
+    kinds: Query<(Has<Civilian>, Has<GangMember>, Has<PoliceUnit>)>,
+    persons: Query<
+        (Entity, &Position, &Health),
+        Or<(With<Civilian>, With<GangMember>, With<PoliceUnit>)>,
+    >,
     cops: Query<(&Position, &Faction), Without<Dead>>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -174,6 +187,8 @@ pub(super) fn record_crimes(
         .map(|hit| (hit.shot, hit.target))
         .collect();
     let mut touched = Vec::new();
+    // Crimes on a cop: the victim is the witness.
+    let mut always = Vec::new();
     for hit in &dealt {
         let Ok(at) = players.get(hit.shooter) else {
             continue;
@@ -183,8 +198,9 @@ pub(super) fn record_crimes(
             continue;
         }
         let victim = match kinds.get(hit.target) {
-            Ok((true, _)) => Victim::Civilian,
-            Ok((false, true)) => Victim::Gang,
+            Ok((true, _, _)) => Victim::Civilian,
+            Ok((false, true, _)) => Victim::Gang,
+            Ok((false, false, true)) => Victim::Cop,
             _ => Victim::Other,
         };
         let Some(crime) = classify(victim, melee.contains(&hit.shot), hit.killed) else {
@@ -199,7 +215,16 @@ pub(super) fn record_crimes(
             now,
             merge,
         );
-        touched.push(id);
+        if victim == Victim::Cop {
+            always.push(id);
+        } else {
+            touched.push(id);
+        }
+    }
+    for id in always {
+        if let Some((heat, at)) = crimes.report(id, &cfg.heat) {
+            apply_report(&mut wanted, heat, at);
+        }
     }
     for shot in shots.read() {
         if !players.contains(shot.shooter) {
@@ -286,6 +311,9 @@ mod tests {
         shooting_near_people: 10,
         wound_civilian: 30,
         kill_person: 40,
+        punch_cop: 45,
+        wound_cop: 80,
+        kill_cop: 150,
     };
 
     fn entity(index: u32) -> Entity {
@@ -303,6 +331,9 @@ mod tests {
             (Gang, true, false, None),
             (Gang, false, false, None),
             (Gang, false, true, Some(Crime::Kill)),
+            (Cop, true, false, Some(Crime::PunchCop)),
+            (Cop, false, false, Some(Crime::WoundCop)),
+            (Cop, false, true, Some(Crime::KillCop)),
             (Other, true, false, None),
             (Other, false, true, None),
         ];

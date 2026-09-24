@@ -17,6 +17,9 @@ pub struct RespawnConfig {
     pub wasted_time_scale: f32,
     pub wasted_slowmo: f32,
     pub wasted_screen: f32,
+    /// Arrest scene of `GameState::Busted` before the BUSTED screen.
+    pub busted_arrest: f32,
+    pub busted_screen: f32,
 }
 
 impl RespawnConfig {
@@ -25,6 +28,8 @@ impl RespawnConfig {
             ("wasted_time_scale", self.wasted_time_scale),
             ("wasted_slowmo", self.wasted_slowmo),
             ("wasted_screen", self.wasted_screen),
+            ("busted_arrest", self.busted_arrest),
+            ("busted_screen", self.busted_screen),
         ] {
             if !value.is_finite() {
                 return Err(format!("{field} is not finite"));
@@ -38,6 +43,12 @@ impl RespawnConfig {
         }
         if self.wasted_screen < 0.0 {
             return Err("wasted_screen must be >= 0".into());
+        }
+        if self.busted_arrest < 0.0 {
+            return Err("busted_arrest must be >= 0".into());
+        }
+        if self.busted_screen < 0.0 {
+            return Err("busted_screen must be >= 0".into());
         }
         Ok(())
     }
@@ -94,7 +105,33 @@ pub(super) fn restore_time_scale(mut time: ResMut<Time<Virtual>>) {
     time.set_relative_speed(1.0);
 }
 
-/// Teleports the same player entity to the hospital with full health, so its components survive.
+/// The player body a respawn moves and heals.
+pub(super) type RespawnBody<'a> = (
+    Entity,
+    Mut<'a, Position>,
+    Mut<'a, Transform>,
+    Mut<'a, LinearVelocity>,
+    Mut<'a, Health>,
+    &'a CharacterBody,
+);
+
+/// Teleports the same player entity to `point` (feet) with full health, so its components survive.
+pub(super) fn respawn_at(
+    point: Vec3,
+    cfg: &HealthConfig,
+    commands: &mut Commands,
+    body: RespawnBody,
+) {
+    let (entity, mut position, mut transform, mut velocity, mut health, character) = body;
+    let at = point + Vec3::Y * character.float_height;
+    position.0 = at;
+    transform.translation = at;
+    velocity.0 = Vec3::ZERO;
+    *health = Health::full(cfg);
+    commands.entity(entity).try_remove::<Dead>();
+}
+
+/// Respawn at the hospital.
 #[allow(clippy::type_complexity)]
 pub(super) fn respawn_player(
     mut commands: Commands,
@@ -112,13 +149,8 @@ pub(super) fn respawn_player(
         With<Player>,
     >,
 ) {
-    for (entity, mut position, mut transform, mut velocity, mut health, body) in &mut players {
-        let at = spawn.point + Vec3::Y * body.float_height;
-        position.0 = at;
-        transform.translation = at;
-        velocity.0 = Vec3::ZERO;
-        *health = Health::full(&cfg);
-        commands.entity(entity).try_remove::<Dead>();
+    for body in &mut players {
+        respawn_at(spawn.point, &cfg, &mut commands, body);
     }
 }
 

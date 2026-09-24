@@ -5,6 +5,7 @@ mod crimes;
 mod search;
 
 pub use crimes::{Crime, Crimes, Incident};
+pub(crate) use search::{cop_sees, eye, witnesses};
 
 use crate::civilian::PoliceCall;
 use crate::flow::{GameState, PlayingSystems};
@@ -26,6 +27,10 @@ pub struct HeatTable {
     pub shooting_near_people: u32,
     pub wound_civilian: u32,
     pub kill_person: u32,
+    /// Reported always: the cop is the witness.
+    pub punch_cop: u32,
+    pub wound_cop: u32,
+    pub kill_cop: u32,
 }
 
 impl HeatTable {
@@ -35,6 +40,9 @@ impl HeatTable {
             Crime::Shooting => self.shooting_near_people,
             Crime::Wound => self.wound_civilian,
             Crime::Kill => self.kill_person,
+            Crime::PunchCop => self.punch_cop,
+            Crime::WoundCop => self.wound_cop,
+            Crime::KillCop => self.kill_cop,
         }
     }
 }
@@ -86,6 +94,9 @@ impl WantedConfig {
             ("heat.shooting_near_people", h.shooting_near_people),
             ("heat.wound_civilian", h.wound_civilian),
             ("heat.kill_person", h.kill_person),
+            ("heat.punch_cop", h.punch_cop),
+            ("heat.wound_cop", h.wound_cop),
+            ("heat.kill_cop", h.kill_cop),
         ] {
             if value == 0 {
                 return Err(format!("{field} must be > 0"));
@@ -189,7 +200,8 @@ impl Plugin for WantedPlugin {
                     .in_set(WantedSystems),
             )
             .add_systems(OnEnter(GameState::Wasted), reset_wanted)
-            .add_systems(OnExit(GameState::Wasted), drop_queued_calls);
+            .add_systems(OnExit(GameState::Wasted), drop_queued_calls)
+            .add_systems(OnExit(GameState::Busted), (reset_wanted, drop_queued_calls));
     }
 }
 

@@ -14,6 +14,11 @@ pub struct CharacterVisualConfig {
     pub(crate) civilian_models: Vec<String>,
     /// Asset paths of the gang models; the tint comes from `gang/gangs.ron`.
     pub(crate) gang_models: Vec<String>,
+    /// Asset paths of the police models; patrol and SWAT differ by tint.
+    pub(crate) police_models: Vec<String>,
+    /// Base colour multipliers of a patrol cop and a SWAT unit.
+    pub(super) police_tint: (f32, f32, f32),
+    pub(super) swat_tint: (f32, f32, f32),
     /// Civilian base colour multipliers of `tinted_mesh`.
     pub(super) civilian_tints: Vec<(f32, f32, f32)>,
     /// Head top of the model in model units (feet at 0).
@@ -144,11 +149,19 @@ impl CharacterVisualConfig {
         if self.gang_models.is_empty() {
             return Err("gang_models must name at least one model".into());
         }
+        if self.police_models.is_empty() {
+            return Err("police_models must name at least one model".into());
+        }
         if self.civilian_tints.is_empty() {
             return Err("civilian_tints must name at least one tint".into());
         }
-        for (field, (r, g, b)) in std::iter::once(("tint", self.tint))
-            .chain(self.civilian_tints.iter().map(|&t| ("civilian_tints", t)))
+        for (field, (r, g, b)) in [
+            ("tint", self.tint),
+            ("police_tint", self.police_tint),
+            ("swat_tint", self.swat_tint),
+        ]
+        .into_iter()
+        .chain(self.civilian_tints.iter().map(|&t| ("civilian_tints", t)))
         {
             if ![r, g, b].iter().all(|c| c.is_finite() && *c >= 0.0) {
                 return Err(format!(
@@ -171,8 +184,8 @@ impl CharacterVisualConfig {
         ]
     }
 
-    /// Resolves every clip name against the manifest rig of `model`, and checks that every civilian
-    /// and gang model resolves to the same clips; collects all errors.
+    /// Resolves every clip name against the manifest rig of `model`, and checks that every civilian,
+    /// gang and police model resolves to the same clips; collects all errors.
     pub fn resolve(&self, manifest: &ThirdPartyManifest) -> Result<CharacterClips, Vec<String>> {
         let clips = self.resolve_model(manifest, &self.model)?;
         let mut errors = Vec::new();
@@ -191,6 +204,16 @@ impl CharacterVisualConfig {
                 Ok(own) if own == clips => {}
                 Ok(_) => errors.push(format!(
                     "gang model {gang} resolves clips differently from {}",
+                    self.model
+                )),
+                Err(own) => errors.extend(own),
+            }
+        }
+        for police in &self.police_models {
+            match self.resolve_model(manifest, police) {
+                Ok(own) if own == clips => {}
+                Ok(_) => errors.push(format!(
+                    "police model {police} resolves clips differently from {}",
                     self.model
                 )),
                 Err(own) => errors.extend(own),

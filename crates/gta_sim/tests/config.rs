@@ -1,7 +1,7 @@
 mod common;
 
 use bevy::{asset::AssetPlugin, prelude::*, state::app::StatesPlugin};
-use common::assets_root;
+use common::{assets_root, sabotaged};
 use gta_sim::{
     character::{HEALTH_CONFIG, HealthConfig, LOCOMOTION_CONFIG, LocomotionConfig},
     civilian::{CIVILIAN_CONFIG, CivilianConfig},
@@ -180,36 +180,6 @@ fn shipped_aim_config_loads() {
         .unwrap()
         .validate()
         .unwrap();
-}
-
-/// Validation error of the shipped `rel` config with `from` replaced by `to`.
-fn sabotaged<T: serde::de::DeserializeOwned>(
-    rel: &str,
-    tag: &str,
-    from: &str,
-    to: &str,
-    validate: impl FnOnce(&T) -> Result<(), String>,
-) -> String {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = ConfigRoot(std::env::temp_dir().join(format!(
-        "gta_sim_{tag}_{}_{}",
-        std::process::id(),
-        unique
-    )));
-    let file = root.path(rel);
-    fs::create_dir_all(file.parent().unwrap()).unwrap();
-    let original = fs::read_to_string(assets_root().path(rel)).unwrap();
-    assert!(
-        original.contains(from),
-        "GATE BROKEN: shipped {rel} has no {from:?}"
-    );
-    fs::write(&file, original.replacen(from, to, 1)).unwrap();
-    let loaded = load_config::<T>(&root, rel);
-    fs::remove_dir_all(&root.0).unwrap();
-    validate(&loaded.unwrap()).unwrap_err()
 }
 
 #[test]
@@ -762,7 +732,10 @@ fn incident_memory_must_outlast_a_civilian_call() {
     let perception = load_config::<PerceptionConfig>(&root, PERCEPTION_CONFIG).unwrap();
     // Same bound as compose_sim: perception slots at 64 Hz, then the call itself.
     let call_delay = f32::from(perception.slots) / 64.0 + civilian.call_seconds;
-    assert_eq!(call_delay, 4.0625, "GATE BROKEN: shipped call delay changed");
+    assert_eq!(
+        call_delay, 4.0625,
+        "GATE BROKEN: shipped call delay changed"
+    );
     let mut wanted = load_config::<WantedConfig>(&root, WANTED_CONFIG).unwrap();
     wanted.validate_call_delay(call_delay).unwrap();
     // Passes the wanted.ron-only checks, but forgets a crime before its witness finishes the call.

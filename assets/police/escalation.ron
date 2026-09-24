@@ -1,0 +1,36 @@
+(
+    // Wanted stars 1..5 (GDD §6.4): foot units alive at most, of them SWAT; seconds before a lost unit is
+    // replaced; whether cops try to arrest instead of shooting; whether new units come in from other sides.
+    stars: (
+        (units: 2,  swat: 0,  reinforce_seconds: 20.0, arrest: true,  surround: false),
+        (units: 4,  swat: 0,  reinforce_seconds: 15.0, arrest: false, surround: false),
+        (units: 6,  swat: 0,  reinforce_seconds: 10.0, arrest: false, surround: true),
+        (units: 8,  swat: 4,  reinforce_seconds: 8.0,  arrest: false, surround: true),
+        (units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true),
+    ),
+    // Gear and distance band per unit kind; SWAT keeps a closer band ("штурм").
+    patrol: (gun: Pistol, armor: 0.0,  reserve: 120, keep_distance: (8.0, 18.0)),
+    swat:   (gun: Smg,    armor: 50.0, reserve: 300, keep_distance: (5.0, 12.0)),
+    spawn_ring: (40.0, 90.0),   // m from the player, sidewalk points off-frame or behind buildings
+    spawns_per_tick: 1,
+    arrest: (
+        distance: 1.5,            // m: a cop this close holds the player (GDD §6.4)
+        stand_distance: 1.0,      // m: an arresting cop stops here
+        seconds: 1.5,             // s the player stays passive within `distance` before BUSTED
+        break_free_distance: 3.0, // m from the arresting cop: the player broke free, +1 star
+        hostile_seconds: 5.0,     // s a witnessed attack by the player makes 1-star cops shoot
+    ),
+    search_arrive_distance: 3.0,  // m: a cop this close to its goal (last known position, search point) arrives
+    combat: (
+        aim_error_deg: 2.0,           // police aim better than gangs (4.0)
+        trigger_seconds: (0.4, 0.9),
+        fire_line_margin: 0.2,
+        pressed_distance: 2.5,        // a spared body this close to the target yields it (gang: melee_distance.1)
+        reposition_offsets: [1.5, 3.0, 4.5],
+        reposition_step: 2.0,
+        chase_gait: Run,
+        reposition_gait: Walk,
+        search_gait: Walk,
+        leave_gait: Walk,
+    ),
+)

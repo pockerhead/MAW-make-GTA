@@ -4,11 +4,46 @@ use bevy::{
     prelude::*,
     render::view::{ColorGrading, ColorGradingGlobal},
 };
-use gta_sim::flow::WastedPhase;
+use gta_sim::flow::{BustedPhase, WastedPhase};
 
-pub(super) fn spawn_wasted_screen(mut commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
+pub(super) fn spawn_wasted_screen(commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
+    let (text, color) = (ui.wasted.clone(), ui.wasted_color);
+    title_screen(
+        commands,
+        &ui,
+        &fonts,
+        "Wasted screen",
+        text,
+        color,
+        WastedPhase::Screen,
+    );
+}
+
+pub(super) fn spawn_busted_screen(commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
+    let (text, color) = (ui.busted.clone(), ui.busted_color);
+    title_screen(
+        commands,
+        &ui,
+        &fonts,
+        "Busted screen",
+        text,
+        color,
+        BustedPhase::Screen,
+    );
+}
+
+/// A full-screen title over the wasted backdrop, gone when `exit` is left.
+fn title_screen(
+    mut commands: Commands,
+    ui: &UiConfig,
+    fonts: &UiFonts,
+    name: &'static str,
+    text: String,
+    color: (f32, f32, f32),
+    exit: impl States,
+) {
     commands.spawn((
-        Name::new("Wasted screen"),
+        Name::new(name),
         Node {
             width: percent(100),
             height: percent(100),
@@ -18,15 +53,15 @@ pub(super) fn spawn_wasted_screen(mut commands: Commands, ui: Res<UiConfig>, fon
             ..default()
         },
         BackgroundColor(rgba(ui.wasted_backdrop)),
-        DespawnOnExit(WastedPhase::Screen),
+        DespawnOnExit(exit),
         children![(
-            Text::new(ui.wasted.clone()),
+            Text::new(text),
             TextFont {
                 font: FontSource::Handle(fonts.title.clone()),
                 font_size: FontSize::from(ui.wasted_size),
                 ..default()
             },
-            TextColor(rgb(ui.wasted_color)),
+            TextColor(rgb(color)),
         )],
     ));
 }

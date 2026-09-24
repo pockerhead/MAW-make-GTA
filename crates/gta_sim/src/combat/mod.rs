@@ -69,6 +69,7 @@ impl Plugin for CombatPlugin {
             .register_type::<MeleeHit>()
             .register_type::<BatPickup>()
             .add_systems(OnExit(GameState::Wasted), melee::reset_player_melee)
+            .add_systems(OnExit(GameState::Busted), melee::reset_player_melee)
             .add_systems(
                 OnTransition {
                     exited: GameState::Loading,

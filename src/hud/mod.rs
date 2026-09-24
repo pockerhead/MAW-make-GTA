@@ -9,12 +9,12 @@ use crate::menu::UiConfig;
 use bevy::prelude::*;
 use gta_sim::{
     character::{Health, HealthConfig},
-    flow::{GameState, WastedPhase},
+    flow::{BustedPhase, GameState, WastedPhase},
     player::Player,
 };
 
 /// Health and armour bars (top right), ammo, wanted stars, crosshair, hit marker, witness bars and the
-/// "ПОТРАЧЕНО" screen.
+/// "ПОТРАЧЕНО" and "BUSTED" screens.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -39,7 +39,10 @@ impl Plugin for HudPlugin {
             )
             .add_systems(OnEnter(WastedPhase::Screen), wasted::spawn_wasted_screen)
             .add_systems(OnEnter(GameState::Wasted), wasted::desaturate)
-            .add_systems(OnExit(GameState::Wasted), wasted::restore_saturation);
+            .add_systems(OnExit(GameState::Wasted), wasted::restore_saturation)
+            .add_systems(OnEnter(BustedPhase::Screen), wasted::spawn_busted_screen)
+            .add_systems(OnEnter(GameState::Busted), wasted::desaturate)
+            .add_systems(OnExit(GameState::Busted), wasted::restore_saturation);
     }
 }
 

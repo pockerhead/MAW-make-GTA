@@ -40,6 +40,11 @@ pub enum CharacterScheme {
 )]
 pub struct Character;
 
+/// Held in place without control: the arrested player.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct Cuffed;
+
 /// Head sphere sensor on the `Hitbox` layer; a hitscan ray that hits it deals headshot damage.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
@@ -88,6 +93,7 @@ impl Plugin for CharacterPlugin {
             .register_type::<AnimState>()
             .register_type::<Health>()
             .register_type::<Dead>()
+            .register_type::<Cuffed>()
             .configure_sets(
                 FixedUpdate,
                 (
@@ -161,14 +167,16 @@ fn drive_characters(
             &AimIntent,
             &mut JumpBuffer,
             &mut TnuaController<CharacterScheme>,
-            Has<Dead>,
+            (Has<Dead>, Has<Cuffed>),
             (&HitReaction, &Melee),
         ),
         With<Character>,
     >,
 ) {
-    for (mut intent, aim, mut buffer, mut controller, dead, (reaction, melee)) in &mut query {
-        if dead || reaction.is_active() {
+    for (mut intent, aim, mut buffer, mut controller, (dead, cuffed), (reaction, melee)) in
+        &mut query
+    {
+        if dead || cuffed || reaction.is_active() {
             // The walk basis persists in Tnua: without an explicit zero the body keeps walking.
             intent.jump_requested = false;
             buffer.remaining = 0.0;

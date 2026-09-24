@@ -10,10 +10,11 @@ use bevy::{
     world_serialization::{WorldAsset, WorldInstanceReady},
 };
 use gta_sim::{
-    character::{AnimState, CharacterBody, Dead},
+    character::{AnimState, CharacterBody, Cuffed, Dead},
     civilian::{Civilian, CivilianState},
     combat::{HitReaction, Loadout, Melee, MeleeWeapon, ShotFired, Swing, Weapon},
     gang::{GangConfig, GangMember},
+    police::{PoliceUnit, UnitKind},
     population::Appearance,
 };
 use std::time::Duration;
@@ -63,8 +64,8 @@ impl Plugin for CharacterVisualsPlugin {
 /// plays the clip of `AnimState` `i`.
 #[derive(Resource)]
 pub(super) struct CharacterAnimations {
-    /// Indexed by `ModelKey`: 0 = `model` (player, dummies), 1..=C = `civilian_models`, C+1.. =
-    /// `gang_models`.
+    /// Indexed by `ModelKey`: 0 = `model` (player, dummies), 1..=C = `civilian_models`, C+1..=C+G =
+    /// `gang_models`, C+G+1.. = `police_models`.
     pub(super) graphs: Vec<Handle<AnimationGraph>>,
     /// Scene of each model, by `ModelKey`; loaded up front so civilians never wait on asset IO.
     pub(super) scenes: Vec<Handle<WorldAsset>>,
@@ -157,6 +158,7 @@ impl FromWorld for CharacterAnimations {
         let models = std::iter::once(&config.model)
             .chain(&config.civilian_models)
             .chain(&config.gang_models)
+            .chain(&config.police_models)
             .collect::<Vec<_>>();
         let mut graphs = Vec::with_capacity(models.len());
         let mut scenes = Vec::with_capacity(models.len());
@@ -232,11 +234,13 @@ pub(super) fn model_transform(float_height: f32, scale: f32) -> Transform {
 }
 
 /// Model key and tint of a body: a civilian's `Appearance` picks a civilian model and tint, a gang
-/// member's a gang model under its gang's tint; everyone else is model 0 under `tint`.
+/// member's a gang model under its gang's tint, a cop's a police model under the patrol or SWAT
+/// tint; everyone else is model 0 under `tint`.
 pub(super) fn body_look(
     appearance: Option<Appearance>,
     civilian: bool,
     gang: Option<u8>,
+    police: Option<UnitKind>,
     config: &CharacterVisualConfig,
     gangs: &GangConfig,
 ) -> (usize, (f32, f32, f32)) {
@@ -248,13 +252,21 @@ pub(super) fn body_look(
         let tint = config.civilian_tints[(a / c) % config.civilian_tints.len()];
         return (1 + a % c, tint);
     }
+    if let Some(kind) = police {
+        let tint = match kind {
+            UnitKind::Patrol => config.police_tint,
+            UnitKind::Swat => config.swat_tint,
+        };
+        let g = config.gang_models.len();
+        return (1 + c + g + a % config.police_models.len(), tint);
+    }
     let Some(spec) = gang.and_then(|g| gangs.gangs.get(g as usize)) else {
         return (0, config.tint);
     };
     (1 + c + a % config.gang_models.len(), spec.tint)
 }
 
-/// Look inputs of a body: appearance, civilian, gang.
+/// Look inputs of a body: appearance, civilian, gang, police.
 type LookQuery<'w, 's> = Query<
     'w,
     's,
@@ -262,6 +274,7 @@ type LookQuery<'w, 's> = Query<
         Option<&'static Appearance>,
         Has<Civilian>,
         Option<&'static GangMember>,
+        Option<&'static PoliceUnit>,
     ),
 >;
 
@@ -271,13 +284,14 @@ fn look_of(
     config: &CharacterVisualConfig,
     gangs: &GangConfig,
 ) -> (usize, (f32, f32, f32)) {
-    let Ok((appearance, civilian, member)) = looks.get(entity) else {
+    let Ok((appearance, civilian, member, cop)) = looks.get(entity) else {
         return (0, config.tint);
     };
     body_look(
         appearance.copied(),
         civilian,
         member.map(|m| m.gang),
+        cop.map(|c| c.kind),
         config,
         gangs,
     )
@@ -455,7 +469,7 @@ fn drive_character_animation(
         &LinearVelocity,
         Option<&Loadout>,
         (&HitReaction, &Melee),
-        Has<Dead>,
+        (Has<Dead>, Has<Cuffed>),
         Option<&Civilian>,
     )>,
     mut shots: MessageReader<ShotFired>,
@@ -471,7 +485,7 @@ fn drive_character_animation(
     let shooters = shots.read().map(|shot| shot.shooter).collect::<Vec<_>>();
     let blend = Duration::from_secs_f32(config.blend_seconds);
     for (mut animator, mut player, mut transitions) in &mut animators {
-        let Ok((state, velocity, loadout, (reaction, melee), dead, civilian)) =
+        let Ok((state, velocity, loadout, (reaction, melee), (dead, cuffed), civilian)) =
             characters.get(animator.character)
         else {
             continue;
@@ -480,7 +494,9 @@ fn drive_character_animation(
             player.start(animations.rest).repeat();
         }
         let knocked_down = reaction.is_knocked_down();
-        let cowering = civilian.is_some_and(|c| matches!(c.state, CivilianState::Cower { .. }));
+        // The arrested player kneels with the cowering pose.
+        let cowering =
+            cuffed || civilian.is_some_and(|c| matches!(c.state, CivilianState::Cower { .. }));
         let action = if dead {
             Some(ShownAction::Death)
         } else if knocked_down {

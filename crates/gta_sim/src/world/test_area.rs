@@ -2,6 +2,9 @@ use super::Block;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
+/// Police station respawn of the fixture level: clear floor away from the hospital default at the origin.
+pub const STATION_SPAWN: Vec3 = Vec3::new(-20.0, 0.0, 20.0);
+
 // Fixture level for the headless character gates.
 const TEST_AREA: &[(Vec3, Vec3, f32)] = &[
     (Vec3::new(80.0, 1.0, 80.0), Vec3::new(0.0, -0.5, 0.0), 0.0),

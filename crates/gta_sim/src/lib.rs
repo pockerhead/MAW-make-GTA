@@ -10,7 +10,9 @@ pub mod layers;
 pub mod navigation;
 pub mod perception;
 pub mod player;
+pub mod police;
 pub mod population;
+pub(crate) mod tactics;
 pub mod wanted;
 pub mod world;
 
@@ -30,6 +32,7 @@ use gang::{GANG_CONFIG, GangConfig, GangPlugin};
 use navigation::{NAVIGATION_CONFIG, NavigationConfig, NavigationPlugin};
 use perception::{PERCEPTION_CONFIG, PerceptionConfig, PerceptionPlugin};
 use player::PlayerPlugin;
+use police::{EscalationConfig, POLICE_CONFIG, PolicePlugin};
 use population::{POPULATION_CONFIG, PopulationConfig, PopulationPlugin};
 use wanted::{WANTED_CONFIG, WantedConfig, WantedPlugin};
 use world::{CITY_CONFIG, CityParams, CityParamsRes, WorldPlugin, WorldSource};
@@ -106,6 +109,14 @@ pub fn compose_sim(
         path: root.path(WANTED_CONFIG),
         message,
     })?;
+    let police = load_config::<EscalationConfig>(&root, POLICE_CONFIG)?;
+    police
+        .validate()
+        .and_then(|()| police.validate_ring(population.despawn_distance))
+        .map_err(|message| ConfigError {
+            path: root.path(POLICE_CONFIG),
+            message,
+        })?;
     // A witness starts calling within `slots` ticks of the stimulus (Bevy's default fixed tick, never overridden).
     let tick = Time::<Fixed>::default().timestep().as_secs_f32();
     let call_delay = f32::from(perception.slots) * tick + civilian.call_seconds;
@@ -141,6 +152,7 @@ pub fn compose_sim(
         .insert_resource(civilian)
         .insert_resource(gangs)
         .insert_resource(wanted)
+        .insert_resource(police)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),
@@ -154,6 +166,7 @@ pub fn compose_sim(
             PopulationPlugin { seed: combat_seed },
             CivilianPlugin,
             GangPlugin { seed: combat_seed },
+            PolicePlugin { seed: combat_seed },
             WantedPlugin,
         ));
     Ok(())

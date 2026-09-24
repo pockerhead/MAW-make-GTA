@@ -583,3 +583,53 @@ fn gang_punches_spare_non_hostile_characters_at_impact() {
         "the player was spared: {dealt:?}"
     );
 }
+
+/// Two 14 m walls (z -20..-6, 0.3 m thick) leaving a passage of `width` m around x = 0 (TASK-010 QA
+/// round 3, Bug 1): every side spot of the rear member is behind a wall.
+fn corridor(width: f32) -> Vec<(Vec3, Vec3)> {
+    let x = width / 2.0 + 0.15;
+    [x, -x]
+        .map(|x| (Vec3::new(x, 1.5, -13.0), Vec3::new(0.3, 3.0, 14.0)))
+        .to_vec()
+}
+
+/// Before the queue slot the rear member fired 0 shots in every case (QA round 3).
+fn corridor_case(width: f32, front: Weapon, rear: Weapon, rear_z: f32) {
+    let layout = Layout {
+        members: vec![
+            (0, Vec3::new(0.0, 0.0, -10.0), front),
+            (0, Vec3::new(0.0, 0.0, rear_z), rear),
+        ],
+        walls: corridor(width),
+        ..default()
+    };
+    assert_keeps_firing(
+        &format!("corridor {width} m, {front:?} front, {rear:?} rear at {rear_z}"),
+        &layout,
+    );
+}
+
+#[test]
+fn corridor_2_4_smg_front_pistol_rear() {
+    corridor_case(2.4, Weapon::Smg, Weapon::Pistol, -14.0);
+}
+
+#[test]
+fn corridor_3_0_smg_front_pistol_rear() {
+    corridor_case(3.0, Weapon::Smg, Weapon::Pistol, -14.0);
+}
+
+#[test]
+fn corridor_2_4_pistol_front_smg_rear() {
+    corridor_case(2.4, Weapon::Pistol, Weapon::Smg, -14.0);
+}
+
+#[test]
+fn corridor_3_0_pistol_front_smg_rear() {
+    corridor_case(3.0, Weapon::Pistol, Weapon::Smg, -14.0);
+}
+
+#[test]
+fn corridor_2_4_rear_member_18m_back() {
+    corridor_case(2.4, Weapon::Smg, Weapon::Pistol, -18.0);
+}

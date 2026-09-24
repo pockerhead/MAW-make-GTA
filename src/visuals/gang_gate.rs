@@ -60,7 +60,7 @@ fn spawn_gang_members(app: &mut App) -> Vec<(Entity, u8)> {
 }
 
 /// Base colour of the untinted `tinted_mesh` material in the glTF file `model`.
-fn source_base_color(app: &mut App, model: &str) -> LinearRgba {
+pub(super) fn source_base_color(app: &mut App, model: &str) -> LinearRgba {
     let handle = app
         .world()
         .resource::<AssetServer>()
@@ -85,7 +85,7 @@ fn source_base_color(app: &mut App, model: &str) -> LinearRgba {
 }
 
 /// Base colour of the tinted mesh under `character`'s model.
-fn tinted_base_color(app: &mut App, character: Entity) -> LinearRgba {
+pub(super) fn tinted_base_color(app: &mut App, character: Entity) -> LinearRgba {
     let name = visual_config().tinted_mesh;
     let mesh = app
         .world_mut()
@@ -113,7 +113,7 @@ fn owner_of(app: &App, model: Entity) -> Entity {
 /// Stand-in for the glTF handler of `PbrPlugin` (absent headless): gives each glTF mesh a
 /// `StandardMaterial` with its file's base colour, so `on_model_ready` has a material to tint.
 #[derive(Clone)]
-struct StandardMaterialStandIn;
+pub(super) struct StandardMaterialStandIn;
 
 impl GltfExtensionHandler for StandardMaterialStandIn {
     fn dyn_clone(&self) -> Box<dyn ErasedGltfExtensionHandler> {

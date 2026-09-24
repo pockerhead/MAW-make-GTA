@@ -1,4 +1,4 @@
-use super::{HospitalSpawn, PlayerSpawn};
+use super::{HospitalSpawn, PlayerSpawn, PoliceStationSpawn};
 use crate::character::HealthConfig;
 use crate::flow::GameState;
 use avian3d::prelude::*;
@@ -112,6 +112,15 @@ pub(super) fn apply_city_generation(
             return;
         }
     }
+    // Same clearance from the block corners as the hospital spawn.
+    match station_spawn(&layout, &params.0, curb, health.pickups.spacing) {
+        Ok(spawn) => commands.insert_resource(spawn),
+        Err(err) => {
+            error!("city generation failed: {err}");
+            exit.write(AppExit::error());
+            return;
+        }
+    }
     commands.insert_resource(landmarks(&layout, curb));
     commands.insert_resource(CityLayoutHash(hash));
     commands.insert_resource(City(layout));
@@ -136,6 +145,29 @@ fn hospital_spawn(
         )
     })?;
     Ok(HospitalSpawn {
+        point: Vec3::new(p.x, curb, p.y),
+        along: Vec3::new(d.x, 0.0, d.y),
+    })
+}
+
+fn station_spawn(
+    layout: &CityLayout,
+    params: &CityParams,
+    curb: f32,
+    margin: f32,
+) -> Result<PoliceStationSpawn, String> {
+    let idx = layout
+        .buildings
+        .iter()
+        .position(|b| b.kind == BuildingKind::PoliceStation)
+        .ok_or("no police station")?;
+    let (p, d) = sidewalk_anchor(layout, params, idx, margin).ok_or_else(|| {
+        format!(
+            "police station {idx}: no sidewalk side of length >= {}",
+            2.0 * margin
+        )
+    })?;
+    Ok(PoliceStationSpawn {
         point: Vec3::new(p.x, curb, p.y),
         along: Vec3::new(d.x, 0.0, d.y),
     })

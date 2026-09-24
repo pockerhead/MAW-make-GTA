@@ -41,6 +41,7 @@ impl Plugin for CameraPlugin {
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, apply_mouse_look)
             .add_systems(OnExit(GameState::Wasted), reset_pivot)
+            .add_systems(OnExit(GameState::Busted), reset_pivot)
             .add_systems(
                 PostUpdate,
                 (

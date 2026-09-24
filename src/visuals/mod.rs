@@ -13,6 +13,8 @@ mod facade;
 #[cfg(test)]
 mod gang_gate;
 mod pickups;
+#[cfg(test)]
+mod police_gate;
 mod props;
 mod sky;
 mod weapons;

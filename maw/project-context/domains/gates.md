@@ -95,6 +95,14 @@
 - 2026-09-24 (TASK-011) — gates that exercise only the first row of a table (heat <= 50 → 1 star) leave rows 2..N
   untested: a flip to `rows[0]` stayed green. Table-driven rules get one case per row.
 
+- 2026-09-24 (TASK-012) — test-floor fixtures collide with `world/test_area.rs` (4x5x4 box, ramp, wall) more
+  often than planners expect: check each fixture point against it; a player placed inside a building sinks
+  (plaza fixture put the player inside the tower → fake "navmesh" data). Add `GATE BROKEN` on a displaced fixture.
+- 2026-09-24 (TASK-012) — `WantedLevel.stars` is recomputed only in `track_search`: after `set_heat` run one tick
+  (`raise_heat` helper) before spawning anything that reads stars.
+- 2026-09-24 (TASK-012) — runtime "stuck"/"arrived" trackers use physical distance, never FSM state (t11 counted a
+  cop in Attack at 30 m as arrived).
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

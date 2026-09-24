@@ -23,6 +23,9 @@ pub struct UiConfig {
     pub wasted_backdrop: Rgba,
     /// Colour grading post-saturation of the 3D view while wasted.
     pub wasted_saturation: f32,
+    /// The arrest screen; size, backdrop and saturation are the wasted ones.
+    pub busted: String,
+    pub busted_color: Rgb,
     /// Label of a headshot damage number; `{damage}` is replaced with the value.
     pub damage_crit: String,
     pub hud: HudLayout,
@@ -117,6 +120,7 @@ impl UiConfig {
             ("title_font", &self.title_font),
             ("loading", &self.loading),
             ("wasted", &self.wasted),
+            ("busted", &self.busted),
             ("damage_crit", &self.damage_crit),
         ] {
             if value.is_empty() {
@@ -192,6 +196,8 @@ impl UiConfig {
         }
         let (r, g, b) = self.wasted_color;
         unit("wasted_color", &[r, g, b])?;
+        let (r, g, b) = self.busted_color;
+        unit("busted_color", &[r, g, b])?;
         let (r, g, b, a) = self.wasted_backdrop;
         unit("wasted_backdrop", &[r, g, b, a])?;
         let (r, g, b) = hud.health_color;

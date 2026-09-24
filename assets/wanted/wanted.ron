@@ -1,6 +1,8 @@
 (
-    // Heat of a witnessed crime by the player (GDD §6.4). Cop rows come with T11, car rows with T14/T15.
-    heat: (punch_civilian: 5, shooting_near_people: 10, wound_civilian: 30, kill_person: 40),
+    // Heat of a crime by the player (GDD §6.4): civilian/gang rows need a witness, cop rows are reported always (the cop is
+    // the witness). Car rows come with T14/T15.
+    heat: (punch_civilian: 5, shooting_near_people: 10, wound_civilian: 30, kill_person: 40,
+           punch_cop: 45, wound_cop: 80, kill_cop: 150),
     // Stars 1..5: heat threshold, search circle radius (m), seconds unseen outside the circle to clear.
     stars: (
         (heat: 40,   search_radius: 40.0,  clear_seconds: 10.0),

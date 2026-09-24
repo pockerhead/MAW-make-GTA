@@ -16,6 +16,7 @@ use crate::flow::{GameState, NpcSystems};
 use crate::navigation::Route;
 use crate::perception::{AiSystems, Perception};
 use crate::population::{Appearance, Offscreen};
+use crate::tactics::Discipline;
 use crate::world::City;
 use bevy::prelude::*;
 use rand_chacha::{
@@ -351,6 +352,21 @@ impl GangConfig {
             return false;
         };
         !target.is_some_and(|t| self.hostile(gang, t))
+    }
+}
+
+impl GangCombatConfig {
+    /// Fire-line tuning of a member; a spared body within `melee_distance.1` of the target yields it.
+    pub(crate) fn discipline(&self) -> Discipline<'_> {
+        Discipline {
+            aim_error_deg: self.aim_error_deg,
+            fire_line_margin: self.fire_line_margin,
+            pressed_distance: self.melee_distance.1,
+            reposition_offsets: &self.reposition_offsets,
+            reposition_step: self.reposition_step,
+            reposition_gait: self.reposition_gait,
+            chase_gait: self.chase_gait,
+        }
     }
 }
 

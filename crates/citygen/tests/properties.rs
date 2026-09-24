@@ -316,6 +316,59 @@ fn pickup_spacing() -> f32 {
     file.pickups.spacing
 }
 
+/// Building `idx` has a sidewalk anchor: a unit direction and three points on a sidewalk, off every
+/// carriageway and lot, within `margin` along the sidewalk from the building centre.
+fn assert_anchor_on_sidewalk(
+    seed: u64,
+    layout: &CityLayout,
+    params: &CityParams,
+    idx: usize,
+    margin: f32,
+    what: &str,
+) {
+    let (point, along) = sidewalk_anchor(layout, params, idx, margin)
+        .unwrap_or_else(|| panic!("seed {seed}: {what} {idx} has no sidewalk anchor"));
+    assert!(
+        (along.length() - 1.0).abs() < 1e-4,
+        "seed {seed}: direction {along} is not unit"
+    );
+    for p in [point, point + along * margin, point - along * margin] {
+        let on_sidewalk = layout.roads.edges.iter().any(|e| {
+            let half = params.half_carriageway(e.class);
+            let (a, b) = (
+                layout.roads.nodes[e.a as usize],
+                layout.roads.nodes[e.b as usize],
+            );
+            let d = dist_point_segment(p, a, b);
+            e.class != RoadClass::Alley && d >= half && d <= half + params.sidewalk(e.class)
+        });
+        assert!(on_sidewalk, "seed {seed}: {p} is not on a sidewalk");
+        for (i, e) in layout.roads.edges.iter().enumerate() {
+            let (a, b) = (
+                layout.roads.nodes[e.a as usize],
+                layout.roads.nodes[e.b as usize],
+            );
+            let d = dist_point_segment(p, a, b);
+            assert!(
+                d >= params.half_carriageway(e.class) - 1e-3,
+                "seed {seed}: {p} is on the carriageway of edge {i} ({d} m from its axis)"
+            );
+        }
+        for (i, lot) in layout.lots.iter().enumerate() {
+            assert!(
+                !contains_convex(&lot.polygon, p, 0.0),
+                "seed {seed}: {p} inside lot {i}"
+            );
+        }
+    }
+    let center = layout.buildings[idx].center;
+    let off = (center - point).dot(along).abs();
+    assert!(
+        off <= margin + 1e-3,
+        "seed {seed}: anchor {point} is {off} m along the sidewalk from {what} {center}"
+    );
+}
+
 #[test]
 fn hospital_anchor_on_sidewalk() {
     let params = shipped_params();
@@ -331,47 +384,27 @@ fn hospital_anchor_on_sidewalk() {
         let &[idx] = hospitals.as_slice() else {
             panic!("seed {seed}: expected one hospital, found {hospitals:?}");
         };
-        let (point, along) = sidewalk_anchor(layout, &params, idx, margin)
-            .unwrap_or_else(|| panic!("seed {seed}: hospital {idx} has no sidewalk anchor"));
-        assert!(
-            (along.length() - 1.0).abs() < 1e-4,
-            "seed {seed}: direction {along} is not unit"
-        );
-        for p in [point, point + along * margin, point - along * margin] {
-            let on_sidewalk = layout.roads.edges.iter().any(|e| {
-                let half = params.half_carriageway(e.class);
-                let (a, b) = (
-                    layout.roads.nodes[e.a as usize],
-                    layout.roads.nodes[e.b as usize],
-                );
-                let d = dist_point_segment(p, a, b);
-                e.class != RoadClass::Alley && d >= half && d <= half + params.sidewalk(e.class)
-            });
-            assert!(on_sidewalk, "seed {seed}: {p} is not on a sidewalk");
-            for (i, e) in layout.roads.edges.iter().enumerate() {
-                let (a, b) = (
-                    layout.roads.nodes[e.a as usize],
-                    layout.roads.nodes[e.b as usize],
-                );
-                let d = dist_point_segment(p, a, b);
-                assert!(
-                    d >= params.half_carriageway(e.class) - 1e-3,
-                    "seed {seed}: {p} is on the carriageway of edge {i} ({d} m from its axis)"
-                );
-            }
-            for (i, lot) in layout.lots.iter().enumerate() {
-                assert!(
-                    !contains_convex(&lot.polygon, p, 0.0),
-                    "seed {seed}: {p} inside lot {i}"
-                );
-            }
+        assert_anchor_on_sidewalk(*seed, layout, &params, idx, margin, "hospital");
+    }
+}
+
+/// The police station respawn (`world::station_spawn`) uses the first station with the hospital margin.
+#[test]
+fn police_station_anchor_on_sidewalk() {
+    let params = shipped_params();
+    let margin = pickup_spacing();
+    for (seed, layout) in layouts() {
+        let stations = layout
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.kind == BuildingKind::PoliceStation)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+        assert!(!stations.is_empty(), "seed {seed}: no police station");
+        for idx in stations {
+            assert_anchor_on_sidewalk(*seed, layout, &params, idx, margin, "police station");
         }
-        let center = layout.buildings[idx].center;
-        let off = (center - point).dot(along).abs();
-        assert!(
-            off <= margin + 1e-3,
-            "seed {seed}: anchor {point} is {off} m along the sidewalk from hospital {center}"
-        );
     }
 }
 

@@ -64,6 +64,7 @@ pub(super) fn models() -> Vec<String> {
     std::iter::once(config.model.clone())
         .chain(config.civilian_models.clone())
         .chain(config.gang_models.clone())
+        .chain(config.police_models.clone())
         .collect()
 }
 

@@ -18,7 +18,7 @@ use gta_sim::{
         BulletTrace, DamageDealt, GunSlot, Loadout, ShotFired, Weapon, WeaponsConfig, dummy_bundle,
     },
     compose_sim,
-    config::ConfigRoot,
+    config::{ConfigError, ConfigRoot, load_config},
     flow::{GameState, WastedPhase},
     gang::{
         Faction, GangConfig, GangHeat, GangMember, GangState, GangTerritories, Turf,
@@ -31,8 +31,9 @@ use gta_sim::{
     world::{CityParams, CityParamsRes, PlayerSpawn, WorldSource},
 };
 use std::{
+    fs,
     path::Path,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub fn assets_root() -> ConfigRoot {
@@ -41,6 +42,46 @@ pub fn assets_root() -> ConfigRoot {
         path.canonicalize()
             .unwrap_or_else(|_| panic!("GATE BROKEN: assets root not found at {}", path.display())),
     )
+}
+
+/// The shipped `rel` config with `from` replaced by `to`, loaded from a temporary copy of the file.
+pub fn sabotaged_load<T: serde::de::DeserializeOwned>(
+    rel: &str,
+    tag: &str,
+    from: &str,
+    to: &str,
+) -> Result<T, ConfigError> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = ConfigRoot(std::env::temp_dir().join(format!(
+        "gta_sim_{tag}_{}_{}",
+        std::process::id(),
+        unique
+    )));
+    let file = root.path(rel);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = fs::read_to_string(assets_root().path(rel)).unwrap();
+    assert!(
+        original.contains(from),
+        "GATE BROKEN: shipped {rel} has no {from:?}"
+    );
+    fs::write(&file, original.replacen(from, to, 1)).unwrap();
+    let loaded = load_config::<T>(&root, rel);
+    fs::remove_dir_all(&root.0).unwrap();
+    loaded
+}
+
+/// Validation error of the shipped `rel` config with `from` replaced by `to`.
+pub fn sabotaged<T: serde::de::DeserializeOwned>(
+    rel: &str,
+    tag: &str,
+    from: &str,
+    to: &str,
+    validate: impl FnOnce(&T) -> Result<(), String>,
+) -> String {
+    validate(&sabotaged_load(rel, tag, from, to).unwrap()).unwrap_err()
 }
 
 pub fn composed_app(source: WorldSource) -> App {

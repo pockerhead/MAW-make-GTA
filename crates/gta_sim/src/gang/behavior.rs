@@ -1,7 +1,5 @@
 //! Gang systems: heat, the player's territory, provocation and group aggro, the member FSM, death.
 
-mod fire_line;
-
 use super::fsm::{Focus, Move, Senses, Tactic, band_move, choose_tactic, next_state};
 use super::{
     Faction, GangConfig, GangHeat, GangMember, GangRng, GangState, GangTerritories,
@@ -9,21 +7,22 @@ use super::{
 };
 use crate::character::{
     ActionIntent, AimIntent, Character, CharacterBody, Dead, Gait, Health, HealthConfig,
-    LocomotionConfig, MoveIntent, WeaponRequest,
+    LocomotionConfig, MoveIntent,
 };
 use crate::combat::{
-    DamageDealt, GunSlot, Loadout, ShotFired, Weapon, WeaponsConfig, cone_sample, dropped_gun,
+    AimConfig, DamageDealt, GunSlot, Loadout, ShotFired, WeaponsConfig, cone_sample, dropped_gun,
 };
 use crate::navigation::{
-    NavigationConfig, Route, RouteLoad, SidewalkGraph, avoid_offset, flat_distance, nearest_node,
-    plan_route, route_point, steer,
+    NavigationConfig, Route, RouteLoad, SidewalkGraph, avoid_offset, flat_distance, steer,
 };
 use crate::perception::{AiClock, Perception, PerceptionConfig, sight_blocked};
 use crate::player::Player;
 use crate::population::corpse_components;
+use crate::tactics::{
+    Aim, Ctx, FireLine, Motion, Seek, Shooter, apply_motion, hold_fire, overreach, select,
+};
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use fire_line::{Blocked, FireLine, Shooter, unblock};
 
 pub(super) fn decay_gang_heat(time: Res<Time<Fixed>>, mut heat: ResMut<GangHeat>) {
     let dt = time.delta_secs();
@@ -118,77 +117,6 @@ struct Body {
     alive: bool,
 }
 
-/// Shared read-only inputs of one `gang_fsm` run.
-struct Ctx<'a, 'w, 's> {
-    nav: &'a NavigationConfig,
-    graph: &'a SidewalkGraph,
-    spatial: &'a SpatialQuery<'w, 's>,
-    dt: f32,
-}
-
-/// Where a member walks this tick: `dest` straight (with wall avoidance) or along a graph route.
-struct Seek {
-    dest: Vec3,
-    gait: Gait,
-    direct: bool,
-}
-
-/// How a member moves this tick.
-enum Motion {
-    Stand,
-    /// Walk along a move yaw (`None`: stand).
-    Yaw(Option<f32>, Gait),
-    Seek(Seek),
-}
-
-/// Move yaw towards `seek.dest`: direct seek plus the avoidance offset refreshed on the slot, or the
-/// next point of a route re-planned within the tick's search budget; direct when no route is usable.
-fn head_for(
-    ctx: &Ctx,
-    seek: &Seek,
-    chest: Vec3,
-    on_slot: bool,
-    member: &mut GangMember,
-    route: &mut Route,
-    load: &mut RouteLoad,
-) -> Option<f32> {
-    route.age += ctx.dt;
-    let straight = steer(chest, seek.dest)?;
-    if seek.direct {
-        route.nodes.clear();
-        if on_slot {
-            member.avoid = avoid_offset(ctx.spatial, chest, straight, ctx.nav, &mut load.rays);
-        }
-        return Some(straight + member.avoid);
-    }
-    member.avoid = 0.0;
-    let Some(goal) = nearest_node(ctx.graph, seek.dest) else {
-        return Some(straight);
-    };
-    let stale = route.nodes.is_empty()
-        || route.goal != Some(goal)
-        || route.age >= ctx.nav.route_refresh_seconds;
-    if stale && load.searches < ctx.nav.route_requests_per_tick {
-        load.searches += 1;
-        plan_route(ctx.graph, route, chest, goal);
-    }
-    if route.nodes.is_empty() {
-        return Some(straight);
-    }
-    let point = route_point(ctx.graph, route, chest, seek.dest, ctx.nav.arrive_radius);
-    steer(chest, point).or(Some(straight))
-}
-
-fn walk(intent: &mut MoveIntent, yaw: Option<f32>, gait: Gait) {
-    let Some(yaw) = yaw else {
-        intent.axis = Vec2::ZERO;
-        return;
-    };
-    intent.axis = Vec2::Y;
-    intent.yaw = yaw;
-    intent.gait = gait;
-}
-
 /// Pulls the trigger (or punches) when the cooldown is over; the aim direction gets the gang's error cone.
 fn pull(
     member: &mut GangMember,
@@ -215,6 +143,7 @@ pub(super) fn gang_fsm(
         Res<NavigationConfig>,
         Res<WeaponsConfig>,
         Res<HealthConfig>,
+        Res<AimConfig>,
     ),
     state: (
         Res<AiClock>,
@@ -245,10 +174,11 @@ pub(super) fn gang_fsm(
     bodies: Query<(&Position, Has<Dead>), Without<GangMember>>,
     characters: Query<(Entity, &Position, &Health, Option<&Faction>), With<Character>>,
 ) {
-    let (cfg, perception, loco, nav, weapons, health_cfg) = configs;
+    let (cfg, perception, loco, nav, weapons, health_cfg, aim_cfg) = configs;
     let (clock, heat, territory, graph) = state;
     let h = &cfg.hostility;
     let c = &cfg.combat;
+    let d = c.discipline();
     let ctx = Ctx {
         nav: &nav,
         graph: &graph,
@@ -285,7 +215,8 @@ pub(super) fn gang_fsm(
         .map(|(e, p, _, f)| (e, p.0, f.copied()))
         .collect();
     let radius = loco.capsule_radius;
-    let clearance = radius + c.fire_line_margin;
+    let clearance = radius + d.fire_line_margin;
+    let overreach = overreach(&aim_cfg, &loco);
     let shooters: Vec<Shooter> = members
         .iter()
         .filter_map(|(entity, m, _, _, position, _, loadout, ..)| {
@@ -296,11 +227,18 @@ pub(super) fn gang_fsm(
             let to = body(target).filter(|b| b.alive)?.chest;
             (m.sees && loadout.held == Some(m.gun)).then(|| Shooter {
                 entity,
-                gang: m.gang,
+                faction: Faction::Gang(m.gang),
                 chest: position.0,
                 target,
                 to,
-                line: FireLine::of(c, &weapons, m.gun, loadout, clearance),
+                line: FireLine::of(
+                    d.aim_error_deg,
+                    &weapons,
+                    m.gun,
+                    loadout,
+                    clearance,
+                    overreach,
+                ),
             })
         })
         .collect();
@@ -442,7 +380,14 @@ pub(super) fn gang_fsm(
 
         // Hold fire while a groupmate or a bystander is in the line (a miss flies on to the weapon range)
         // and move to clear it.
-        let line = FireLine::of(c, &weapons, member.gun, loadout, clearance);
+        let line = FireLine::of(
+            d.aim_error_deg,
+            &weapons,
+            member.gun,
+            loadout,
+            clearance,
+            overreach,
+        );
         let gang = Faction::Gang(member.gang);
         let shooting = match member.state {
             GangState::Attack { .. } => matches!(tactic, Tactic::Shoot | Tactic::Retreat),
@@ -454,44 +399,27 @@ pub(super) fn gang_fsm(
         let mut line_blocked = false;
         let mut clearing = None;
         if let (true, Some((target_entity, at))) = (shooting && member.sees && in_range, target) {
-            let others: Vec<(Entity, Vec3, Option<Faction>)> =
-                living.iter().filter(|b| b.0 != me).copied().collect();
-            // A spared body pressed against the target (a brawling groupmate, a human shield) yields
-            // the target to the fight: no line past it opens by closing in.
-            let (shields, yielding): (Vec<Vec3>, Vec<bool>) = others
-                .iter()
-                .filter(|&&(e, _, f)| e != target_entity && cfg.spares(Some(gang), f))
-                .map(|&(_, p, _)| (p, flat_distance(p, at.chest) <= c.melee_distance.1))
-                .unzip();
-            if line.blocked(chest, at.chest, &shields) {
-                line_blocked = true;
-                // Two members blocking each other: the lower index moves, this one holds.
-                let yields = shooters.iter().any(|s| {
-                    s.entity.index_u32() < me.index_u32()
-                        && s.target != me
-                        && s.entity != target_entity
-                        && cfg.spares(Some(gang), Some(Faction::Gang(s.gang)))
-                        && line.blocked(chest, at.chest, &[s.chest])
-                        && s.line.blocked(s.chest, s.to, &[chest])
-                });
-                clearing = if yields {
-                    Some(Motion::Stand)
-                } else {
-                    let all: Vec<Vec3> = others.iter().map(|b| b.1).collect();
-                    let blocked = Blocked {
-                        chest,
-                        to: at.chest,
-                        line,
-                        shields: &shields,
-                        yielding: &yielding,
-                        bodies: &all,
-                    };
-                    let (spot, motion) =
-                        unblock(&ctx, &blocked, plan, on_slot, c, radius, &mut load.rays);
-                    member.reposition = spot;
-                    motion
-                };
-            }
+            let hold = hold_fire(
+                &ctx,
+                me,
+                chest,
+                Aim {
+                    entity: target_entity,
+                    chest: at.chest,
+                },
+                line,
+                &living,
+                &shooters,
+                |f| cfg.spares(Some(gang), f),
+                plan,
+                on_slot,
+                &d,
+                radius,
+                &mut load.rays,
+            );
+            line_blocked = hold.line_blocked;
+            clearing = hold.clearing;
+            member.reposition = hold.kept_spot;
         }
         let (want, motion) = match (member.state, target) {
             (GangState::Warn, _) => {
@@ -596,26 +524,17 @@ pub(super) fn gang_fsm(
             }
         };
         select(&mut action, loadout, want);
-        match motion {
-            Motion::Stand => intent.axis = Vec2::ZERO,
-            Motion::Yaw(yaw, gait) => walk(&mut intent, yaw, gait),
-            Motion::Seek(s) => {
-                let yaw = head_for(&ctx, &s, chest, on_slot, member, &mut route, &mut load);
-                walk(&mut intent, yaw, s.gait);
-            }
-        }
+        apply_motion(
+            &ctx,
+            motion,
+            chest,
+            on_slot,
+            &mut member.avoid,
+            &mut route,
+            &mut load,
+            &mut intent,
+        );
     }
-}
-
-/// Requests the wanted weapon only when it differs from the held one (never `Unarmed` while unarmed).
-fn select(action: &mut ActionIntent, loadout: &Loadout, want: Option<Weapon>) {
-    if loadout.held == want {
-        return;
-    }
-    action.select = Some(match want {
-        Some(gun) => WeaponRequest::Gun(gun),
-        None => WeaponRequest::Unarmed,
-    });
 }
 
 /// A member at 0 health becomes a corpse and drops its gun (GDD §6.3).

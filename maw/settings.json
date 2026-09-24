@@ -16,13 +16,17 @@
       "provider": "claude"
     },
     "premise-challenge": {
-      "provider": "codex"
+      "provider": "claude",
+      "model": "opus",
+      "effort": "medium"
     },
     "planner": {
       "provider": "claude"
     },
     "plan-reviewer-1": {
-      "provider": "codex"
+      "provider": "claude",
+      "model": "opus",
+      "effort": "medium"
     },
     "plan-reviewer-2": {
       "provider": "claude"
@@ -31,7 +35,9 @@
       "provider": "claude"
     },
     "code-reviewer": {
-      "provider": "codex"
+      "provider": "claude",
+      "model": "opus",
+      "effort": "medium"
     },
     "fixer": {
       "provider": "claude"

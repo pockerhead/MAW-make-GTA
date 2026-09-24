@@ -53,6 +53,11 @@
   not a movement-rule patch. Moving shooters evaluate candidate spots by the ACTUAL rotated line to the target; a
   sidestep is not a parallel shift of the line (T9 fixer rounds 2-3).
 
+- 2026-09-24 (TASK-012) — hold-fire checks bound a spared body by the BULLET's reach (range from the muzzle to the
+  near capsule/head surface: `tactics::overreach`), not by centre-to-centre distance: surround spawns put cops ~45 m
+  apart through the player, exactly at SMG range. Routes walked to their end must still re-plan when the NPC is
+  displaced (`head_for`: skip the age re-plan only while the nearest node is still the goal).
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).
