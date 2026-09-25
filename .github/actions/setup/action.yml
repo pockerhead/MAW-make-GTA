@@ -1,0 +1,39 @@
+name: setup
+description: Rust 1.95.0, rust-cache, Python, and optionally Linux dev libs and the fetched third-party assets.
+inputs:
+  linux-deps:
+    description: Install the apt packages the Bevy client needs (alsa, udev, wayland, xkbcommon).
+    default: "false"
+  assets:
+    description: Restore/fetch assets/third_party and verify them offline.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@1.95.0
+      with:
+        components: clippy
+    - if: inputs.linux-deps == 'true'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+    # After the toolchain step: the cache key hashes rustc.
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+    - if: inputs.assets == 'true'
+      uses: actions/cache@v6
+      with:
+        path: |
+          assets/third_party/*
+          !assets/third_party/manifest.ron
+        key: third-party-${{ hashFiles('assets/third_party/manifest.ron') }}
+    - if: inputs.assets == 'true'
+      shell: bash
+      run: python tools/fetch_assets.py
+    # Offline check before any test: the gates' SKIP branches for missing packs stay unreachable in CI.
+    - if: inputs.assets == 'true'
+      shell: bash
+      run: python tools/fetch_assets.py --check

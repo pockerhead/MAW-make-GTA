@@ -6,6 +6,8 @@
 
 <!-- SHOWCASE-HERO:END -->
 
+<p align="center"><a href="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/clippy.yml?query=branch%3Amain"><img src="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/clippy.yml/badge.svg?branch=main" alt="clippy"></a> <a href="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/sim-gates.yml?query=branch%3Amain"><img src="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/sim-gates.yml/badge.svg?branch=main" alt="sim gates"></a> <a href="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/citygen-gates.yml?query=branch%3Amain"><img src="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/citygen-gates.yml/badge.svg?branch=main" alt="citygen gates"></a> <a href="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/client-gates.yml?query=branch%3Amain"><img src="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/client-gates.yml/badge.svg?branch=main" alt="client gates"></a> <a href="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/repo-checks.yml?query=branch%3Amain"><img src="https://github.com/pockerhead/MAW-make-GTA/actions/workflows/repo-checks.yml/badge.svg?branch=main" alt="repo checks"></a></p>
+
 Эксперимент: можно ли за один присест, без человека-программиста, собрать играбельный прототип
 GTA-подобной игры от третьего лица силами мультиагентного пайплайна [MAW](https://github.com/pockerhead/maw).
 
@@ -148,6 +150,22 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
 - TASK-026: готов — свидетели убийства сначала убегают, потом звонят в полицию: убийство на людной улице почти всегда даёт звезду.
 - Следующий: TASK-029 — CI тестов с бейджами, потом T15 (трафик и полицейские машины).
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
+
+## Что проверяет CI
+
+GitHub Actions на Linux (ubuntu-latest, Rust 1.95.0), на каждый push и PR. Пять workflow, у каждого свой бейдж
+наверху. Счётчики по состоянию на TASK-029. MAW-стадии по-прежнему гоняют всё это локально на Windows.
+
+| Workflow | Что запускает | Тесты |
+|---|---|---|
+| clippy | `cargo clippy --workspace --all-targets -- -D warnings` и отдельно `-p gta_sim -p citygen` (свой набор фич Bevy) | — |
+| sim gates | `cargo test -p gta_sim`: геймплей в headless Bevy App, конфиги и манифест ассетов | 378 passed, 2 ignored |
+| citygen gates | `cargo test -p citygen`: генератор города, golden-хеши раскладки | 32 passed, 3 ignored |
+| client gates | `cargo test -p gta_like --bin gta_like`: гейты презентации на MinimalPlugins + GLB Kenney, звук | 77 passed |
+| repo checks | `tree_check.py` (нет `bevy_render` в gta_sim, пины версий), `font_check.py` (глифы UI в Inter), `test_brp.py` | 3 проверки |
+
+Ассеты CC0 скачиваются `tools/fetch_assets.py` с кэшем и сверяются `--check` до тестов, так что гейты,
+которые без ассетов пропускаются, в CI всегда работают.
 
 <!-- COST:START -->
 ## Сколько это стоит

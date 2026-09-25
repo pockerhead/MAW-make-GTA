@@ -1,0 +1,5 @@
+- 2026-09-25: pipeline weight for infra: premise-challenge and plan-reviewer-2 skipped (cost of error: a red CI is visible on the first push; no game code). Planner → PR1 → implementer → code review → QA (real GitHub runs). gh CLI is logged in as SG-all with READ on the public repo — enough for 'gh run list/view'; pushes go over the pockerhead SSH key.
+- 2026-09-25: planner Q1 (Linux only) and Q2 (no tolerance loosening; follow-up task on Linux-only divergence) decided.
+- 2026-09-25: PR1 accepted (unique job ids vs shared rust-cache key, flip-RED on all 5 jobs, pipefail). PLAN_V2 copied to PLAN_FINAL (PR2 skipped).
+- 2026-09-25: review PASS (acts as QA). Tiny fixer for minors 1-2 + zero-test guard before merge (main runs must never be cancelled: the post-merge CI check depends on it). Minor 3 (push+PR duplicates) accepted.
+- 2026-09-25: fixer accepted; SHIP. Post-merge: verify all 5 workflows success on the main merge commit.

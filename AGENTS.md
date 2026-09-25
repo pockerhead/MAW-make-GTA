@@ -19,7 +19,7 @@
 
 **Стадия:** диздок утверждён (`docs/design/GDD.md`, APPROVED), идёт реализация слайсов T1..T16 = TASK-002..TASK-017 T1 (TASK-002, TASK-020) T2 (TASK-003), T3 (TASK-004), T4 (TASK-005), T5 (TASK-006), T6 (TASK-007), T7 (TASK-008), T8 (TASK-009) и T9 (TASK-010) и T10 (TASK-011) готовы; TASK-022 (живая улица) и TASK-023 (артефакт QA-скрипта) закрыты; TASK-024 (полировка розыска), T11 (TASK-012, полиция) и T12 (TASK-013, мини-карта/меню) и T13 (TASK-014, звук/juice) готовы; TASK-025 (утечка сенсоров Tnua) и T14 (TASK-015, машина) готовы; TASK-026 (свидетели) готова; следующие TASK-029 (CI тестов), T15 (TASK-016), T16 (TASK-017), TASK-028 (CI релизов). TASK-018/019 (подтяг на уступ) в `blocked/`: владелец выбрал обычное поведение Tnua. Механика вне GDD — не в скоупе.
 
-**Сборка:** `cargo run --features fast` (итерация), `cargo run --release`, `cargo test -p gta_sim -p citygen` (headless-гейты; не `--workspace` — унификация фич размывает границу sim/render), `python tools/fetch_assets.py` (CC0-ассеты по `assets/third_party/manifest.ron`, в git только манифест), `python tools/qa/tree_check.py`, `cargo test -p gta_like --bin gta_like` (гейты презентации), `python tools/qa/scenarios/t<N>.py --out <dir>` (BRP). Профили dev оптимизированы, линкер `rust-lld` (`.cargo/config.toml`). Vendored: `bevy-tnua-avian3d` (ADR-001), `bevy_dylib` (временно, до сетевого fetch).
+**Сборка:** `cargo run --features fast` (итерация), `cargo run --release`, `cargo test -p gta_sim -p citygen` (headless-гейты; не `--workspace` — унификация фич размывает границу sim/render), `python tools/fetch_assets.py` (CC0-ассеты по `assets/third_party/manifest.ron`, в git только манифест), `python tools/qa/tree_check.py`, `cargo test -p gta_like --bin gta_like` (гейты презентации), `python tools/qa/scenarios/t<N>.py --out <dir>` (BRP). CI: `.github/workflows/*.yml` (Linux, 5 workflows: clippy, sim/citygen/client gates, repo checks). Профили dev оптимизированы, линкер `rust-lld` (`.cargo/config.toml`). Vendored: `bevy-tnua-avian3d` (ADR-001), `bevy_dylib` (временно, до сетевого fetch).
 
 **Донор:** предыдущий Bevy-проект владельца, указатели локально (gitignored): @.claude/local/donor.md
 
@@ -63,6 +63,8 @@
 **После каждой закрытой задачи обязательно** актуализировать `docs/narrative-graph.md`: вычеркнуть сделанное, сдвинуть порядок, проверить, что North Star всё ещё верна. Если приоритет неясен — спросить владельца про видение, не угадывать.
 
 **Там же, после каждой закрытой задачи**, синхронизировать с реальностью `README.md` (разделы "Статус", "Запуск", "Что строим") и раздел "Проект" этого файла (стадия, стек, пиненная версия Bevy, команды сборки). Устаревший статус в README — баг, а не косметика.
+
+**CI после мержа:** `gh run list --repo pockerhead/MAW-make-GTA --branch main --limit 10` должен показать все 5 workflows `success` на мерж-коммите (пока идут — `gh run watch <id>`). Красный = задача не закрыта. Счётчики тестов в README "Что проверяет CI" обновить из step summary прогона.
 
 ### Формы знания
 
