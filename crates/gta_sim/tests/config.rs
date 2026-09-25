@@ -208,6 +208,18 @@ fn damage_variance_below_one() {
 }
 
 #[test]
+fn fire_buffer_seconds_is_not_negative() {
+    let error = sabotaged::<WeaponsConfig>(
+        WEAPONS_CONFIG,
+        "fire_buffer",
+        "fire_buffer_seconds: 0.15,",
+        "fire_buffer_seconds: -0.1,",
+        WeaponsConfig::validate,
+    );
+    assert!(error.contains("fire_buffer_seconds"), "{error}");
+}
+
+#[test]
 fn reload_must_be_positive() {
     let error = sabotaged::<WeaponsConfig>(
         WEAPONS_CONFIG,
@@ -617,6 +629,14 @@ fn fire_line_margin_is_not_negative() {
         "fire_line_margin: -0.1,",
     );
     assert!(error.contains("fire_line_margin"), "{error}");
+}
+
+#[test]
+fn gang_overshoot_margin_is_positive() {
+    for bad in ["overshoot_margin: -1.0,", "overshoot_margin: 0.0,"] {
+        let error = gang_error("overshoot", "overshoot_margin: 8.0,", bad);
+        assert!(error.contains("overshoot_margin"), "{bad}: {error}");
+    }
 }
 
 #[test]

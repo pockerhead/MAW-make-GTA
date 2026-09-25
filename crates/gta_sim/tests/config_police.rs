@@ -5,6 +5,7 @@ mod common;
 
 use common::{assets_root, sabotaged, sabotaged_load};
 use gta_sim::{
+    combat::{WEAPONS_CONFIG, WeaponsConfig},
     config::load_config,
     flow::{RESPAWN_CONFIG, RespawnConfig},
     police::{EscalationConfig, POLICE_CONFIG},
@@ -22,6 +23,11 @@ fn shipped_despawn_distance() -> f32 {
     population.despawn_distance
 }
 
+fn shipped_weapons() -> WeaponsConfig {
+    load_config::<WeaponsConfig>(&assets_root(), WEAPONS_CONFIG)
+        .unwrap_or_else(|e| panic!("GATE BROKEN: {e}"))
+}
+
 fn police_error(tag: &str, from: &str, to: &str) -> String {
     sabotaged::<EscalationConfig>(POLICE_CONFIG, tag, from, to, EscalationConfig::validate)
 }
@@ -31,6 +37,7 @@ fn shipped_police_config_loads_and_validates() {
     let cfg = load_config::<EscalationConfig>(&assets_root(), POLICE_CONFIG).unwrap();
     cfg.validate().unwrap();
     cfg.validate_ring(shipped_despawn_distance()).unwrap();
+    cfg.validate_overshoot(&shipped_weapons()).unwrap();
 }
 
 #[test]
@@ -125,4 +132,31 @@ fn busted_screen_is_not_negative() {
         RespawnConfig::validate,
     );
     assert!(error.contains("busted_screen"), "{error}");
+}
+
+#[test]
+fn police_overshoot_margin_is_positive() {
+    for bad in ["overshoot_margin: -1.0,", "overshoot_margin: 0.0,"] {
+        let error = police_error("overshoot", "overshoot_margin: 60.0,", bad);
+        assert!(error.contains("overshoot_margin"), "{bad}: {error}");
+    }
+}
+
+/// Cops keep the old full-reach rule only while no police gun outranges `overshoot_margin`.
+#[test]
+fn police_overshoot_covers_the_longest_police_gun() {
+    let weapons = shipped_weapons();
+    let longest = weapons.pistol.range.max(weapons.smg.range);
+    assert!(
+        longest > 30.0,
+        "GATE BROKEN: shipped police guns reach {longest} m"
+    );
+    let error = sabotaged::<EscalationConfig>(
+        POLICE_CONFIG,
+        "police_overshoot_reach",
+        "overshoot_margin: 60.0,",
+        "overshoot_margin: 30.0,",
+        |c| c.validate_overshoot(&weapons),
+    );
+    assert!(error.contains("longest police gun range"), "{error}");
 }

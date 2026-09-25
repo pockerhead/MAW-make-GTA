@@ -6,8 +6,8 @@ use common::*;
 use gta_sim::{
     character::{Dead, Gait, HeadHitbox, LocomotionConfig, WeaponRequest, head_hitbox},
     combat::{
-        AimConfig, BulletTrace, CombatRng, DamageDealt, GunSlot, Loadout, TraceHit, Weapon,
-        WeaponPickup, WeaponsConfig, muzzle, roll_damage,
+        AimConfig, BulletTrace, CombatRng, DamageDealt, GunSlot, HitReaction, Loadout, TraceHit,
+        Weapon, WeaponPickup, WeaponsConfig, muzzle, roll_damage,
     },
     world::WorldSource,
 };
@@ -487,14 +487,22 @@ fn semi_auto_vs_automatic() {
         a.fire_held = true;
         a.fire_requested = true;
     });
+    let cfg = weapons(&app);
+    let dt = fixed_dt(&app);
+    // The second press lands outside the buffer window, so it is dropped.
+    let second = 5;
+    assert!(
+        cooldown_after(cfg.pistol.fire_interval, dt, second) > cfg.fire_buffer_seconds + 2.0 * dt,
+        "GATE BROKEN: the second press falls into the buffer window"
+    );
     let mut shots = Shots::new(&app);
-    shots.run(&mut app, 5);
+    shots.run(&mut app, second);
     set_action(&mut app, |a| a.fire_requested = true);
-    shots.run(&mut app, 59);
+    shots.run(&mut app, 64 - second);
     assert_eq!(
         shots.shots.len(),
         1,
-        "semi-auto fired from a held trigger or a buffered press"
+        "semi-auto fired from a held trigger or a press outside the buffer window"
     );
     set_action(&mut app, |a| a.fire_requested = true);
     shots.run(&mut app, 1);
@@ -708,5 +716,216 @@ fn combat_rng_follows_city_seed() {
     assert_eq!(
         first_rolls(WorldSource::TestArea),
         first_rolls(WorldSource::TestArea)
+    );
+}
+
+fn fixed_dt(app: &App) -> f32 {
+    app.world()
+        .resource::<Time<Fixed>>()
+        .timestep()
+        .as_secs_f32()
+}
+
+/// Cooldown left after the tick-loop decrement of tick `k` after a shot (the same f32 steps as
+/// `tick_loadouts`).
+fn cooldown_after(interval: f32, dt: f32, k: u32) -> f32 {
+    (0..k).fold(interval, |cd, _| (cd - dt).max(0.0))
+}
+
+/// First tick after a shot whose cooldown is 0.
+fn expiry_tick(interval: f32, dt: f32) -> u32 {
+    (1..)
+        .find(|&k| cooldown_after(interval, dt, k) == 0.0)
+        .unwrap()
+}
+
+/// Pistol aimed down the empty floor, one shot fired in tick 0; returns the shots so far.
+fn pistol_shot(app: &mut App) -> Shots {
+    set_aim(
+        app,
+        Vec3::new(-20.0, 1.05, 30.0),
+        Vec3::new(-20.0, 1.05, 0.0),
+    );
+    set_action(app, |a| a.fire_requested = true);
+    let mut shots = Shots::new(app);
+    shots.run(app, 1);
+    assert_eq!(
+        shots.shots.len(),
+        1,
+        "GATE BROKEN: the first shot did not fire"
+    );
+    shots
+}
+
+/// Runs ticks `from..=to` after the shot tick, one at a time; ticks in which a shot fired.
+fn shot_ticks(app: &mut App, shots: &mut Shots, from: u32, to: u32) -> Vec<u32> {
+    let mut fired = Vec::new();
+    for k in from..=to {
+        let before = shots.shots.len();
+        shots.run(app, 1);
+        if shots.shots.len() > before {
+            fired.push(k);
+        }
+    }
+    fired
+}
+
+/// The "click 30 ms before the cooldown ends" tick: the last one whose cooldown is still above two
+/// ticks, which must lie inside the buffer window.
+fn late_press_tick(cfg: &WeaponsConfig, dt: f32) -> u32 {
+    let interval = cfg.pistol.fire_interval;
+    let k = (1..)
+        .take_while(|&k| cooldown_after(interval, dt, k) > 2.0 * dt)
+        .last()
+        .expect("GATE BROKEN: the pistol cooldown is shorter than two ticks");
+    assert!(
+        cooldown_after(interval, dt, k) < cfg.fire_buffer_seconds - 2.0 * dt,
+        "GATE BROKEN: tick {k} is not inside the buffer window"
+    );
+    k
+}
+
+#[test]
+fn a_press_in_the_buffer_window_fires_when_the_cooldown_ends() {
+    let mut app = armed_app(SHOOTER_FEET, Weapon::Pistol);
+    let (cfg, dt) = (weapons(&app), fixed_dt(&app));
+    let press = late_press_tick(&cfg, dt);
+    let expiry = expiry_tick(cfg.pistol.fire_interval, dt);
+    let mut shots = pistol_shot(&mut app);
+    shots.run(&mut app, press - 1);
+    set_action(&mut app, |a| a.fire_requested = true);
+    let fired = shot_ticks(&mut app, &mut shots, press, expiry + 12);
+    println!("press at tick {press}, cooldown ends at tick {expiry}, shots at {fired:?}");
+    assert_eq!(
+        fired,
+        vec![expiry],
+        "the buffered press did not fire on expiry"
+    );
+    assert_eq!(
+        loadout(&mut app).guns[Weapon::Pistol.index()].magazine,
+        cfg.pistol.magazine - 2
+    );
+}
+
+#[test]
+fn a_press_long_before_the_cooldown_ends_is_dropped() {
+    let mut app = armed_app(SHOOTER_FEET, Weapon::Shotgun);
+    let (cfg, dt) = (weapons(&app), fixed_dt(&app));
+    let interval = cfg.shotgun.fire_interval;
+    // About half a second early.
+    let press = (1..)
+        .find(|&k| cooldown_after(interval, dt, k) < 0.5)
+        .unwrap();
+    assert!(
+        cooldown_after(interval, dt, press) > cfg.fire_buffer_seconds + 2.0 * dt,
+        "GATE BROKEN: tick {press} is inside the buffer window"
+    );
+    let expiry = expiry_tick(interval, dt);
+    set_aim(
+        &mut app,
+        Vec3::new(-20.0, 1.05, 30.0),
+        Vec3::new(-20.0, 1.05, 0.0),
+    );
+    set_action(&mut app, |a| a.fire_requested = true);
+    let mut shots = Shots::new(&app);
+    shots.run(&mut app, 1);
+    assert_eq!(
+        shots.shots.len(),
+        1,
+        "GATE BROKEN: the first shot did not fire"
+    );
+    shots.run(&mut app, press - 1);
+    set_action(&mut app, |a| a.fire_requested = true);
+    let fired = shot_ticks(&mut app, &mut shots, press, expiry + 12);
+    assert!(
+        fired.is_empty(),
+        "a press {press} ticks after the shot fired at {fired:?} (cooldown ends at {expiry})"
+    );
+}
+
+#[test]
+fn a_queued_press_is_dropped_on_weapon_switch() {
+    let mut app = armed_app(SHOOTER_FEET, Weapon::Pistol);
+    set_loadout(&mut app, |l| {
+        l.guns[Weapon::Smg.index()] = GunSlot {
+            owned: true,
+            magazine: 30,
+            reserve: 0,
+            ..default()
+        };
+    });
+    let (cfg, dt) = (weapons(&app), fixed_dt(&app));
+    let press = late_press_tick(&cfg, dt);
+    let mut shots = pistol_shot(&mut app);
+    shots.run(&mut app, press - 1);
+    set_action(&mut app, |a| a.fire_requested = true);
+    shots.run(&mut app, 1);
+    assert!(
+        loadout(&mut app).fire_queued,
+        "GATE BROKEN: the press at tick {press} was not queued"
+    );
+    set_action(&mut app, |a| {
+        a.select = Some(WeaponRequest::Gun(Weapon::Smg))
+    });
+    let fired = shot_ticks(&mut app, &mut shots, press + 1, 30);
+    assert_eq!(
+        loadout(&mut app).held,
+        Some(Weapon::Smg),
+        "GATE BROKEN: no switch"
+    );
+    assert!(
+        fired.is_empty(),
+        "the press queued for the pistol fired at {fired:?} after the switch"
+    );
+}
+
+/// A pistol press queued at `late_press_tick`, then `interrupt` one tick later; the ticks in which a
+/// shot fired over the next `window(config, dt)` ticks.
+fn queued_then(
+    interrupt: impl FnOnce(&mut App),
+    window: impl FnOnce(&WeaponsConfig, f32) -> u32,
+) -> Vec<u32> {
+    let mut app = armed_app(SHOOTER_FEET, Weapon::Pistol);
+    set_loadout(&mut app, |l| l.guns[Weapon::Pistol.index()].reserve = 24);
+    let (cfg, dt) = (weapons(&app), fixed_dt(&app));
+    let press = late_press_tick(&cfg, dt);
+    let mut shots = pistol_shot(&mut app);
+    shots.run(&mut app, press - 1);
+    set_action(&mut app, |a| a.fire_requested = true);
+    shots.run(&mut app, 1);
+    assert!(
+        loadout(&mut app).fire_queued,
+        "GATE BROKEN: the press at tick {press} was not queued"
+    );
+    interrupt(&mut app);
+    let last = press + window(&cfg, dt);
+    shot_ticks(&mut app, &mut shots, press + 1, last)
+}
+
+#[test]
+fn a_queued_press_is_dropped_on_a_stagger() {
+    let fired = queued_then(
+        |app| {
+            let me = player(app);
+            let left = 6.0 * fixed_dt(app);
+            *app.world_mut().get_mut::<HitReaction>(me).unwrap() = HitReaction::Staggered { left };
+        },
+        |cfg, dt| expiry_tick(cfg.pistol.fire_interval, dt) + 24,
+    );
+    assert!(
+        fired.is_empty(),
+        "the press queued before the stagger fired at {fired:?}"
+    );
+}
+
+#[test]
+fn a_queued_press_is_dropped_on_a_reload() {
+    let fired = queued_then(
+        |app| set_action(app, |a| a.reload_requested = true),
+        |cfg, dt| (cfg.pistol.reload / dt).ceil() as u32 + 24,
+    );
+    assert!(
+        fired.is_empty(),
+        "the press queued before the reload fired at {fired:?}"
     );
 }

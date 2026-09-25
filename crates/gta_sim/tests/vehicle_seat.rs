@@ -399,6 +399,98 @@ fn held_fire_does_not_carry_into_the_seat() {
     assert_eq!(car_health(&app, car), damage_cfg(&app).vehicle.max_health);
 }
 
+/// A press kept in the fire buffer when the player gets in must not fire from the seat (into the
+/// player's own car) when the cooldown ends, nor on the way out.
+#[test]
+fn a_queued_press_does_not_fire_from_the_seat() {
+    let (mut app, car) = car_app();
+    let stats = app
+        .world()
+        .resource::<WeaponsConfig>()
+        .stats(Weapon::Pistol)
+        .clone();
+    set_loadout(&mut app, |l| {
+        acquire(&mut l.guns[Weapon::Pistol.index()], &stats, true);
+        l.held = Some(Weapon::Pistol);
+    });
+    let magazine = loadout(&mut app).guns[Weapon::Pistol.index()].magazine;
+    let door = door_of(&app, car);
+    let feet = Vec3::new(door.x, float_height_of(&app), door.z);
+    place_player(&mut app, feet);
+    // The door side faces away from the car: the on-foot shot cannot touch it.
+    let away = feet + (feet - position_of(&app, car)).with_y(0.0).normalize() * 20.0;
+    set_aim(&mut app, feet, away);
+    let buffer = app.world().resource::<WeaponsConfig>().fire_buffer_seconds;
+    let dt = app
+        .world()
+        .resource::<Time<Fixed>>()
+        .timestep()
+        .as_secs_f32();
+    let cooldown_after = |k: u32| (0..k).fold(stats.fire_interval, |cd, _| (cd - dt).max(0.0));
+    // The last tick whose cooldown is above two ticks: F one tick later still lands before expiry.
+    let press = (1..)
+        .take_while(|&k| cooldown_after(k) > 2.0 * dt)
+        .last()
+        .unwrap();
+    assert!(
+        cooldown_after(press) < buffer,
+        "GATE BROKEN: tick {press} is not in the buffer window"
+    );
+    let me = player(&mut app);
+    let world = app.world();
+    let mut fired: MessageCursor<ShotFired> =
+        world.resource::<Messages<ShotFired>>().get_cursor_current();
+    let mut hits: MessageCursor<BulletHitVehicle> = world
+        .resource::<Messages<BulletHitVehicle>>()
+        .get_cursor_current();
+    let mut count = |app: &mut App, ticks: u32| {
+        let (mut shots, mut car_hits) = (0, 0);
+        for _ in 0..ticks {
+            run_ticks(app, 1);
+            let world = app.world();
+            shots += fired
+                .read(world.resource::<Messages<ShotFired>>())
+                .filter(|s| s.shooter == me)
+                .count();
+            car_hits += hits
+                .read(world.resource::<Messages<BulletHitVehicle>>())
+                .filter(|h| h.vehicle == car)
+                .count();
+        }
+        (shots, car_hits)
+    };
+    set_action(&mut app, |a| a.fire_requested = true);
+    assert_eq!(count(&mut app, 1), (1, 0), "GATE BROKEN: the on-foot shot");
+    count(&mut app, press - 1);
+    set_action(&mut app, |a| a.fire_requested = true);
+    count(&mut app, 1);
+    assert!(
+        loadout(&mut app).fire_queued,
+        "GATE BROKEN: the press at tick {press} was not queued"
+    );
+    set_action(&mut app, |a| a.vehicle_requested = true);
+    let seated = count(&mut app, 32);
+    assert_eq!(driving(&mut app), Some(car), "GATE BROKEN: did not get in");
+    set_action(&mut app, |a| a.vehicle_requested = true);
+    let exited = count(&mut app, 32);
+    assert_eq!(driving(&mut app), None, "GATE BROKEN: did not get out");
+    assert_eq!(
+        seated,
+        (0, 0),
+        "the queued press fired from the seat (shots, car hits)"
+    );
+    assert_eq!(
+        exited,
+        (0, 0),
+        "the queued press fired on the way out (shots, car hits)"
+    );
+    assert_eq!(car_health(&app, car), damage_cfg(&app).vehicle.max_health);
+    assert_eq!(
+        loadout(&mut app).guns[Weapon::Pistol.index()].magazine,
+        magazine - 1
+    );
+}
+
 // ---------------------------------------------------------------- G8 flow while driving
 
 fn until_playing_again(app: &mut App) {

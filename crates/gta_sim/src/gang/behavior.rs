@@ -243,6 +243,7 @@ pub(super) fn gang_fsm(
                     loadout,
                     clearance,
                     overreach,
+                    d.overshoot_margin,
                 ),
             })
         })
@@ -390,8 +391,8 @@ pub(super) fn gang_fsm(
             && in_range
             && loadout.held == Some(member.gun);
 
-        // Hold fire while a groupmate or a bystander is in the line (a miss flies on to the weapon range)
-        // and move to clear it.
+        // Hold fire while a groupmate or a bystander is in the line (a miss is guarded against up to
+        // `overshoot_margin` past the target) and move to clear it.
         let line = FireLine::of(
             d.aim_error_deg,
             &weapons,
@@ -399,6 +400,7 @@ pub(super) fn gang_fsm(
             loadout,
             clearance,
             overreach,
+            d.overshoot_margin,
         );
         let gang = Faction::Gang(member.gang);
         let shooting = match member.state {

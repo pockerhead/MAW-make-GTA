@@ -38,3 +38,7 @@ jobs:
         if: success() || failure()
         shell: bash
         run: python -m unittest tools/qa/test_brp.py
+      - name: test_trace (chrome trace summary)
+        if: success() || failure()
+        shell: bash
+        run: python -m unittest tools/qa/test_trace.py

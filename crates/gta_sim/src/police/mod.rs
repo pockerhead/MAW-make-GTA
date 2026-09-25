@@ -160,6 +160,8 @@ pub struct PoliceCombatConfig {
     /// Clearance kept between the line of fire and a body that must not be hit, on top of the body
     /// radius and the spread cone at that distance, m.
     pub fire_line_margin: f32,
+    /// Metres past the target a miss is still guarded against.
+    pub overshoot_margin: f32,
     /// A spared body this close to the target yields the target to the fight, m.
     pub pressed_distance: f32,
     /// Sideways offsets of the spots a cop with a blocked line tries, m.
@@ -179,6 +181,7 @@ impl PoliceCombatConfig {
             aim_error_deg: self.aim_error_deg,
             fire_line_margin: self.fire_line_margin,
             pressed_distance: self.pressed_distance,
+            overshoot_margin: self.overshoot_margin,
             reposition_offsets: &self.reposition_offsets,
             reposition_step: self.reposition_step,
             reposition_gait: self.reposition_gait,
@@ -359,6 +362,7 @@ impl EscalationConfig {
             ));
         }
         not_negative("combat.fire_line_margin", c.fire_line_margin)?;
+        positive("combat.overshoot_margin", c.overshoot_margin)?;
         positive("combat.pressed_distance", c.pressed_distance)?;
         if c.reposition_offsets.is_empty()
             || !c
@@ -386,6 +390,21 @@ impl EscalationConfig {
             return Err(format!(
                 "car.spawn_ring {:?} must end below the population despawn_distance {despawn_distance}",
                 self.car.spawn_ring
+            ));
+        }
+        Ok(())
+    }
+
+    /// Cops keep full-reach fire discipline: no police gun reaches past the guarded zone.
+    pub fn validate_overshoot(&self, weapons: &WeaponsConfig) -> Result<(), String> {
+        let longest = [&self.patrol, &self.swat]
+            .iter()
+            .map(|spec| weapons.stats(spec.gun).range)
+            .fold(0.0, f32::max);
+        if self.combat.overshoot_margin < longest {
+            return Err(format!(
+                "combat.overshoot_margin {} must be >= the longest police gun range {longest}",
+                self.combat.overshoot_margin
             ));
         }
         Ok(())

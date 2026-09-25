@@ -58,4 +58,7 @@
                      wheels: ("wheel-front-left", "wheel-front-right", "wheel-back-left", "wheel-back-right")),
     // Share of traffic cars drawn as a taxi (by their appearance roll), [0, 1].
     taxi_share: 0.25,
+    // --bench-scene: window, physical px (GDD §11: 1080p); the bench car's lane-route speed, m/s; below
+    // moving_speed, m/s, t16 counts the car as standing.
+    bench: (resolution: (1920, 1080), speed: 10.0, moving_speed: 2.0),
 )

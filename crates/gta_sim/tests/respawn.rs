@@ -311,3 +311,106 @@ fn input_raised_during_wasted_is_dropped() {
         "input from the Wasted screen acted after respawn"
     );
 }
+
+/// A press queued in the fire buffer when the player dies or is arrested must not fire after the
+/// respawn: the cooldown is frozen on the Wasted/Busted screen and would otherwise end there.
+#[test]
+fn a_queued_press_does_not_fire_after_respawn() {
+    queued_press_across(
+        |app| {
+            kill(app);
+        },
+        "Wasted",
+    );
+}
+
+#[test]
+fn a_queued_press_does_not_fire_after_an_arrest() {
+    queued_press_across(
+        |app| {
+            app.world_mut()
+                .resource_mut::<NextState<GameState>>()
+                .set(GameState::Busted);
+            app.update();
+            assert_eq!(
+                game_state(app),
+                GameState::Busted,
+                "GATE BROKEN: not busted"
+            );
+        },
+        "Busted",
+    );
+}
+
+fn queued_press_across(leave_playing: fn(&mut App), screen: &str) {
+    let mut app = headless_app();
+    settle(&mut app);
+    set_loadout(&mut app, |l| {
+        l.held = Some(Weapon::Pistol);
+        l.guns[Weapon::Pistol.index()] = GunSlot {
+            owned: true,
+            magazine: 10,
+            reserve: 20,
+            ..default()
+        };
+    });
+    let cfg = app.world().resource::<WeaponsConfig>().clone();
+    let dt = app
+        .world()
+        .resource::<Time<Fixed>>()
+        .timestep()
+        .as_secs_f32();
+    let cooldown_after = |k: u32| (0..k).fold(cfg.pistol.fire_interval, |cd, _| (cd - dt).max(0.0));
+    // The last tick whose cooldown is above two ticks (the "30 ms before the end" press).
+    let press = (1..)
+        .take_while(|&k| cooldown_after(k) > 2.0 * dt)
+        .last()
+        .unwrap();
+    assert!(
+        cooldown_after(press) < cfg.fire_buffer_seconds,
+        "GATE BROKEN: tick {press} is not in the buffer window"
+    );
+    let origin = position(&mut app);
+    set_aim(&mut app, origin, origin + Vec3::NEG_Z * 10.0);
+    set_action(&mut app, |a| a.fire_requested = true);
+    let mut shots = Shots::new(&app);
+    shots.run(&mut app, 1);
+    assert_eq!(
+        shots.shots.len(),
+        1,
+        "GATE BROKEN: the first shot did not fire"
+    );
+    shots.run(&mut app, press - 1);
+    set_action(&mut app, |a| a.fire_requested = true);
+    shots.run(&mut app, 1);
+    assert!(
+        loadout(&mut app).fire_queued,
+        "GATE BROKEN: the press at tick {press} was not queued"
+    );
+    leave_playing(&mut app);
+    assert!(
+        loadout(&mut app).fire_queued && shots.shots.len() == 1,
+        "GATE BROKEN: the queued press fired before {screen}"
+    );
+    let mut updates = 0;
+    while game_state(&app) != GameState::Playing {
+        app.update();
+        updates += 1;
+        assert!(updates < 2000, "GATE BROKEN: {screen} never ended");
+    }
+    // An arrest confiscates the pistol: hand it back so a surviving queue has a gun to fire.
+    set_loadout(&mut app, |l| {
+        l.held = Some(Weapon::Pistol);
+        let slot = &mut l.guns[Weapon::Pistol.index()];
+        slot.owned = true;
+        slot.magazine = slot.magazine.max(1);
+    });
+    // The same cursor: a shot in the update that left the screen is still in the message buffer.
+    shots.run(&mut app, 64);
+    assert_eq!(
+        shots.shots.len(),
+        1,
+        "the press queued before {screen} fired after the respawn: {:?}",
+        shots.shots
+    );
+}

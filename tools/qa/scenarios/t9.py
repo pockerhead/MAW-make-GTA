@@ -1,8 +1,9 @@
 """Runtime T9 gate: gangs. The player walks up unseen to the gang-0 HQ, a group stands there, one
 pistol shot into the sky next to it puts every member within `group_radius` into `Attack` and heats
 the gang; then a firefight. Hard pass/fail rests on the states; screenshots and diagnostics are
-evidence for the owner. The player fires only into the sky, so every member must end the fight at full
-health: any loss is a groupmate's bullet or punch (friendly fire). `GangHeat` counts fixed-time seconds (slower in wall-clock time during the
+evidence for the owner. The player fires only into the sky, so any loss of a member's health is
+friendly fire unless a groupmate stood past the guarded zone on the far side (accepted crossfire,
+reported; GDD §6.3 `overshoot_margin`). `GangHeat` counts fixed-time seconds (slower in wall-clock time during the
 Wasted slow motion). Named QA mutation: right before the shot the player's armour is raised so the
 firefight is captured with the player alive (lethality is the owner's call, not this gate's)."""
 
@@ -65,6 +66,56 @@ def group_radius():
 
 def max_health():
     return ron_number(ron_text("character/health.ron"), r"max_health:\s*([\d.]+)")
+
+
+def crossfire_geometry():
+    """Guarded-zone reach past the target and the widest line a gang shooter keeps clear, from data."""
+    gangs = ron_text("gang/gangs.ron")
+    spreads = re.findall(r"spread:\s*\(\s*base_deg:\s*([\d.]+)\s*,.*?max_bloom_deg:\s*([\d.]+)",
+                         ron_text("combat/weapons.ron"))
+    if len(spreads) != 3:
+        raise AssertionError(f"GATE BROKEN: expected 3 spread tuples in weapons.ron, got {len(spreads)}")
+    widest = max(float(base) + float(bloom) for base, bloom in spreads)
+    muzzle = re.search(r"muzzle_offset:\s*\(\s*(-?[\d.]+)\s*,\s*-?[\d.]+\s*,\s*(-?[\d.]+)\s*\)",
+                       ron_text("combat/aim.ron"))
+    if muzzle is None:
+        raise AssertionError("GATE BROKEN: no muzzle_offset in combat/aim.ron")
+    locomotion = ron_text("character/locomotion.ron")
+    # tactics::overreach: the muzzle leads the chest, and a bullet stops at the near capsule/head surface.
+    overreach = math.hypot(float(muzzle.group(1)), float(muzzle.group(2))) + max(
+        ron_number(locomotion, r"capsule_radius:\s*([\d.]+)"),
+        ron_number(locomotion, r"head_radius:\s*([\d.]+)"))
+    return {
+        "guarded": ron_number(gangs, r"overshoot_margin:\s*([\d.]+)") + overreach,
+        "cone_deg": ron_number(gangs, r"aim_error_deg:\s*([\d.]+)") + widest,
+        "clearance": ron_number(ron_text("character/locomotion.ron"), r"capsule_radius:\s*([\d.]+)")
+        + ron_number(gangs, r"fire_line_margin:\s*([\d.]+)"),
+    }
+
+
+def mark_crossfire(game, ids, geometry, seen):
+    """Adds to `seen` every HQ member standing past the guarded zone, inside the line of a groupmate
+    that attacks with a gun drawn (accepted crossfire)."""
+    at = player(game)["position"]
+    gang = [m for m in members(game) if m["gang"] == 0]
+    shooters = [o for o in gang if o["state"] == "Attack" and o["held"] is not None]
+    widen = math.tan(math.radians(geometry["cone_deg"]))
+    for h in gang:
+        if h["entity"] not in ids:
+            continue
+        for o in shooters:
+            if o["entity"] == h["entity"]:
+                continue
+            dx, dz = at[0] - o["position"][0], at[2] - o["position"][2]
+            distance = math.hypot(dx, dz)
+            if distance < 1e-3:
+                continue
+            ux, uz = dx / distance, dz / distance
+            rx, rz = h["position"][0] - o["position"][0], h["position"][2] - o["position"][2]
+            along = rx * ux + rz * uz
+            lateral = abs(rx * uz - rz * ux)
+            if along > distance + geometry["guarded"] and lateral <= geometry["clearance"] + along * widen:
+                seen.add(h["entity"])
 
 
 def option(raw):
@@ -160,6 +211,8 @@ def run(out):
     inner, outer = spawn_ring()
     radius = group_radius()
     cam = camera_config()
+    geometry = crossfire_geometry()
+    crossfire_seen = set()
     summary = {"seed": SEED, "spawn_ring": (inner, outer), "group_radius": radius}
     try:
         with Game(features=("dev",), args=("--seed", str(SEED)), release=True) as game:
@@ -269,6 +322,7 @@ def run(out):
             capture = None
             while capture is None and time.monotonic() - fight_t0 < FIREFIGHT_S:
                 time.sleep(FIREFIGHT_POLL_S)
+                mark_crossfire(game, ids, geometry, crossfire_seen)
                 now = fighters(game, ids)
                 spent = sum(start[e]["rounds"] - now[e]["rounds"] for e in now if now[e]["state"] != "Dead")
                 attacking = sum(1 for m in now.values() if m["state"] == "Attack")
@@ -286,6 +340,7 @@ def run(out):
             last = {e: f["health"] for e, f in fighters(game, ids).items()}
             while time.monotonic() - fight_t0 < FIREFIGHT_S:
                 time.sleep(FIREFIGHT_POLL_S)
+                mark_crossfire(game, ids, geometry, crossfire_seen)
                 now = fighters(game, ids)
                 dropped = [e for e, f in now.items() if f["health"] < last.get(e, f["health"])]
                 if dropped:
@@ -338,9 +393,17 @@ def run(out):
             left = summary["firefight"]["members"]
             hurt = {e: m for e, m in left.items()
                     if m["health"] < full - summary["firefight"]["run_over"].get(e, 0.0)}
-            if hurt or len(left) != len(start):
-                raise AssertionError(f"friendly fire: members below {full} HP after the fight: {hurt} "
+            crossed = {str(e) for e in crossfire_seen}
+            crossfire_hurt = {e: m for e, m in hurt.items() if e in crossed}
+            unexplained_hurt = {e: m for e, m in hurt.items() if e not in crossed}
+            summary["firefight"]["crossfire_seen"] = sorted(crossed)
+            summary["firefight"]["crossfire_hp_lost"] = {e: full - m["health"] for e, m in crossfire_hurt.items()}
+            if unexplained_hurt or len(left) != len(start):
+                raise AssertionError(f"friendly fire: members below {full} HP after the fight: {unexplained_hurt} "
                                      f"({len(start)} started, {len(left)} left)")
+            killed = {e: m for e, m in crossfire_hurt.items() if m["state"] == "Dead" or m["health"] <= 0.0}
+            if killed:
+                raise AssertionError(f"crossfire killed a member: {killed}")
             if errors:
                 raise AssertionError("errors in the game log:\n" + "\n".join(errors))
             game.shutdown()

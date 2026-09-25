@@ -77,13 +77,19 @@ def rows(game, components, with_):
 
 
 def wait_model(game, timeout=60):
-    """Liveness of on_model_ready on the real GLB: one model, and a player wired with graph and transitions."""
-    model = game.component_path("CharacterModel")
+    """Liveness of on_model_ready on the real GLB: one model under the player, and a player wired with
+    graph and transitions. Civilians, gangs and police carry their own models since T8, so the model
+    is counted under the player body only."""
+    model, child_of = game.component_path("CharacterModel"), game.component_path("ChildOf")
     wired = [game.component_path(name) for name in ("AnimationPlayer", "AnimationGraphHandle", "AnimationTransitions")]
+    marker = game.component_path("Player")
     deadline = time.monotonic() + timeout
     counts = (0, 0)
     while time.monotonic() < deadline:
-        counts = (len(rows(game, [model], [model])), len(rows(game, [wired[0]], wired)))
+        players = {row["entity"] for row in rows(game, [], [marker])}
+        parents = [row["components"][child_of] for row in rows(game, [child_of], [model])]
+        mine = sum(1 for p in parents if int(p[0] if isinstance(p, list) else p) in players)
+        counts = (mine, len(rows(game, [wired[0]], wired)))
         if counts[0] == 1 and counts[1] >= 1:
             return {"models": counts[0], "wired_players": counts[1]}
         time.sleep(0.5)

@@ -206,6 +206,7 @@ python tools/fetch_assets.py
 ```
 cargo run --features fast -- --seed 42   # быстрая итерация, сразу город по seed (без --seed — главное меню) (dynamic linking, инкрементальная пересборка ~10 с)
 cargo run --release           # честный FPS
+cargo run --release -- --bench-scene [--seed 1]   # худшая сцена §11 (погоня на 5 звёздах, окно 1080p); --features profile для chrome-трейса, profile-tracy для Tracy
 cargo test -p gta_sim         # headless-гейты геймплея
 ```
 
@@ -213,7 +214,7 @@ cargo test -p gta_sim         # headless-гейты геймплея
 ЛКМ стреляет, если в руках ствол. Оружие: `2` пистолет, `3` SMG, `4` дробовик, `1` кулаки/бита (повторное нажатие переключает),
 ПКМ прицел, `R` перезарядка; стволы лежат в тире в центре центрального парка (рядом с самой высокой башней). Тюнинг — `assets/character/locomotion.ron`, `assets/camera/camera.ron`, `assets/world/render.ron`.
 
-QA запущенного билда: `python tools/qa/scenarios/t1.py --out <dir>`, `t2.py`, `t3.py`, `t4.py`, `t5.py` … `t12.py` (фича `dev`, BRP на порту 15702).
+QA запущенного билда: `python tools/qa/scenarios/t1.py --out <dir>`, `t2.py`, `t3.py`, `t4.py`, `t5.py` … `t16.py`, `t16_s1.py` (фича `dev`, BRP на порту 15702); N прогонов подряд — `python tools/qa/repeat.py t9 --runs 20`.
 
 Бинарные ассеты (модели, текстуры, звук) в репо не
 хранятся: они лежат в zip релизов рядом с exe. Для сборки из исходников папку `assets/` берём из

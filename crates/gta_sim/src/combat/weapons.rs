@@ -36,6 +36,9 @@ pub enum FireMode {
 #[serde(deny_unknown_fields)]
 pub struct WeaponsConfig {
     pub headshot_multiplier: f32,
+    /// Seconds before a gun's cooldown ends in which a trigger press is kept and fires when the
+    /// cooldown ends.
+    pub fire_buffer_seconds: f32,
     pub pistol: WeaponStats,
     pub smg: WeaponStats,
     pub shotgun: WeaponStats,
@@ -170,6 +173,7 @@ impl WeaponsConfig {
         let (p, r) = (&self.pickups, &self.range);
         for (field, value) in [
             ("headshot_multiplier", self.headshot_multiplier),
+            ("fire_buffer_seconds", self.fire_buffer_seconds),
             ("pickups.radius", p.radius),
             ("pickups.respawn", p.respawn),
             ("pickups.drop_seconds", p.drop_seconds),
@@ -183,6 +187,7 @@ impl WeaponsConfig {
             }
         }
         check(self.headshot_multiplier >= 1.0, "headshot_multiplier")?;
+        check(self.fire_buffer_seconds >= 0.0, "fire_buffer_seconds")?;
         check(p.radius > 0.0, "pickups.radius")?;
         check(p.respawn >= 0.0, "pickups.respawn")?;
         check(p.drop_seconds > 0.0, "pickups.drop_seconds")?;
@@ -233,6 +238,9 @@ pub struct Loadout {
     pub guns: [GunSlot; 3],
     /// Seconds left of the current reload; 0 when not reloading.
     pub reload_left: f32,
+    /// A press kept during the last `fire_buffer_seconds` of the held gun's cooldown; fires when it
+    /// ends.
+    pub fire_queued: bool,
     /// Current cone half-angle of the held gun; derived, written only by the weapon systems.
     pub spread_deg: f32,
     /// What empty hands swing.
@@ -376,6 +384,7 @@ fn select_weapon(loadout: &mut Loadout, action: &mut ActionIntent) {
     if held != loadout.held {
         loadout.held = held;
         loadout.reload_left = 0.0;
+        loadout.fire_queued = false;
     }
 }
 

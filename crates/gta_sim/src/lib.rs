@@ -117,6 +117,7 @@ pub fn compose_sim(
     police
         .validate()
         .and_then(|()| police.validate_ring(population.despawn_distance))
+        .and_then(|()| police.validate_overshoot(&weapons))
         .map_err(|message| ConfigError {
             path: root.path(POLICE_CONFIG),
             message,

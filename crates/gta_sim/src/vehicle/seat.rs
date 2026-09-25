@@ -1,6 +1,6 @@
 use super::{Driving, Vehicle, VehicleConfig, VehicleEntered, door_point};
 use crate::character::{ActionIntent, Cuffed, Dead, HeadHitbox, LocomotionConfig};
-use crate::combat::{AttackSerial, HitReaction, aim_yaw};
+use crate::combat::{AttackSerial, HitReaction, Loadout, aim_yaw};
 use crate::layers::GameLayer;
 use crate::player::Player;
 use avian3d::prelude::*;
@@ -216,7 +216,7 @@ pub(super) fn enter_exit(
     mut players: Query<
         (
             Entity,
-            &mut ActionIntent,
+            (&mut ActionIntent, Option<&mut Loadout>),
             &Position,
             Option<&Driving>,
             (&HitReaction, Has<Dead>, Has<Cuffed>),
@@ -230,7 +230,8 @@ pub(super) fn enter_exit(
     >,
     heads: Query<(), With<HeadHitbox>>,
 ) {
-    for (player, mut action, position, driving, (reaction, dead, cuffed), children) in &mut players
+    for (player, (mut action, loadout), position, driving, (reaction, dead, cuffed), children) in
+        &mut players
     {
         if !std::mem::take(&mut action.vehicle_requested)
             || dead
@@ -290,6 +291,9 @@ pub(super) fn enter_exit(
         }
         // Held fire or a queued request must not fire from the seat on the enter tick.
         *action = ActionIntent::default();
+        if let Some(mut loadout) = loadout.filter(|l| l.fire_queued) {
+            loadout.fire_queued = false;
+        }
         vehicle.driver = Some(player);
         let first = !vehicle.taken;
         vehicle.taken = true;

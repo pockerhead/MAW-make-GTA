@@ -15,18 +15,21 @@ fn flat2(v: Vec3) -> Vec2 {
     Vec2::new(v.x, v.z)
 }
 
-/// How far past the weapon range, along the line from the shooter's centre, a bullet can still touch
-/// a body: the ray starts at the muzzle (at most its flat offset ahead of the centre) and stops on the
-/// body's surface (at most the widest hitbox radius before its centre).
+/// How far past the guarded end of the line, along it from the shooter's centre, a bullet can still
+/// touch a body: the ray starts at the muzzle (at most its flat offset ahead of the centre) and stops on
+/// the body's surface (at most the widest hitbox radius before its centre).
 pub(crate) fn overreach(aim: &AimConfig, loco: &LocomotionConfig) -> f32 {
     flat2(aim.muzzle_offset()).length() + loco.capsule_radius.max(loco.head_radius)
 }
 
-/// Line-of-fire test of one member: reach along the line (weapon range plus `overreach`), spread
-/// half-angle (rad), clearance around the line.
+/// Line-of-fire test of one member: the guarded reach (the weapon range, cut to `overshoot` past the
+/// target, plus `overreach`), spread half-angle (rad), clearance around the line.
 #[derive(Clone, Copy)]
 pub(crate) struct FireLine {
-    reach: f32,
+    range: f32,
+    overreach: f32,
+    /// Metres past the target a miss is still guarded against.
+    overshoot: f32,
     cone: f32,
     clearance: f32,
 }
@@ -41,18 +44,27 @@ impl FireLine {
         loadout: &Loadout,
         clearance: f32,
         overreach: f32,
+        overshoot: f32,
     ) -> Self {
         let stats = weapons.stats(gun);
         let spread = (stats.spread.base_deg + stats.spread.max_bloom_deg).max(loadout.spread_deg);
         Self {
-            reach: stats.range + overreach,
+            range: stats.range,
+            overreach,
+            overshoot,
             cone: (aim_error_deg + spread).to_radians(),
             clearance,
         }
     }
 
-    /// A body of `bodies` sits in the line `from` -> `to`: ahead within `reach` (a miss flies past the
-    /// target) and inside the line widened by `clearance` plus the spread cone at its distance.
+    /// The full weapon reach from the shooter's centre; the car filter must not depend on the target.
+    pub(crate) fn reach(&self) -> f32 {
+        self.range + self.overreach
+    }
+
+    /// A body of `bodies` sits in the line `from` -> `to`: ahead within the guarded reach (a miss is
+    /// guarded against up to `overshoot` past the target) and inside the line widened by `clearance`
+    /// plus the spread cone at its distance.
     pub(crate) fn blocked(&self, from: Vec3, to: Vec3, bodies: &[Vec3]) -> bool {
         self.blockers(from, to, bodies).next().is_some()
     }
@@ -65,12 +77,13 @@ impl FireLine {
         bodies: &'b [Vec3],
     ) -> impl Iterator<Item = usize> + 'b {
         let dir = flat2(to - from).try_normalize();
-        let (reach, clearance, widen) = (self.reach, self.clearance, self.cone.tan());
+        let limit = self.range.min(flat2(to - from).length() + self.overshoot) + self.overreach;
+        let (clearance, widen) = (self.clearance, self.cone.tan());
         bodies.iter().enumerate().filter_map(move |(k, &p)| {
             let dir = dir?;
             let rel = flat2(p - from);
             let along = rel.dot(dir);
-            (along > 0.0 && along < reach && rel.perp_dot(dir).abs() <= clearance + along * widen)
+            (along > 0.0 && along < limit && rel.perp_dot(dir).abs() <= clearance + along * widen)
                 .then_some(k)
         })
     }
@@ -171,7 +184,7 @@ pub(crate) fn nearby_cars(
         .filter(|&(_, p, _)| {
             shooters
                 .iter()
-                .any(|s| flat_distance(s.chest, p) <= s.line.reach + diagonal)
+                .any(|s| flat_distance(s.chest, p) <= s.line.reach() + diagonal)
         })
         .map(|(_, p, r)| CarRect::of(p, r, half))
         .collect()
@@ -368,5 +381,33 @@ mod tests {
             around_cars(Vec3::new(-3.0, 0.0, 3.0), clear, &[car], 0.3, 0.8),
             clear
         );
+    }
+
+    /// Range 45, overreach 0.865, cone 11 deg, clearance 0.5; target 11 m ahead unless stated. The
+    /// guarded reach is min(range, D + overshoot) + overreach along the line.
+    #[test]
+    fn overshoot_limits_the_guarded_zone() {
+        let line = |overshoot: f32| FireLine {
+            range: 45.0,
+            overreach: 0.865,
+            overshoot,
+            cone: 11.0_f32.to_radians(),
+            clearance: 0.5,
+        };
+        let from = Vec3::ZERO;
+        let near = Vec3::new(0.0, 0.0, -11.0);
+        let far = Vec3::new(0.0, 0.0, -40.0);
+        let body = |z: f32| [Vec3::new(0.0, 0.0, z)];
+        // 20.5 > 11 + 8 + 0.865 = 19.865: past the zone.
+        assert!(!line(8.0).blocked(from, near, &body(-20.5)));
+        assert!(line(8.0).blocked(from, near, &body(-19.5)));
+        // Along 15, lateral 3 <= 0.5 + 15 tan 11 deg = 3.416.
+        assert!(line(8.0).blocked(from, near, &[Vec3::new(3.0, 0.0, -15.0)]));
+        // The range caps it: min(45, 48) + 0.865 = 45.865.
+        assert!(line(8.0).blocked(from, far, &body(-45.5)));
+        assert!(!line(8.0).blocked(from, far, &body(-46.0)));
+        // Overshoot 60 >= range: the whole weapon reach, as before the rule.
+        assert!(line(60.0).blocked(from, near, &body(-40.0)));
+        assert!((line(8.0).reach() - 45.865).abs() < 1e-5);
     }
 }

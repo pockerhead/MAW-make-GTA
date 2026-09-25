@@ -44,6 +44,7 @@
         aim_error_deg: 2.0,           // police aim better than gangs (4.0)
         trigger_seconds: (0.4, 0.9),
         fire_line_margin: 0.2,
+        overshoot_margin: 60.0, // >= the longest police gun range (pistol 60 m): cops keep full-reach discipline
         pressed_distance: 2.5,        // a spared body this close to the target yields it (gang: melee_distance.1)
         reposition_offsets: [1.5, 3.0, 4.5],
         reposition_step: 2.0,

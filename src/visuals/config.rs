@@ -42,6 +42,20 @@ pub struct RenderConfig {
     pub(super) taxi_vehicle: VehicleVisuals,
     /// Share of traffic cars drawn as a taxi (by their appearance roll).
     pub(super) taxi_share: f32,
+    /// `--bench-scene` (GDD §11 worst scene, QA only).
+    pub(super) bench: BenchConfig,
+}
+
+/// `--bench-scene` settings.
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct BenchConfig {
+    /// Window size, physical px (GDD §11: 1080p).
+    pub resolution: (u32, u32),
+    /// Speed of the bench car on its lane route, m/s.
+    pub speed: f32,
+    /// A bench car slower than this, m/s, counts as standing (t16 reads it from the file).
+    pub moving_speed: f32,
 }
 
 /// A car model on a `Vehicle` body (sedan, police car, taxi).
@@ -240,6 +254,10 @@ impl RenderConfig {
             .flat_map(|m| [m.model.as_str(), m.texture.as_str()])
     }
 
+    pub fn bench(&self) -> &BenchConfig {
+        &self.bench
+    }
+
     /// Asset paths of the car models.
     pub fn vehicle_asset_paths(&self) -> impl Iterator<Item = &str> {
         [&self.vehicle, &self.police_vehicle, &self.taxi_vehicle]
@@ -296,6 +314,17 @@ impl RenderConfig {
             "must be finite",
         )?;
         positive("chunk_size", self.chunk_size)?;
+        check(
+            self.bench.resolution.0 > 0 && self.bench.resolution.1 > 0,
+            "bench.resolution",
+            "must be positive",
+        )?;
+        positive("bench.moving_speed", self.bench.moving_speed)?;
+        check(
+            self.bench.speed > self.bench.moving_speed,
+            "bench.speed",
+            "must exceed bench.moving_speed",
+        )?;
         check(
             self.spawn_budget.chunks_per_frame >= 1,
             "spawn_budget.chunks_per_frame",

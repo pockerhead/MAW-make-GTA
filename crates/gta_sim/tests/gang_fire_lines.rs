@@ -7,10 +7,13 @@ mod common;
 use bevy::prelude::*;
 use common::*;
 use gta_sim::{
-    character::{ActionIntent, AimIntent, MoveIntent},
-    combat::{DamageDealt, GunSlot, Loadout, Melee, Weapon},
+    character::{ActionIntent, AimIntent, LOCOMOTION_CONFIG, LocomotionConfig, MoveIntent},
+    combat::{AIM_CONFIG, AimConfig, DamageDealt, GunSlot, Loadout, Melee, Weapon},
+    config::load_config,
+    gang::{GANG_CONFIG, GangConfig},
     navigation::GraphWalker,
 };
+use std::collections::HashSet;
 
 /// 30 s of fixed ticks.
 const FIGHT_TICKS: u32 = 1920;
@@ -47,6 +50,14 @@ struct Outcome {
     keep_near: f32,
     friendly: Vec<DamageDealt>,
     bystander_hits: Vec<DamageDealt>,
+    /// Time of the first shot, s, per member.
+    first_shot_s: Vec<Option<f32>>,
+    /// Farthest flat distance from the position after the settle tick, m, per member.
+    moved_max: Vec<f32>,
+    /// `moved_max` over the ticks the member still had rounds for its gun (dry, it closes in to punch).
+    moved_armed: Vec<f32>,
+    /// Every shot of a member: shooter, attack, muzzle, player position after that tick.
+    shot_log: Vec<(Entity, u32, Vec3, Vec3)>,
 }
 
 fn run(layout: &Layout) -> Outcome {
@@ -92,13 +103,31 @@ fn run(layout: &Layout) -> Outcome {
         spawn_civilian(&mut app, walker, 0.5, calm())
     }));
     run_ticks(&mut app, 1);
+    let posed = layout
+        .members
+        .iter()
+        .chain(&layout.idle)
+        .map(|&(_, spot, _)| spot)
+        .chain(layout.dummies.iter().copied());
+    for (spot, &entity) in posed.zip(members.iter().chain(&bystanders)) {
+        let off = (position_of(&app, entity) - spot).with_y(0.0).length();
+        assert!(
+            off < 0.1,
+            "GATE BROKEN: fixture spawned at {spot} sits {off:.2} m away after the settle tick"
+        );
+    }
+    let start: Vec<Vec3> = members.iter().map(|&m| position_of(&app, m)).collect();
     for &m in &members {
         provoke(&mut app, m);
     }
     let mut shots = Shots::new(&app);
     let mut last_shot = vec![0u32; members.len()];
+    let mut first_shot = vec![None; members.len()];
     let mut longest = vec![0u32; members.len()];
     let mut closest = vec![f32::INFINITY; members.len()];
+    let mut moved_max = vec![0.0f32; members.len()];
+    let mut moved_armed = vec![0.0f32; members.len()];
+    let mut shot_log = Vec::new();
     for tick in 1..=FIGHT_TICKS {
         if layout.player_circles {
             set_intent(&mut app, |i: &mut MoveIntent| {
@@ -108,17 +137,26 @@ fn run(layout: &Layout) -> Outcome {
         }
         let seen = shots.shots.len();
         shots.run(&mut app, 1);
+        let at = position(&mut app);
         for shot in &shots.shots[seen..] {
             if let Some(k) = members.iter().position(|&m| m == shot.shooter) {
                 last_shot[k] = tick;
+                first_shot[k].get_or_insert(tick);
+                shot_log.push((shot.shooter, shot.attack, shot.muzzle, at));
             }
         }
         for (gap, &last) in longest.iter_mut().zip(&last_shot) {
             *gap = (*gap).max(tick - last);
         }
-        let at = position(&mut app);
-        for (near, &m) in closest.iter_mut().zip(&members) {
-            *near = near.min((position_of(&app, m) - at).with_y(0.0).length());
+        for (k, &m) in members.iter().enumerate() {
+            let p = position_of(&app, m);
+            closest[k] = closest[k].min((p - at).with_y(0.0).length());
+            let moved = (p - start[k]).with_y(0.0).length();
+            moved_max[k] = moved_max[k].max(moved);
+            let slot = app.world().get::<Loadout>(m).unwrap().guns[layout.members[k].2.index()];
+            if slot.magazine + slot.reserve > 0 {
+                moved_armed[k] = moved_armed[k].max(moved);
+            }
         }
     }
     let target = player(&mut app);
@@ -152,19 +190,98 @@ fn run(layout: &Layout) -> Outcome {
         keep_near: gang_cfg(&app).combat.keep_distance.0,
         friendly,
         bystander_hits,
+        first_shot_s: first_shot
+            .iter()
+            .map(|t| t.map(|t| t as f32 / 64.0))
+            .collect(),
+        moved_max,
+        moved_armed,
+        shot_log,
     }
+}
+
+/// Shipped `overshoot_margin` and the bullet `overreach` (muzzle ahead of the chest plus the widest
+/// hitbox radius), read from the files so a test-local sabotage of the app resource cannot move them.
+fn guarded_zone_params() -> (f32, f32) {
+    let root = assets_root();
+    let aim = load_config::<AimConfig>(&root, AIM_CONFIG).expect("GATE BROKEN: aim config");
+    let loco = load_config::<LocomotionConfig>(&root, LOCOMOTION_CONFIG)
+        .expect("GATE BROKEN: locomotion config");
+    let muzzle = aim.muzzle_offset();
+    let overreach =
+        Vec2::new(muzzle.x, muzzle.z).length() + loco.capsule_radius.max(loco.head_radius);
+    (shipped_overshoot(), overreach)
+}
+
+fn shipped_overshoot() -> f32 {
+    load_config::<GangConfig>(&assets_root(), GANG_CONFIG)
+        .expect("GATE BROKEN: gang config")
+        .combat
+        .overshoot_margin
+}
+
+/// No friendly or bystander hit lands inside the guarded zone: nearer to the muzzle than the player
+/// plus `overshoot_margin`, less the `overreach` slack (a body past the zone is hit no nearer than
+/// that, so accepted strays are never flagged; the price is a blind band ~1 m wide at the inner edge).
+fn assert_guarded_zone(name: &str, out: &Outcome) {
+    let (overshoot, overreach) = guarded_zone_params();
+    let flat = |v: Vec3| v.with_y(0.0).length();
+    for d in out.friendly.iter().chain(&out.bystander_hits) {
+        let &(_, _, muzzle, player_at) = out
+            .shot_log
+            .iter()
+            .find(|(shooter, attack, ..)| *shooter == d.shooter && *attack == d.shot)
+            .unwrap_or_else(|| panic!("GATE BROKEN: {name}: no shot logged for {d:?}"));
+        let hit = flat(d.point - muzzle);
+        let limit = flat(player_at - muzzle) + overshoot - overreach;
+        assert!(
+            hit >= limit,
+            "{name}: a spared body was hit {hit:.2} m from the muzzle, inside the guarded zone \
+             (< {limit:.2} m): {d:?}"
+        );
+    }
+}
+
+/// Distinct attacks (shooter, shot) that hit a groupmate or a bystander.
+fn strays(out: &Outcome) -> usize {
+    out.friendly
+        .iter()
+        .chain(&out.bystander_hits)
+        .map(|d| (d.shooter, d.shot))
+        .collect::<HashSet<_>>()
+        .len()
+}
+
+/// The most stray attacks measured in one run of an exposed layout (deterministic sim): 4/80 in
+/// "west pair + groupmate east"; 3/112 surround4 cross j1, 3/69 crossfire pair j1, 0 in the others.
+const STRAY_MEASURED: usize = 4;
+
+/// Accepted crossfire stays small: at most 5 % of the layout's shots and twice the measured worst
+/// (the worst over all exposed layouts, so a layout measured at 0 still accepts the rare stray).
+fn assert_stray_bound(name: &str, out: &Outcome) {
+    assert_strays_within(name, strays(out), out.shots.iter().sum());
+}
+
+fn assert_strays_within(name: &str, stray: usize, shots: usize) {
+    let bound = ((0.05 * shots as f32).floor() as usize).min(2 * STRAY_MEASURED);
+    println!("{name}: stray {stray}/{shots}");
+    assert!(
+        stray <= bound,
+        "{name}: {stray} stray attacks of {shots} shots > {bound}"
+    );
 }
 
 /// No friendly or bystander damage, and every member with a gun fires at least `MIN_SHOTS` in 30 s.
 /// `MIN_SHOTS`: a member starved by the old sidestep fired 0-5 shots in 30 s (QA round 2); with the
 /// candidate spots the fewest over these layouts is 9 (a lone SMG whose line runs on into a pair),
 /// guns running dry cap pistols at 24 and shotguns at 12.
-fn assert_keeps_firing(name: &str, layout: &Layout) {
+fn assert_keeps_firing(name: &str, layout: &Layout) -> Outcome {
     let out = run(layout);
     println!(
         "{name}: shots {:?} hits on the player {:?} longest_no_shot_s {:?}",
         out.shots, out.hits, out.longest_gap
     );
+    assert_guarded_zone(name, &out);
     assert!(
         out.friendly.is_empty(),
         "{name}: friendly damage {:?}",
@@ -175,6 +292,11 @@ fn assert_keeps_firing(name: &str, layout: &Layout) {
         "{name}: bystander damage {:?}",
         out.bystander_hits
     );
+    assert_min_shots(name, layout, &out);
+    out
+}
+
+fn assert_min_shots(name: &str, layout: &Layout, out: &Outcome) {
     for (k, (&own, &(_, _, gun))) in out.shots.iter().zip(&layout.members).enumerate() {
         if layout.fists.contains(&k) {
             continue;
@@ -184,6 +306,20 @@ fn assert_keeps_firing(name: &str, layout: &Layout) {
             "{name}: member {k} ({gun:?}) fired {own} < {MIN_SHOTS} shots in 30 s"
         );
     }
+}
+
+/// A layout with a spared body past the guarded zone, in a line and not behind a wall: stray hits
+/// there are accepted crossfire, so no blanket zero; the zone holds and the strays stay few.
+fn assert_keeps_firing_exposed(name: &str, layout: &Layout) -> Outcome {
+    let out = run(layout);
+    println!(
+        "{name}: shots {:?} hits on the player {:?} longest_no_shot_s {:?}",
+        out.shots, out.hits, out.longest_gap
+    );
+    assert_guarded_zone(name, &out);
+    assert_min_shots(name, layout, &out);
+    assert_stray_bound(name, &out);
+    out
 }
 
 fn polar(r: f32, deg: f32) -> Vec3 {
@@ -240,7 +376,7 @@ fn surrounding_members_keep_firing() {
             ],
             ..default()
         };
-        assert_keeps_firing(&format!("surround4 mixed j{j}"), &mixed);
+        assert_keeps_firing_exposed(&format!("surround4 mixed j{j}"), &mixed);
         let cross = Layout {
             members: vec![
                 (0, polar(9.0, 10.0) + *jit, Smg),
@@ -250,7 +386,7 @@ fn surrounding_members_keep_firing() {
             ],
             ..default()
         };
-        assert_keeps_firing(&format!("surround4 cross j{j}"), &cross);
+        assert_keeps_firing_exposed(&format!("surround4 cross j{j}"), &cross);
         let pair = Layout {
             members: vec![
                 (0, polar(10.0, 0.0) + *jit, Smg),
@@ -258,14 +394,108 @@ fn surrounding_members_keep_firing() {
             ],
             ..default()
         };
-        assert_keeps_firing(&format!("crossfire pair j{j}"), &pair);
+        assert_keeps_firing_exposed(&format!("crossfire pair j{j}"), &pair);
+    }
+}
+
+/// Latest first shot of a member of a crossfire row, s: measured 0.047 s in every row and jitter
+/// (the draw tick after the provocation) + 0.25 s. Under the full-reach rule the same rows fired first
+/// at 1.6-5.3 s after walking 4.5-12.9 m.
+const FIRST_SHOT_S: f32 = 0.3;
+
+#[test]
+fn crossfire_fires_from_the_post() {
+    use Weapon::*;
+    // A bystander on the far side of the player, past the guarded zone, no longer holds the member's
+    // fire: it fires from its post instead of closing in (the t9 crossfire starvation). R95: 20.5 m
+    // along the line vs a guarded reach of 11 + 8 + 0.865, unguarded by 0.635 m; R12: by 3.1 m;
+    // R95off: a pistol member 1.2 m off the axis, the dummy not shadowed by the player.
+    let rows = [
+        (
+            "R95",
+            (Vec3::new(-11.0, 0.0, 0.0), Smg),
+            Vec3::new(9.5, 0.0, 0.0),
+        ),
+        (
+            "R12",
+            (Vec3::new(-11.0, 0.0, 0.0), Smg),
+            Vec3::new(12.0, 0.0, 0.0),
+        ),
+        (
+            "R95off",
+            (Vec3::new(-11.0, 0.0, 1.2), Pistol),
+            Vec3::new(9.5, 0.0, 0.0),
+        ),
+    ];
+    for (row, (spot, gun), dummy) in rows {
+        // A body standing right in the line just past the zone is the worst case for strays: the bound
+        // holds over the row's three runs (measured 3/105 in R95 and R12, all of them in j2). R95off
+        // measured 8/72 (11 %), above the 5 % of the design answer: reported as an open decision
+        // (TASK-017 OPEN_DECISIONS), printed, not asserted.
+        let (mut stray, mut shots) = (0, 0);
+        for (j, jit) in JITTERS.iter().enumerate() {
+            let name = format!("{row} j{j}");
+            let layout = Layout {
+                members: vec![(0, spot + *jit, gun)],
+                dummies: vec![dummy],
+                ..default()
+            };
+            let out = run(&layout);
+            println!(
+                "{name}: first_shot_s {:?} moved_armed {:?} shots {:?} stray {}",
+                out.first_shot_s,
+                out.moved_armed,
+                out.shots,
+                strays(&out)
+            );
+            assert_guarded_zone(&name, &out);
+            let first = out.first_shot_s[0].unwrap_or(f32::INFINITY);
+            assert!(
+                first <= FIRST_SHOT_S,
+                "{name}: first shot at {first} s > {FIRST_SHOT_S} s"
+            );
+            assert!(
+                out.moved_armed[0] < UNBLOCK_MOVE,
+                "{name}: the member left its post by {:.2} m while it had rounds",
+                out.moved_armed[0]
+            );
+            stray += strays(&out);
+            shots += out.shots[0];
+        }
+        if row == "R95off" {
+            println!("{row}: stray {stray}/{shots} (open decision, not asserted)");
+            continue;
+        }
+        assert_strays_within(row, stray, shots);
+    }
+    // Residual (diagnostic): 8.5 m past the player the dummy is still guarded under both rules.
+    for (j, jit) in JITTERS.iter().enumerate() {
+        let name = format!("R85 j{j}");
+        let layout = Layout {
+            members: vec![(0, Vec3::new(-11.0, 0.0, 0.0) + *jit, Smg)],
+            dummies: vec![Vec3::new(8.5, 0.0, 0.0)],
+            ..default()
+        };
+        let out = run(&layout);
+        println!(
+            "{name}: first_shot_s {:?} moved_max {:?} shots {:?}",
+            out.first_shot_s, out.moved_max, out.shots
+        );
+        assert!(
+            out.bystander_hits.is_empty(),
+            "{name}: bystander damage {:?}",
+            out.bystander_hits
+        );
+        assert_min_shots(&name, &layout, &out);
     }
 }
 
 #[test]
 fn side_by_side_pairs_do_not_lock_each_other() {
     use Weapon::*;
-    // A bystander far behind the player blocks both lines; the two used to step into each other.
+    // A bystander close behind the player, inside the guarded zone, blocks both lines; the two used to
+    // step into each other. Side spots cannot clear a body 6 m behind from 12 m, so the pair closes in
+    // and clears from nearer: every member moves.
     let layouts = [
         (
             "west pair 1 m apart + dummy east",
@@ -273,7 +503,7 @@ fn side_by_side_pairs_do_not_lock_each_other() {
                 (0, Vec3::new(-12.0, 0.0, 0.5), Smg),
                 (0, Vec3::new(-12.0, 0.0, -0.5), Pistol),
             ],
-            vec![Vec3::new(25.0, 0.0, 1.0)],
+            vec![Vec3::new(6.0, 0.0, 1.0)],
         ),
         (
             "west pair 0.7 m apart + dummy east",
@@ -281,7 +511,7 @@ fn side_by_side_pairs_do_not_lock_each_other() {
                 (0, Vec3::new(-12.0, 0.0, 0.35), Smg),
                 (0, Vec3::new(-12.0, 0.0, -0.35), Pistol),
             ],
-            vec![Vec3::new(25.0, 0.0, 0.0)],
+            vec![Vec3::new(6.0, 0.0, 0.0)],
         ),
         (
             "pair + dummy behind the player",
@@ -289,7 +519,7 @@ fn side_by_side_pairs_do_not_lock_each_other() {
                 (0, Vec3::new(0.35, 0.0, -12.0), Smg),
                 (0, Vec3::new(-0.35, 0.0, -12.0), Pistol),
             ],
-            vec![Vec3::new(0.0, 0.0, 25.0)],
+            vec![Vec3::new(0.0, 0.0, 6.0)],
         ),
         (
             "pair 0.6 m + dummy behind the player",
@@ -297,16 +527,7 @@ fn side_by_side_pairs_do_not_lock_each_other() {
                 (0, Vec3::new(0.5, 0.0, -13.0), Pistol),
                 (0, Vec3::new(-0.1, 0.0, -13.0), Smg),
             ],
-            vec![Vec3::new(0.0, 0.0, 25.0)],
-        ),
-        (
-            "west pair + groupmate east",
-            vec![
-                (0, Vec3::new(-12.0, 0.0, 0.35), Smg),
-                (0, Vec3::new(-12.0, 0.0, -0.35), Pistol),
-                (0, Vec3::new(15.0, 0.0, 0.0), Smg),
-            ],
-            vec![],
+            vec![Vec3::new(0.0, 0.0, 6.0)],
         ),
     ];
     for (name, members, dummies) in layouts {
@@ -315,9 +536,29 @@ fn side_by_side_pairs_do_not_lock_each_other() {
             dummies,
             ..default()
         };
-        assert_keeps_firing(name, &layout);
+        let out = assert_keeps_firing(name, &layout);
+        println!("{name}: moved_armed {:?}", out.moved_armed);
+        for (k, &moved) in out.moved_armed.iter().enumerate() {
+            assert!(
+                moved >= UNBLOCK_MOVE,
+                "{name}: member {k} moved at most {moved:.2} m while armed: the unblock path never ran"
+            );
+        }
     }
+    // The groupmate east stands 15 m (12 m) past the player: past the guarded zone, exposed.
+    let east = Layout {
+        members: vec![
+            (0, Vec3::new(-12.0, 0.0, 0.35), Smg),
+            (0, Vec3::new(-12.0, 0.0, -0.35), Pistol),
+            (0, Vec3::new(15.0, 0.0, 0.0), Smg),
+        ],
+        ..default()
+    };
+    assert_keeps_firing_exposed("west pair + groupmate east", &east);
 }
+
+/// Metres a member must walk for "it moved to clear its line" (a standing member drifts < 0.1 m).
+const UNBLOCK_MOVE: f32 = 0.5;
 
 #[test]
 fn members_fire_past_bystanders_and_walking_civilians() {
@@ -373,13 +614,20 @@ fn members_fire_past_bystanders_and_walking_civilians() {
             ],
         ),
     ];
+    // Civilians of these two streets walk past the guarded zone inside the far SMG member's cone and in
+    // front of the z = 14 wall: exposed.
+    let exposed = ["street along the line", "cross street behind the player"];
     for (name, civilian_edges) in streets {
         let layout = Layout {
             members: group(),
             civilian_edges,
             ..default()
         };
-        assert_keeps_firing(name, &layout);
+        if exposed.contains(&name) {
+            assert_keeps_firing_exposed(name, &layout);
+        } else {
+            assert_keeps_firing(name, &layout);
+        }
     }
 }
 
@@ -472,13 +720,32 @@ fn gunman_holds_its_band_behind_a_fist_scrum() {
     );
 }
 
+/// Distance of each member of the mutual-block pair from the player, m: inside the `keep_distance`
+/// band (so nobody backs off while drawing) and the partner inside the guarded zone.
+const PAIR_Z: f32 = 8.4;
+
 #[test]
 fn of_two_members_blocking_each_other_the_lower_index_moves() {
-    // Opposite sides of the player: each line runs on past the player into the other member.
+    // Opposite sides of the player: each line runs on past the player into the other member, who
+    // stands inside the guarded zone.
+    let (overshoot, overreach) = guarded_zone_params();
+    let keep_near = load_config::<GangConfig>(&assets_root(), GANG_CONFIG)
+        .expect("GATE BROKEN: gang config")
+        .combat
+        .keep_distance
+        .0;
+    assert!(
+        2.0 * PAIR_Z < PAIR_Z + overshoot + overreach - 0.2,
+        "GATE BROKEN: the partner at {PAIR_Z} m past the player is not inside the guarded zone"
+    );
+    assert!(
+        PAIR_Z >= keep_near + 0.2,
+        "GATE BROKEN: {PAIR_Z} m is not inside the keep_distance band ({keep_near} m)"
+    );
     let mut app = gang_floor_default(TurfLayout::WholeFloor);
     set_player_armor(&mut app, 1.0e6);
-    let a = spawn_member(&mut app, 0, Vec3::new(0.0, 0.0, -10.0), Weapon::Smg);
-    let b = spawn_member(&mut app, 0, Vec3::new(0.0, 0.0, 10.0), Weapon::Smg);
+    let a = spawn_member(&mut app, 0, Vec3::new(0.0, 0.0, -PAIR_Z), Weapon::Smg);
+    let b = spawn_member(&mut app, 0, Vec3::new(0.0, 0.0, PAIR_Z), Weapon::Smg);
     run_ticks(&mut app, 1);
     provoke(&mut app, a);
     provoke(&mut app, b);

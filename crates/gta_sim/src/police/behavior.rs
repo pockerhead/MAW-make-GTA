@@ -209,6 +209,7 @@ pub(super) fn police_fsm(
                             loadout,
                             clearance,
                             overreach,
+                            d.overshoot_margin,
                         ),
                     })
                 })
@@ -418,6 +419,7 @@ pub(super) fn police_fsm(
                     loadout,
                     clearance,
                     overreach,
+                    d.overshoot_margin,
                 );
                 let mut line_blocked = false;
                 let mut clearing = None;

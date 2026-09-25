@@ -1,5 +1,6 @@
 (
     headshot_multiplier: 2.0,
+    fire_buffer_seconds: 0.15, // s: a press this close to the end of the cooldown fires when it ends
     pistol: (damage: 25.0, damage_variance: 0.1, pellets: 1, fire_mode: SemiAutomatic, fire_interval: 0.3,
              magazine: 12, reload: 1.2, range: 60.0, falloff: None,
              spread: (base_deg: 1.0, per_shot_deg: 1.0, max_bloom_deg: 3.0, recovery_delay: 0.35, recovery_deg_per_s: 6.0, moving_deg_per_mps: 0.3),

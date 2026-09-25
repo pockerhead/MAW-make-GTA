@@ -71,6 +71,11 @@
   stuck in traffic lose a fleeing car. Accepted as a GTA-like "escape by car" outcome (t15 records escape vs
   pressure, ~2/5 escape); the fix path is TASK-032. Decide such design gaps after the 2nd failure of the same class.
 
+- 2026-09-26 (TASK-017) — hold-fire overshoot is a per-faction data rule: police 60 m (disciplined, no crossfire),
+  gangs 8 m (sloppy crossfire accepted); full-range checks made two groups on opposite sides of the target starve
+  each other (t9 flake). Buffer a fire press during the cooldown (`fire_buffer_seconds`), clear it on every
+  transition that changes what the press would mean (seat, weapon switch, stagger, reload, Wasted/Busted).
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

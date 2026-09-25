@@ -47,6 +47,8 @@ pub(crate) struct Discipline<'a> {
     pub(crate) fire_line_margin: f32,
     /// A spared body this close to the target yields the target to the fight, m.
     pub(crate) pressed_distance: f32,
+    /// Metres past the target a miss is still guarded against.
+    pub(crate) overshoot_margin: f32,
     pub(crate) reposition_offsets: &'a [f32],
     pub(crate) reposition_step: f32,
     pub(crate) reposition_gait: Gait,
@@ -164,7 +166,8 @@ pub(crate) struct Hold {
     pub(crate) clearing: Option<Motion>,
 }
 
-/// Hold fire while a spared body is in the line (a miss flies on to the weapon range) and move to
+/// Hold fire while a spared body is in the line (a miss is guarded against up to `overshoot_margin`
+/// past the target) and move to
 /// clear it. `living`: every live character; `spares(f)`: a body of faction `f` must not be hit.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn hold_fire(

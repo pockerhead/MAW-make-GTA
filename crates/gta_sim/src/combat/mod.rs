@@ -71,7 +71,10 @@ impl Plugin for CombatPlugin {
             .register_type::<HitReaction>()
             .register_type::<MeleeHit>()
             .register_type::<BatPickup>()
-            .add_systems(OnExit(GameState::Wasted), melee::reset_player_melee)
+            .add_systems(
+                OnExit(GameState::Wasted),
+                (melee::reset_player_melee, reset_fire_queue),
+            )
             .add_systems(OnExit(GameState::Busted), melee::reset_player_melee)
             .add_systems(NEW_CITY, clear_combat_messages)
             .add_systems(
@@ -132,6 +135,16 @@ fn clear_combat_messages(
     hits.clear();
     strikes.clear();
     vehicle_hits.clear();
+}
+
+/// A press queued before `Wasted` froze the cooldown must not fire after the respawn (an arrest
+/// replaces the whole `Loadout`, a new city despawns every character).
+fn reset_fire_queue(mut loadouts: Query<&mut Loadout>) {
+    for mut loadout in &mut loadouts {
+        if loadout.fire_queued {
+            loadout.fire_queued = false;
+        }
+    }
 }
 
 fn reseed_combat(seed: Res<CitySeed>, mut rng: ResMut<CombatRng>) {

@@ -36,3 +36,4 @@ Sources: kevinnie2003/playtest-agent (personas + generic oracles + reproducible 
 - **False-positive control:** before judging, run the oracles on a calm 2-min baseline (no player input) — anything firing there is an oracle bug, not a game bug.
 - **Visual judgement via screenshots with a checklist** (readability, clipping, HUD, T-poses, floating props), multimodal; hallucination guard: a visual finding needs a second screenshot or a metric that agrees.
 - **No code reading** (black-box), structured report: severity, persona, seed, repro, evidence (screenshot path / metric), GDD §1 point affected.
+- From TASK-017 QA: the game window closed by itself once during an OS-input probe ('No windows are open', no error) — watch for it during the playtest. Weak evidence spots to exercise for real: camera against building walls, police gunfire from 2★ at runtime, a genuine junction yield, the 'Новый город' button click, 12 gang members in a fight.

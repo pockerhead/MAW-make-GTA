@@ -119,6 +119,8 @@ pub struct GangCombatConfig {
     /// Clearance kept between the line of fire and a body that must not be hit, on top of the body
     /// radius and the spread cone at that distance, m.
     pub fire_line_margin: f32,
+    /// Metres past the target a miss is still guarded against.
+    pub overshoot_margin: f32,
     pub tactics: TacticWeights,
     pub warn_gait: Gait,
     pub chase_gait: Gait,
@@ -310,6 +312,7 @@ impl GangConfig {
                 c.fire_line_margin
             ));
         }
+        positive("combat.overshoot_margin", c.overshoot_margin)?;
         if c.reposition_offsets.is_empty()
             || !c
                 .reposition_offsets
@@ -362,6 +365,7 @@ impl GangCombatConfig {
             aim_error_deg: self.aim_error_deg,
             fire_line_margin: self.fire_line_margin,
             pressed_distance: self.melee_distance.1,
+            overshoot_margin: self.overshoot_margin,
             reposition_offsets: &self.reposition_offsets,
             reposition_step: self.reposition_step,
             reposition_gait: self.reposition_gait,

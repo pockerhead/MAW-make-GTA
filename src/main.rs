@@ -1,4 +1,5 @@
 mod audio;
+mod bench;
 mod camera;
 #[cfg(feature = "debug")]
 mod debug;
@@ -14,7 +15,7 @@ mod vfx;
 mod visuals;
 
 use audio::{GameAudioPlugin, MIX_CONFIG, MixConfig};
-use bevy::{asset::io::file::FileAssetReader, prelude::*};
+use bevy::{asset::io::file::FileAssetReader, prelude::*, window::WindowResolution};
 use camera::{CAMERA_CONFIG, CameraConfig, CameraPlugin};
 use gta_sim::{
     compose_sim,
@@ -189,10 +190,23 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
+    let bench = std::env::args().any(|a| a == "--bench-scene");
     let root = ConfigRoot(FileAssetReader::get_base_path().join("assets"));
+    let render_config = match load_config::<RenderConfig>(&root, RENDER_CONFIG) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
+    let mut window = Window { title, ..default() };
+    if bench {
+        let (width, height) = render_config.bench().resolution;
+        window.resolution = WindowResolution::new(width, height).with_scale_factor_override(1.0);
+    }
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window { title, ..default() }),
+        primary_window: Some(window),
         ..default()
     }));
     info!("city seed {seed}");
@@ -200,17 +214,10 @@ fn main() -> AppExit {
         eprintln!("{error}");
         return AppExit::error();
     }
-    if cli.is_none() {
+    if cli.is_none() && !bench {
         app.insert_state(GameState::MainMenu);
     }
     let camera_config = match load_config::<CameraConfig>(&root, CAMERA_CONFIG) {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            return AppExit::error();
-        }
-    };
-    let render_config = match load_config::<RenderConfig>(&root, RENDER_CONFIG) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("{error}");
@@ -285,6 +292,9 @@ fn main() -> AppExit {
             GameAudioPlugin,
             minimap::MinimapPlugin,
         ));
+    if bench {
+        app.add_plugins(bench::BenchScenePlugin);
+    }
     #[cfg(feature = "dev")]
     app.add_plugins(remote::QaRemotePlugin);
     #[cfg(feature = "debug")]

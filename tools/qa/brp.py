@@ -18,8 +18,9 @@ QA_SETTINGS_ID = "com.github.pockerhead.maw-make-gta.qa"
 
 
 class Game:
-    def __init__(self, features=("dev",), args=(), port=15702, release=False):
+    def __init__(self, features=("dev",), args=(), port=15702, release=False, env=None):
         self.features = features
+        self.env = env or {}
         self.release = release
         self.args = args
         self.port = port
@@ -40,7 +41,7 @@ class Game:
         self.stop()
 
     def start(self):
-        command = ["cargo", "build", "-p", "gta_like", "--bin", "gta_like", "-j", "4", "--features", ",".join(self.features)]
+        command = ["cargo", "build", "-p", "gta_like", "--bin", "gta_like", "-j", "2", "--features", ",".join(self.features)]
         if self.release:
             command.append("--release")
         subprocess.run(command, cwd=REPO, check=True, timeout=1800)
@@ -54,6 +55,7 @@ class Game:
         env = os.environ.copy()
         env["BEVY_ASSET_ROOT"] = str(REPO)
         env["BRP_EXTRAS_PORT"] = str(self.port)
+        env.update(self.env)
         self.process = subprocess.Popen(
             [str(executable), "--settings-id", QA_SETTINGS_ID, *self.args], cwd=REPO, env=env,
             stdout=self.log_file, stderr=subprocess.STDOUT,

@@ -184,22 +184,37 @@ pub(super) fn fire_weapons(
         GameLayer::Vehicle,
     ]);
     for (shooter, position, aim, mut action, mut loadout, velocity, reaction) in &mut shooters {
-        // A request during cooldown or reload is dropped, not buffered.
+        // A request in the last `fire_buffer_seconds` of the cooldown is kept and fires when it
+        // ends; any other request during the cooldown or a reload is dropped.
         let requested = std::mem::take(&mut action.fire_requested);
         if reaction.is_active() {
+            if loadout.fire_queued {
+                loadout.fire_queued = false;
+            }
             continue;
         }
         let Some(weapon) = loadout.held else {
             continue;
         };
         let stats = cfg.stats(weapon);
-        let wants = match stats.fire_mode {
-            FireMode::SemiAutomatic => requested,
-            FireMode::Automatic => action.fire_held || requested,
-        };
         let loadout = &mut *loadout;
         let slot = &mut loadout.guns[weapon.index()];
-        if !wants || loadout.reload_left > 0.0 || slot.cooldown > 0.0 {
+        if loadout.reload_left > 0.0 {
+            loadout.fire_queued = false;
+            continue;
+        }
+        if slot.cooldown > 0.0 {
+            if requested && slot.cooldown <= cfg.fire_buffer_seconds {
+                loadout.fire_queued = true;
+            }
+            continue;
+        }
+        let queued = std::mem::take(&mut loadout.fire_queued);
+        let wants = match stats.fire_mode {
+            FireMode::SemiAutomatic => requested || queued,
+            FireMode::Automatic => action.fire_held || requested || queued,
+        };
+        if !wants {
             continue;
         }
         let Ok(dir) = Dir3::new(aim.direction) else {

@@ -125,6 +125,14 @@
   assert liveness via the system's own counters, not "something moved". City gates now run with traffic — gates
   about civilians set traffic max_cars = 0 explicitly.
 
+- 2026-09-26 (TASK-017) — `trace_chrome` at the 5★ bench writes 100-240 MB/s (9-16 GB per run): parse a window by
+  bisection on `ts`, count EXCLUSIVE span time (schedule runners contain their systems), delete the file after
+  (`tools/qa/trace.py`). A perf verdict needs a precondition that the scene really ran (bench car moving ≥ 90 %):
+  the first T16 verdict was measured on a standing car.
+- 2026-09-26 (TASK-017) — "moved to unblock" over a whole fight is vacuous (members out of ammo walk in to punch):
+  measure displacement while armed (`moved_armed`). A "dropped click" flake can be game logic (semi-auto press
+  inside the cooldown was discarded) — diagnose before blaming the OS/harness.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

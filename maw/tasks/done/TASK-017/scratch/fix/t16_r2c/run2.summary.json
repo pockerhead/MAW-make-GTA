@@ -1,0 +1,315 @@
+{
+  "seed": 1,
+  "caps": {
+    "units": 12,
+    "cars": 5
+  },
+  "bench": {
+    "speed": 10.0,
+    "moving_speed": 2.0,
+    "chunk_size": 128.0
+  },
+  "bench_cheats": [
+    "5 stars pinned, the player always in sight (WantedLevel)",
+    "player health and armour held at max",
+    "driven car health held at max",
+    "car on rails: kinematic lane route at bench.speed, rightmost turn at every junction, collides with nothing (traffic and police cannot box it in)"
+  ],
+  "chunks": 100,
+  "composition": {
+    "driving": true,
+    "stars": 5,
+    "police_cars": 5,
+    "police_units": 12,
+    "units_on_foot": 2,
+    "units_aboard": 10,
+    "units_by_kind": {
+      "Swat": 12
+    },
+    "traffic_cars": 24,
+    "civilians": 40,
+    "gang_near_centre": 0,
+    "caps": {
+      "units": 12,
+      "cars": 5
+    },
+    "traffic_peak": 24
+  },
+  "window": {
+    "physical_width": 1920,
+    "physical_height": 1080,
+    "scale_factor_override": 1.0
+  },
+  "screenshots": [
+    "D:\\test-gta-like\\target\\qa\\fix2c\\t16\\run2\\bench_0.png",
+    "D:\\test-gta-like\\target\\qa\\fix2c\\t16\\run2\\bench_1.png",
+    "D:\\test-gta-like\\target\\qa\\fix2c\\t16\\run2\\bench_2.png"
+  ],
+  "frame_report": {
+    "monitors": [
+      {
+        "name": "\\\\.\\DISPLAY1",
+        "refresh_hz": 144.0,
+        "primary": true
+      }
+    ],
+    "present_mode": "Fifo",
+    "fps_as_shipped": [
+      {
+        "fps": 144.1,
+        "frame_ms": 6.944
+      },
+      {
+        "fps": 144.1,
+        "frame_ms": 6.944
+      },
+      {
+        "fps": 144.0,
+        "frame_ms": 6.945
+      }
+    ],
+    "frame_cost_no_vsync": [
+      {
+        "fps": 344.5,
+        "frame_ms": 3.04
+      },
+      {
+        "fps": 348.7,
+        "frame_ms": 2.928
+      },
+      {
+        "fps": 338.6,
+        "frame_ms": 3.133
+      }
+    ],
+    "frame_cost_ms_worst_avg": 3.133
+  },
+  "diagnostics": {
+    "samples": 57,
+    "fps_avg": 342.51488421983214,
+    "fps_min": 331.2344963489605,
+    "frame_ms_avg": 3.036295964912288,
+    "frame_ms_max": 3.1681908333333406
+  },
+  "streaming": {
+    "chunks_resident": [
+      100,
+      100
+    ],
+    "chunks_visited": 2,
+    "metres_driven": 286.3,
+    "traffic_cars": [
+      21,
+      15
+    ],
+    "traffic_spawned": 99,
+    "traffic_despawned": 105
+  },
+  "frames": {
+    "frames": 9995,
+    "mean_fps": 328.6399665926087,
+    "low_1pct_fps": 190.03188715986803,
+    "min_fps": 121.88581643687499,
+    "p50_ms": 2.7348999977111816,
+    "p99_ms": 4.970400333404541,
+    "max_ms": 8.204400062561035
+  },
+  "car_speed_mps": {
+    "composition": [
+      10.0
+    ],
+    "measured": [
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0
+    ]
+  },
+  "car_moving_share": {
+    "composition": 1.0,
+    "measured": 1.0
+  },
+  "composition_after": {
+    "driving": true,
+    "stars": 5,
+    "police_cars": 5,
+    "police_units": 12,
+    "units_on_foot": 2,
+    "units_aboard": 10,
+    "units_by_kind": {
+      "Swat": 12
+    },
+    "traffic_cars": 15,
+    "civilians": 40,
+    "gang_near_centre": 2,
+    "caps": {
+      "units": 12,
+      "cars": 5
+    }
+  },
+  "log_errors_a": [],
+  "trace_composition": {
+    "driving": true,
+    "stars": 5,
+    "police_cars": 5,
+    "police_units": 12,
+    "units_on_foot": 2,
+    "units_aboard": 10,
+    "units_by_kind": {
+      "Swat": 12
+    },
+    "traffic_cars": 24,
+    "civilians": 40,
+    "gang_near_centre": 0,
+    "caps": {
+      "units": 12,
+      "cars": 5
+    },
+    "traffic_peak": 24
+  },
+  "trace_diagnostics": {
+    "label": "with tracing",
+    "samples": 19,
+    "fps_avg": 60.203669788780054,
+    "fps_min": 60.133190640657844,
+    "frame_ms_avg": 16.673400657894746,
+    "frame_ms_max": 16.69421583333335
+  },
+  "trace_car_speed_mps": [
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0
+  ],
+  "trace_car_moving_share": 1.0,
+  "log_errors_b": [],
+  "trace_file": {
+    "path": "D:\\test-gta-like\\target\\qa\\fix2c\\t16\\run2\\trace.json",
+    "bytes": 1002591995,
+    "clean_end": true,
+    "deleted_after_parse": true
+  },
+  "trace": {
+    "frames": {
+      "count": 599,
+      "mean_ms": 5.422194156928201,
+      "p50_ms": 5.203599999999628,
+      "p99_ms": 8.41310000000149,
+      "max_ms": 16.74640000000037
+    },
+    "fixed_main": {
+      "count": 639,
+      "mean_ms": 2.4877909233177227,
+      "p50_ms": 2.4724000000003725,
+      "p99_ms": 3.2690999999996273,
+      "max_ms": 3.768
+    },
+    "top15_ms_per_frame": [
+      [
+        "gta_sim::traffic::spawn::spawn_traffic",
+        0.425
+      ],
+      [
+        "bevy_transform::systems::parallel::propagate_parent_transforms",
+        0.2929
+      ],
+      [
+        "bevy_core_pipeline::schedule::submit_pending_command_buffers",
+        0.2863
+      ],
+      [
+        "bevy_pbr::cluster::gpu::prepare_clusters_for_gpu_clustering",
+        0.2541
+      ],
+      [
+        "bevy_pbr::render::gpu_preprocess::prepare_preprocess_bind_groups",
+        0.1325
+      ],
+      [
+        "bevy_transform::systems::mark_dirty_trees",
+        0.1241
+      ],
+      [
+        "bevy_animation::animate_targets",
+        0.1089
+      ],
+      [
+        "bevy_pbr::render::mesh::collect_meshes_for_gpu_building",
+        0.094
+      ],
+      [
+        "bevy_render::renderer::render_system",
+        0.0871
+      ],
+      [
+        "bevy_ui::layout::ui_layout_system",
+        0.0868
+      ],
+      [
+        "bevy_render::batching::gpu_preprocessing::write_binned_instance_buffers<bevy_pbr::render::light::Shadow, bevy_pbr::render::mesh::MeshPipeline>",
+        0.0801
+      ],
+      [
+        "bevy_render::batching::gpu_preprocessing::write_indirect_parameters_buffers",
+        0.0763
+      ],
+      [
+        "gta_sim::police::car_dispatch::dispatch_police_cars",
+        0.0755
+      ],
+      [
+        "avian3d::dynamics::integrator::integrate_velocities",
+        0.0702
+      ],
+      [
+        "bevy_tnua_avian3d::update_proximity_sensors_system",
+        0.0676
+      ]
+    ],
+    "ms_per_tick": {
+      "ai": 0.7163971830987458,
+      "physics": 0.6737145539906921,
+      "unclassified": 0.0
+    },
+    "unclassified_modules": []
+  },
+  "verdict": {
+    "budgets_ms": {
+      "frame": 16.666666666666668,
+      "fixed_main": 4.0,
+      "physics_plus_ai": 4.0,
+      "ai": 1.5
+    },
+    "over_budget": [],
+    "text": "at the measured scene (15 traffic cars, 2 gang members near the centre, 5 stars, 5 police cars, 12 units, bench car on rails moving 100% of the measured window, 286.3 m driven): nothing to fix by trace: every budget holds"
+  }
+}

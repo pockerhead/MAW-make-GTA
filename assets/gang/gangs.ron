@@ -37,6 +37,7 @@
         retreat_health: 0.3,         // share of max health (GDD §6.3)
         retreat_distance: 25.0,      // m: a retreating member stops and holds this far away
         fire_line_margin: 0.2,       // m: kept clear around the line of fire besides body radius + spread cone
+        overshoot_margin: 8.0,       // m past the target a miss is still guarded against: a spared body farther along the line does not hold fire (stray hits there are accepted)
         tactics: (retreat: 3.0, melee: 2.0, shoot: 1.0, chase: 0.5), // utility weights, highest wins
         warn_gait: Walk,
         chase_gait: Run,
