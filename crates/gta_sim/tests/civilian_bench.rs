@@ -179,6 +179,12 @@ fn street_turnover_bench() {
     const RUN_S: u32 = 40;
     let mut app = city_app(1);
     settle(&mut app);
+    // The subject is civilian turnover: with traffic a car across the run slowed the player and the
+    // run forced 46 deficit ticks (< 48, TASK-016).
+    app.world_mut()
+        .resource_mut::<gta_sim::traffic::TrafficConfig>()
+        .bubble
+        .max_cars = 0;
     let loco = app.world().resource::<LocomotionConfig>().clone();
     let cap = app.world().resource::<PopulationConfig>().max_civilians as usize;
     let start = position(&mut app) - Vec3::Y * loco.float_height;

@@ -19,8 +19,10 @@ use crate::perception::{AiClock, Perception, PerceptionConfig, sight_blocked, wa
 use crate::player::Player;
 use crate::population::corpse_components;
 use crate::tactics::{
-    Aim, Ctx, FireLine, Motion, Seek, Shooter, apply_motion, hold_fire, overreach, select,
+    Aim, Ctx, FireLine, Motion, Seek, Shooter, apply_motion, hold_fire, nearby_cars, overreach,
+    select,
 };
+use crate::vehicle::{Driving, Vehicle, VehicleConfig};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
@@ -144,6 +146,7 @@ pub(super) fn gang_fsm(
         Res<WeaponsConfig>,
         Res<HealthConfig>,
         Res<AimConfig>,
+        Res<VehicleConfig>,
     ),
     state: (
         Res<AiClock>,
@@ -173,8 +176,10 @@ pub(super) fn gang_fsm(
     >,
     bodies: Query<(&Position, Has<Dead>), Without<GangMember>>,
     characters: Query<(Entity, &Position, &Health, Option<&Faction>), With<Character>>,
+    cars: Query<(Entity, &Position, &Rotation), (With<Vehicle>, Without<GangMember>)>,
+    driving: Query<&Driving, With<Player>>,
 ) {
-    let (cfg, perception, loco, nav, weapons, health_cfg, aim_cfg) = configs;
+    let (cfg, perception, loco, nav, weapons, health_cfg, aim_cfg, vehicle) = configs;
     let (clock, heat, territory, graph) = state;
     let h = &cfg.hostility;
     let c = &cfg.combat;
@@ -242,6 +247,13 @@ pub(super) fn gang_fsm(
             })
         })
         .collect();
+    let half = vehicle.half_extents();
+    let near_cars = nearby_cars(
+        &shooters,
+        cars.iter().map(|(e, p, r)| (e, p.0, r.0)),
+        driving.single().ok().map(|d| d.vehicle),
+        Vec2::new(half.x, half.z),
+    );
     for (
         me,
         mut member,
@@ -410,6 +422,7 @@ pub(super) fn gang_fsm(
                 line,
                 &living,
                 &shooters,
+                &near_cars,
                 |f| cfg.spares(Some(gang), f),
                 plan,
                 on_slot,

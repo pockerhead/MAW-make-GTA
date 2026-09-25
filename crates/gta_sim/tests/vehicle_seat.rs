@@ -447,28 +447,60 @@ fn wasted_while_driving_ejects_and_respawns_on_foot() {
     assert!(moved >= 1.0, "the respawned player walked {moved:.2} m");
 }
 
+/// A driver is never arrested in a moving car (above `exit_max_speed`) and never off an arrest row:
+/// a cop held in `Arrest` at the driver's door neither binds an arrest attempt nor pulls him out.
+/// (O2 allows only the 1-star pull-out of a stopped car: `police_pull_out.rs`.)
 #[test]
 fn no_arrest_in_a_car() {
-    let mut app = graph_app(10.0, &[]);
-    raise_heat(&mut app, 40);
-    let car = spawn_car(&mut app, Vec2::new(-5.0, 0.0), 0.0);
-    drive_in(&mut app, car);
-    // At the driver's door: left face x -6.2, capsule 0.3, 0.2 m of air; 1.25 m from the seat.
-    let unit = spawn_unit(&mut app, UnitKind::Patrol, Vec3::new(-6.7, 0.0, 0.1), 0.0);
-    let arrest = esc(&app).arrest;
-    let ticks = ((arrest.seconds + 1.0) * 64.0) as u32;
-    for _ in 0..ticks {
-        set_cop_state(&mut app, unit, CopState::Arrest);
-        run_ticks(&mut app, 1);
-        assert_eq!(game_state(&app), GameState::Playing, "busted in a car");
+    // (heat, the car's speed): 1 star in a car kept at 5 m/s; 2 stars in a car at rest.
+    for (heat, speed) in [(40, 5.0), (180, 0.0)] {
+        let mut app = graph_app(10.0, &[]);
+        set_player_armor(&mut app, 1.0e6);
+        raise_heat(&mut app, heat);
+        let car = spawn_car(&mut app, Vec2::new(-5.0, 0.0), 0.0);
+        drive_in(&mut app, car);
+        let start = position_of(&app, car);
+        // At the driver's door: left face x -6.2, capsule 0.3, 0.2 m of air; 1.25 m from the seat.
+        let feet = Vec3::new(-6.7, 0.0, 0.1);
+        let unit = spawn_unit(&mut app, UnitKind::Patrol, feet, 0.0);
+        let chest = feet + Vec3::Y * float_height_of(&app);
+        let arrest = esc(&app).arrest;
+        let seconds = arrest.pull_out_seconds + arrest.pull_give_up_seconds + arrest.seconds + 1.0;
+        for tick in 0..(seconds * 64.0) as u32 {
+            // Named mutation: the cop is held at the door in `Arrest`, the car keeps `speed` in place.
+            set_cop_state(&mut app, unit, CopState::Arrest);
+            app.world_mut().get_mut::<Position>(unit).unwrap().0 = chest;
+            app.world_mut()
+                .get_mut::<Transform>(unit)
+                .unwrap()
+                .translation = chest;
+            let forward = forward_of(&app, car);
+            app.world_mut().get_mut::<Position>(car).unwrap().0 = start;
+            app.world_mut().get_mut::<LinearVelocity>(car).unwrap().0 = forward * speed;
+            run_ticks(&mut app, 1);
+            assert_eq!(
+                game_state(&app),
+                GameState::Playing,
+                "heat {heat}: busted in a car"
+            );
+            assert_eq!(
+                driving(&mut app),
+                Some(car),
+                "heat {heat}: pulled out at tick {tick}"
+            );
+            assert_eq!(
+                attempt(&app).cop,
+                None,
+                "heat {heat}: an arrest attempt on a driver at tick {tick}"
+            );
+        }
+        let gap = flat(position_of(&app, unit) - position(&mut app)).length();
+        assert!(
+            gap <= arrest.distance,
+            "GATE BROKEN: the cop stands {gap:.2} m from the driver, arrest distance {}",
+            arrest.distance
+        );
     }
-    let gap = flat(position_of(&app, unit) - position(&mut app)).length();
-    assert!(
-        gap <= arrest.distance,
-        "GATE BROKEN: the cop stands {gap:.2} m from the driver, arrest distance {}",
-        arrest.distance
-    );
-    assert_eq!(attempt(&app).cop, None, "an arrest attempt on a driver");
 }
 
 #[test]
@@ -515,4 +547,86 @@ fn car_mass_and_yaw_inertia() {
     let tensor = world.get::<ComputedAngularInertia>(car).unwrap().tensor();
     let yaw = tensor.mul_vec3(Vec3::Y).y;
     assert!((yaw - 2181.9).abs() <= 0.01 * 2181.9, "yaw inertia {yaw}");
+}
+
+/// Forced eject (Busted) from a car with a 1 m wall along the left side (over the left door point), a
+/// 4 m wall along the right side and a slab 2.5 m above the roof: no door stands on the ground and
+/// the roof ray starts inside the slab, so the player goes onto the car's top, never onto the 1 m
+/// wall. Flip: the old forced fallback (the left door's feet ray) lands on the wall top.
+#[test]
+fn forced_eject_never_on_a_wall_top() {
+    let (mut app, car) = car_app();
+    drive_in(&mut app, car);
+    spawn_wall(
+        &mut app,
+        Vec3::new(-27.0, 0.5, 0.0),
+        Vec3::new(1.4, 1.0, 6.0),
+    );
+    spawn_wall(
+        &mut app,
+        Vec3::new(-23.0, 2.0, 0.0),
+        Vec3::new(1.4, 4.0, 6.0),
+    );
+    let cfg = vehicle_cfg(&app);
+    let top = position_of(&app, car).y + cfg.half_extents().y;
+    spawn_wall(
+        &mut app,
+        Vec3::new(-25.0, top + 2.5 + 0.5, 0.0),
+        Vec3::new(3.0, 1.0, 5.0),
+    );
+    run_ticks(&mut app, 16);
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Busted);
+    app.update();
+    assert_eq!(
+        game_state(&app),
+        GameState::Busted,
+        "GATE BROKEN: not busted"
+    );
+    assert_on_foot(&mut app, "forced eject");
+    let feet = position(&mut app).y - float_height_of(&app);
+    assert!(
+        (feet - top).abs() < 0.05,
+        "feet at {feet}: not on the car top {top} (a 1 m wall top is at 1.0)"
+    );
+}
+
+/// A dummy at the right door, a 1 m wall over the left door and a slab over the roof: nothing is
+/// clear, the forced eject takes the right door at ground level (the body is in the way, the wall
+/// top is no floor).
+#[test]
+fn forced_eject_takes_a_level_door_despite_a_body() {
+    let (mut app, car) = car_app();
+    drive_in(&mut app, car);
+    spawn_wall(
+        &mut app,
+        Vec3::new(-27.0, 0.5, 0.0),
+        Vec3::new(1.4, 1.0, 6.0),
+    );
+    let top = position_of(&app, car).y + vehicle_cfg(&app).half_extents().y;
+    spawn_wall(
+        &mut app,
+        Vec3::new(-25.0, top + 2.5 + 0.5, 0.0),
+        Vec3::new(3.0, 1.0, 5.0),
+    );
+    let right = position_of(&app, car) + rotation_of(&app, car) * Vec3::new(1.7, 0.0, -0.3);
+    spawn_dummy(&mut app, Vec3::new(right.x, 0.0, right.z));
+    run_ticks(&mut app, 16);
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Busted);
+    app.update();
+    assert_eq!(
+        game_state(&app),
+        GameState::Busted,
+        "GATE BROKEN: not busted"
+    );
+    let at = position(&mut app);
+    let feet = at.y - float_height_of(&app);
+    assert!(feet.abs() < 0.05, "feet at {feet}, not on the ground");
+    assert!(
+        flat(at - right).length() < 0.3,
+        "ejected at {at}, not at the right door {right}"
+    );
 }

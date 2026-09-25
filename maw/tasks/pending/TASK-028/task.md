@@ -22,4 +22,5 @@ Decide and document (ADR): trigger (tag `v*` push → release; plus manual `work
 
 ## Dependencies
 - blocked by TASK-017
+- blocked by TASK-031 (release after the playtest triage)
 - blocked by TASK-029 (reuses its CI setup: toolchain, caches, asset fetch)

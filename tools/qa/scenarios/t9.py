@@ -33,6 +33,8 @@ CLICK_MS = 80
 AGGRO_WAIT_S = 0.3
 FIREFIGHT_S = 6.0
 FIREFIGHT_POLL_S = 0.25
+# A car body this close to a member when its health drops ran it over (T15 traffic), m.
+RUN_OVER_M = 5.0
 FIGHT_ARMOR = 1.0e6
 HEAT_FLOOR_S = 110.0
 CAPTURE_GAP_S = 0.15
@@ -278,7 +280,21 @@ def run(out):
                         "attacking": attacking,
                         "screenshot": screenshot(game, out / "firefight.png"),
                     }
-            time.sleep(max(0.0, FIREFIGHT_S - (time.monotonic() - fight_t0)))
+            # T15: traffic drives through the fight. A member whose health drops with a car body within
+            # RUN_OVER_M is logged as run over, not as friendly fire.
+            run_over = {}
+            last = {e: f["health"] for e, f in fighters(game, ids).items()}
+            while time.monotonic() - fight_t0 < FIREFIGHT_S:
+                time.sleep(FIREFIGHT_POLL_S)
+                now = fighters(game, ids)
+                dropped = [e for e, f in now.items() if f["health"] < last.get(e, f["health"])]
+                if dropped:
+                    cars = [vec3(p) for _, (p,) in rows(game, ["Position"], with_="Vehicle")]
+                    at = {m["entity"]: m["position"] for m in members(game)}
+                    for e in dropped:
+                        if e in at and any(horizontal(at[e], c) <= RUN_OVER_M for c in cars):
+                            run_over[str(e)] = run_over.get(str(e), 0.0) + last[e] - now[e]["health"]
+                last = {e: f["health"] for e, f in now.items()}
             end = fighters(game, ids)
             summary["firefight"] = {
                 "armor_raised_to": FIGHT_ARMOR,
@@ -297,6 +313,7 @@ def run(out):
                 },
                 "drawn": sum(1 for m in members(game) if m["entity"] in ids and m["held"] is not None),
                 "route_load": resource_value(game, "RouteLoad"),
+                "run_over": run_over,
                 "frame": game.frame_report(),
             }
 
@@ -319,7 +336,8 @@ def run(out):
                                      f"attacking and a shot fired within {FIREFIGHT_S} s")
             full = max_health()
             left = summary["firefight"]["members"]
-            hurt = {e: m for e, m in left.items() if m["health"] < full}
+            hurt = {e: m for e, m in left.items()
+                    if m["health"] < full - summary["firefight"]["run_over"].get(e, 0.0)}
             if hurt or len(left) != len(start):
                 raise AssertionError(f"friendly fire: members below {full} HP after the fight: {hurt} "
                                      f"({len(start)} started, {len(left)} left)")

@@ -4,6 +4,8 @@
 
 mod common;
 mod police_support;
+mod traffic_support;
+mod vehicle_support;
 mod wanted_support;
 
 use bevy::{ecs::resource::IsResource, prelude::*};
@@ -341,4 +343,83 @@ fn idle_city_entity_count_stays_bounded() {
         range(early),
         range(late),
     );
+}
+
+/// Traffic (T15): a hijack and a bail-out each throw a driver civilian out; the cars end abandoned.
+/// Once the player stands far off with every body off-frame (named mutation: population
+/// `despawn_distance` 20 m, the floor is 80 m wide), the bubbles take cars and drivers and the set of
+/// all entities is back at its baseline.
+#[test]
+fn hijacked_and_bailed_out_cars_leave_no_entity() {
+    use gta_sim::traffic::{Segment, TrafficMode};
+    use traffic_support::*;
+    use vehicle_support::*;
+    let at = |x: f32| Vec3::new(x, 0.0, 30.0);
+    let mut app = traffic_floor(
+        vec![
+            (at(-30.0), at(10.0), 12.0, 0),
+            (at(20.0), at(25.0), 12.0, 1),
+        ],
+        &[(0, 1, 0), (1, 0, 1)],
+        &[(Vec3::new(-20.0, 0.0, 24.0), Vec3::new(10.0, 0.0, 24.0))],
+    );
+    set_population(&mut app, |p| p.max_civilians = 0);
+    let baseline = all_entities(&app);
+    // Bail-out: a cabin shot from 8 m off the car's left side (−Z for a +X car).
+    let float = float_height_of(&app);
+    place_player(&mut app, Vec3::new(-12.0, float, 22.0));
+    arm(&mut app, gta_sim::combat::Weapon::Pistol);
+    let bailing = spawn_traffic_car(&mut app, Segment::Lane(0), 2.04, 12.0);
+    for _ in 0..640 {
+        if position_of(&app, bailing).x >= -15.0 {
+            break;
+        }
+        run_ticks(&mut app, 1);
+    }
+    let mut probe = Probe::new(&app);
+    let window =
+        position_of(&app, bailing) + rotation_of(&app, bailing) * Vec3::new(-1.2, 0.5, 0.1);
+    fire_at(&mut app, &mut probe, window);
+    for _ in 0..640 {
+        if traffic_car(&app, bailing).mode == TrafficMode::Abandoned {
+            break;
+        }
+        run_ticks(&mut app, 1);
+    }
+    assert_eq!(
+        traffic_car(&app, bailing).mode,
+        TrafficMode::Abandoned,
+        "GATE BROKEN: no bail-out"
+    );
+    // Hijack: a second car queues behind the abandoned one; the player takes it and gets out.
+    let hijacked = spawn_traffic_car(&mut app, Segment::Lane(0), 2.04, 6.0);
+    for _ in 0..1280 {
+        run_ticks(&mut app, 1);
+        if traffic_car(&app, hijacked).speed == 0.0 {
+            break;
+        }
+    }
+    drive_in(&mut app, hijacked);
+    run_ticks(&mut app, 2);
+    request_vehicle(&mut app);
+    run_ticks(&mut app, 2);
+    assert_eq!(driving(&mut app), None, "GATE BROKEN: could not get out");
+    assert_eq!(traffic_car(&app, hijacked).mode, TrafficMode::Abandoned);
+    let drivers = characters(&mut app)
+        .into_iter()
+        .filter(|&c| app.world().get::<Civilian>(c).is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(drivers.len(), 2, "GATE BROKEN: expected two drivers out");
+    let sensors = owned_sensors(&app, &drivers);
+    // Everybody off-frame, the player far off.
+    place_player(&mut app, Vec3::new(-35.0, float, -35.0));
+    look_up(&mut app);
+    set_population(&mut app, |p| p.despawn_distance = 20.0);
+    for _ in 0..1920 {
+        run_ticks(&mut app, 1);
+        if all_entities(&app).difference(&baseline).count() == 0 {
+            break;
+        }
+    }
+    assert_back_to(&app, &baseline, &sensors, "hijack and bail-out");
 }

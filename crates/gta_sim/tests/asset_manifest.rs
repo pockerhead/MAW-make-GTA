@@ -109,12 +109,12 @@ fn shipped_manifest_is_valid() {
         assert!(pack.rig.is_none(), "pack {} has no rig", pack.name);
     }
     // 30 impact .ogg + License; click_001, toggle_001 + License; jingles_HIT00, jingles_SAX01 + License;
-    // sedan.glb, its colormap + License.
+    // sedan.glb, police.glb, taxi.glb, their colormap + License.
     for (name, files) in [
         ("impact-sounds", 31),
         ("interface-sounds", 3),
         ("music-jingles", 3),
-        ("car-kit", 3),
+        ("car-kit", 5),
     ] {
         let pack = manifest.packs.iter().find(|p| p.name == name).unwrap();
         assert_eq!(pack.files.len(), files, "{name} file count");

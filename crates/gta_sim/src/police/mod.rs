@@ -3,10 +3,17 @@
 
 mod arrest;
 mod behavior;
+mod car_dispatch;
+mod car_route;
+mod cars;
 mod dispatch;
 pub mod fsm;
 
 pub use arrest::ArrestAttempt;
+pub use car_route::find_lane_route;
+pub use cars::{
+    CarSenses, CrewOf, PoliceCar, PoliceCarRng, PoliceCarRoute, PoliceCarState, next_car_state,
+};
 
 use crate::character::{
     Character, CharacterSchemeConfig, Gait, Health, HealthConfig, HealthSystems, LocomotionConfig,
@@ -19,6 +26,7 @@ use crate::navigation::Route;
 use crate::perception::{AiSystems, Perception};
 use crate::population::{Appearance, Offscreen, PopulationSystems};
 use crate::tactics::Discipline;
+use crate::traffic::TrafficGraph;
 use crate::wanted::{STARS, WantedSystems};
 use crate::world::CitySeed;
 use bevy::prelude::*;
@@ -42,6 +50,7 @@ pub struct EscalationConfig {
     /// Flat distance of a spawn point from the player (inner, outer), m.
     pub spawn_ring: (f32, f32),
     pub spawns_per_tick: u32,
+    pub car: PoliceCarConfig,
     pub arrest: ArrestConfig,
     /// A cop this close (flat) to its goal has arrived, m.
     pub search_arrive_distance: f32,
@@ -62,6 +71,47 @@ pub struct EscalationRow {
     pub arrest: bool,
     /// New units come in from other sides of the last known position.
     pub surround: bool,
+    /// Police cars at most.
+    pub cars: u32,
+}
+
+/// Police cars (GDD §5.3).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PoliceCarConfig {
+    /// Cops aboard a new car; they count in the row's units.
+    pub crew: u32,
+    /// Flat distance of a car spawn point from the player (inner, outer), m.
+    pub spawn_ring: (f32, f32),
+    pub spawns_per_tick: u32,
+    /// Speed on lanes, m/s.
+    pub pursuit_speed: f32,
+    /// Speed on intersection connectors, m/s.
+    pub turn_speed: f32,
+    /// The crew gets out this close to the player, m.
+    pub dismount_distance: f32,
+    /// A seen driver this close is chased straight, m.
+    pub direct_chase_distance: f32,
+    /// Seconds a driver stays stopped before the crew gets out.
+    pub stopped_seconds: f32,
+    /// The crew re-boards when the player drives farther than this from the car, m.
+    pub reboard_distance: f32,
+    /// Seconds after which cops that have not re-boarded are left behind.
+    pub reboard_timeout_seconds: f32,
+    pub route_refresh_seconds: f32,
+    /// A* searches per tick for all police cars.
+    pub routes_per_tick: u32,
+    /// Seconds a responding car may crawl (held up in traffic) before its crew goes on foot.
+    pub blocked_seconds: f32,
+    /// A route ends on any lane within this of the lane nearest to the target (beyond that lane's own
+    /// distance), m: the far side of the target's street counts, no block is looped for the near side.
+    pub goal_margin: f32,
+    /// A stopping car pulls over this far right of its lane where that spot is free (0: never), m.
+    pub pull_over: f32,
+    /// Seconds the player's car must move (above exit speed) before the crew counts it as driven off.
+    pub moving_seconds: f32,
+    /// A car held up inside an intersection lets its crew out there after `blocked_seconds` times this.
+    pub junction_factor: f32,
 }
 
 /// Gear and distance band of one unit kind.
@@ -90,6 +140,14 @@ pub struct ArrestConfig {
     pub break_free_distance: f32,
     /// Seconds a witnessed attack by the player makes arrest-row cops shoot.
     pub hostile_seconds: f32,
+    /// Seconds a cop at the door of a stopped car takes to pull the driver out.
+    pub pull_out_seconds: f32,
+    /// Seconds more the pull waits for a blocked left door; then the driver is pulled out at any clear
+    /// exit and the arrest starts over on foot.
+    pub pull_give_up_seconds: f32,
+    /// A cop this close to the door of the driver's car goes for the door even without sight of the
+    /// driver (walking around the cars in the way), m.
+    pub approach_distance: f32,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -165,8 +223,52 @@ impl EscalationConfig {
             return Err("spawns_per_tick must be >= 1".into());
         }
         self.validate_arrest()?;
+        self.validate_cars()?;
         positive("search_arrive_distance", self.search_arrive_distance)?;
         self.validate_combat()
+    }
+
+    fn validate_cars(&self) -> Result<(), String> {
+        let c = &self.car;
+        if c.crew < 1 {
+            return Err("car.crew must be >= 1".into());
+        }
+        if c.spawns_per_tick < 1 {
+            return Err("car.spawns_per_tick must be >= 1".into());
+        }
+        if c.routes_per_tick < 1 {
+            return Err("car.routes_per_tick must be >= 1".into());
+        }
+        band("car.spawn_ring", c.spawn_ring)?;
+        for (field, value) in [
+            ("car.pursuit_speed", c.pursuit_speed),
+            ("car.turn_speed", c.turn_speed),
+            ("car.dismount_distance", c.dismount_distance),
+            ("car.direct_chase_distance", c.direct_chase_distance),
+            ("car.stopped_seconds", c.stopped_seconds),
+            ("car.reboard_distance", c.reboard_distance),
+            ("car.reboard_timeout_seconds", c.reboard_timeout_seconds),
+            ("car.route_refresh_seconds", c.route_refresh_seconds),
+            ("car.blocked_seconds", c.blocked_seconds),
+            ("car.goal_margin", c.goal_margin),
+            ("car.moving_seconds", c.moving_seconds),
+        ] {
+            positive(field, value)?;
+        }
+        not_negative("car.pull_over", c.pull_over)?;
+        if !(c.junction_factor.is_finite() && c.junction_factor >= 1.0) {
+            return Err(format!(
+                "car.junction_factor {} must be finite and >= 1",
+                c.junction_factor
+            ));
+        }
+        if c.dismount_distance >= c.direct_chase_distance {
+            return Err(format!(
+                "car.dismount_distance {} must be < car.direct_chase_distance {}",
+                c.dismount_distance, c.direct_chase_distance
+            ));
+        }
+        Ok(())
     }
 
     fn validate_rows(&self) -> Result<(), String> {
@@ -184,6 +286,9 @@ impl EscalationConfig {
                 &format!("stars[{i}].reinforce_seconds"),
                 row.reinforce_seconds,
             )?;
+            if row.cars < 1 {
+                return Err(format!("stars[{i}].cars must be >= 1"));
+            }
             let Some(previous) = i.checked_sub(1).map(|p| &self.stars[p]) else {
                 continue;
             };
@@ -193,6 +298,14 @@ impl EscalationConfig {
                     row.units,
                     i - 1,
                     previous.units
+                ));
+            }
+            if row.cars < previous.cars {
+                return Err(format!(
+                    "stars[{i}].cars {} must be >= stars[{}].cars {}",
+                    row.cars,
+                    i - 1,
+                    previous.cars
                 ));
             }
             if row.swat < previous.swat {
@@ -211,6 +324,9 @@ impl EscalationConfig {
         let a = &self.arrest;
         positive("arrest.stand_distance", a.stand_distance)?;
         positive("arrest.seconds", a.seconds)?;
+        positive("arrest.pull_out_seconds", a.pull_out_seconds)?;
+        positive("arrest.pull_give_up_seconds", a.pull_give_up_seconds)?;
+        positive("arrest.approach_distance", a.approach_distance)?;
         not_negative("arrest.hostile_seconds", a.hostile_seconds)?;
         if a.distance <= a.stand_distance {
             return Err(format!(
@@ -258,15 +374,21 @@ impl EscalationConfig {
         positive("combat.reposition_step", c.reposition_step)
     }
 
-    /// Units spawn inside the population bubble: past `despawn_distance` they would vanish at once.
+    /// Units and cars spawn inside the population bubble: past `despawn_distance` they would vanish at once.
     pub fn validate_ring(&self, despawn_distance: f32) -> Result<(), String> {
-        if self.spawn_ring.1 < despawn_distance {
-            return Ok(());
+        if self.spawn_ring.1 >= despawn_distance {
+            return Err(format!(
+                "spawn_ring {:?} must end below the population despawn_distance {despawn_distance}",
+                self.spawn_ring
+            ));
         }
-        Err(format!(
-            "spawn_ring {:?} must end below the population despawn_distance {despawn_distance}",
-            self.spawn_ring
-        ))
+        if self.car.spawn_ring.1 >= despawn_distance {
+            return Err(format!(
+                "car.spawn_ring {:?} must end below the population despawn_distance {despawn_distance}",
+                self.car.spawn_ring
+            ));
+        }
+        Ok(())
     }
 
     pub fn spec(&self, kind: UnitKind) -> &UnitSpec {
@@ -345,7 +467,8 @@ fn roll(rng: &mut PoliceRng, (lo, hi): (f32, f32)) -> f32 {
     lo + (hi - lo) * rng.unit()
 }
 
-/// Active units (not dead, not leaving) the dispatcher counted in its last run; read by QA.
+/// Active units (not dead, not leaving; on foot plus crews aboard) and active police cars the
+/// dispatchers counted in their last run; read by QA.
 #[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
 #[reflect(Resource)]
 pub struct PoliceDispatcher {
@@ -353,6 +476,8 @@ pub struct PoliceDispatcher {
     pub swat: u32,
     /// Seconds until a lost unit may be replaced.
     pub reinforce_left: f32,
+    /// Police cars responding, chasing or with their crew out.
+    pub cars: u32,
 }
 
 /// A witnessed attack by the player: arrest-row cops shoot while `hostile_left > 0`.
@@ -420,7 +545,9 @@ pub struct PolicePlugin {
 
 impl Plugin for PolicePlugin {
     fn build(&self, app: &mut App) {
+        let lanes = resource_exists::<TrafficGraph>;
         app.insert_resource(PoliceRng::seeded(self.seed))
+            .insert_resource(PoliceCarRng::seeded(self.seed))
             .init_resource::<PoliceDispatcher>()
             .init_resource::<ArrestAttempt>()
             .init_resource::<PoliceAlert>()
@@ -430,6 +557,10 @@ impl Plugin for PolicePlugin {
             .register_type::<PoliceDispatcher>()
             .register_type::<ArrestAttempt>()
             .register_type::<PoliceAlert>()
+            .register_type::<PoliceCar>()
+            .register_type::<PoliceCarState>()
+            .register_type::<PoliceCarRoute>()
+            .register_type::<CrewOf>()
             // After the population (it resets the shared ray budget) and the wanted level (fresh stars).
             .configure_sets(
                 FixedUpdate,
@@ -445,14 +576,23 @@ impl Plugin for PolicePlugin {
                         .in_set(HealthSystems::Death)
                         .in_set(NpcSystems),
                     behavior::police_alert.in_set(AiSystems::Perceive),
-                    behavior::police_fsm.in_set(AiSystems::Decide),
+                    (behavior::police_fsm, cars::board_police_cars.run_if(lanes))
+                        .chain()
+                        .in_set(AiSystems::Decide),
                     (
+                        cars::on_police_car_entered.run_if(lanes),
+                        car_dispatch::despawn_police_cars.run_if(lanes),
+                        car_dispatch::dispatch_police_cars
+                            .in_set(PlayingSystems)
+                            .run_if(lanes),
+                        car_route::drive_police_cars.run_if(lanes),
                         dispatch::despawn_police,
                         dispatch::dispatch_police.in_set(PlayingSystems),
                     )
                         .chain()
                         .in_set(PoliceSystems),
-                    arrest::arrest_player
+                    (arrest::pull_out_driver, arrest::arrest_player)
+                        .chain()
                         .after(AiSystems::Decide)
                         .before(WantedSystems)
                         .in_set(PlayingSystems),
@@ -472,6 +612,7 @@ fn reset_dispatcher(mut dispatcher: ResMut<PoliceDispatcher>) {
     *dispatcher = PoliceDispatcher::default();
 }
 
-fn reseed_police(seed: Res<CitySeed>, mut rng: ResMut<PoliceRng>) {
+fn reseed_police(seed: Res<CitySeed>, mut rng: ResMut<PoliceRng>, mut cars: ResMut<PoliceCarRng>) {
     *rng = PoliceRng::seeded(seed.0);
+    *cars = PoliceCarRng::seeded(seed.0);
 }

@@ -1,0 +1,26 @@
+// Traffic (GDD §5.2): kinematic cars on the inner lanes with IDM, intersection reservation, the
+// Vermeij spawn/despawn bubble, the kinematic -> dynamic switch before a contact.
+(
+    // IDM start values (GDD §5.2, traffic-simulation.de/info/info_IDM.html): time headway T, s;
+    // maximum acceleration a and comfortable deceleration b, m/s²; jam distance s0, m.
+    // max_deceleration: the IDM result is clamped at -this, m/s² (a car never brakes harder).
+    idm: (time_headway: 1.5, acceleration: 0.73, comfortable_deceleration: 1.67, min_gap: 2.0, max_deceleration: 8.0),
+    // Desired speed v0 by road class, m/s (GDD §5.2: street 12, avenue 16).
+    desired_speed: (avenue: 16.0, street: 12.0),
+    turn_speed: 6.0,                  // v0 on an intersection connector, m/s
+    look_ahead: 60.0,                 // leader search along the path, m
+    sense_distance: 25.0,             // forward cast on a lane, m past the bumper
+    turn_sense_distance: 6.0,         // forward cast on a connector (a straight cast would see corner sidewalks), m
+    connector_samples: 8,             // polyline points per connector curve
+    conflict_margin: 0.3,             // m added to the car width when two connector lines count as crossing
+    // Vermeij bands (GTA III/VC/SA, GDD §5.2): in frame spawn at 70 m / despawn at 90 m, off frame
+    // 15 / 25 m, despawn only after 2 s off frame; cap 24 cars in the bubble.
+    // spawn_spacing: spawn points every this many metres along a lane.
+    bubble: (max_cars: 24, in_view: (spawn: 70.0, despawn: 90.0), off_view: (spawn: 15.0, despawn: 25.0),
+             offscreen_seconds: 2.0, spawns_per_tick: 1, initial_spawns_per_tick: 4, spawn_spacing: 10.0),
+    // Time-to-contact switch to a dynamic body: broadphase reach, m; sweep horizon, s; skin on the
+    // car's footprint, m. reach >= (sedan max_speed 28 + v0 16) x 0.1 = 4.4 m.
+    switch: (reach: 5.0, horizon_seconds: 0.1, skin: 0.1),
+    // A dynamic car this far off its path, or heading off the path tangent by more, is given up, m / degrees.
+    lost: (distance: 4.0, angle_deg: 60.0),
+)

@@ -13,6 +13,7 @@ pub mod player;
 pub mod police;
 pub mod population;
 pub(crate) mod tactics;
+pub mod traffic;
 pub mod vehicle;
 pub mod wanted;
 pub mod world;
@@ -35,6 +36,7 @@ use perception::{PERCEPTION_CONFIG, PerceptionConfig, PerceptionPlugin};
 use player::PlayerPlugin;
 use police::{EscalationConfig, POLICE_CONFIG, PolicePlugin};
 use population::{POPULATION_CONFIG, PopulationConfig, PopulationPlugin};
+use traffic::{TRAFFIC_CONFIG, TrafficConfig, TrafficPlugin};
 use vehicle::{DAMAGE_CONFIG, DamageConfig, VEHICLE_CONFIG, VehicleConfig, VehiclePlugin};
 use wanted::{WANTED_CONFIG, WantedConfig, WantedPlugin};
 use world::{CITY_CONFIG, CityParams, CityParamsRes, WorldPlugin, WorldSource};
@@ -131,6 +133,14 @@ pub fn compose_sim(
     })?;
     // A witness perceives within `slots` ticks of the stimulus (Bevy's default fixed tick, never overridden).
     let tick = Time::<Fixed>::default().timestep().as_secs_f32();
+    let traffic = load_config::<TrafficConfig>(&root, TRAFFIC_CONFIG)?;
+    traffic
+        .validate(tick)
+        .and_then(|()| traffic.validate_cross(vehicle.max_speed, population.despawn_distance))
+        .map_err(|message| ConfigError {
+            path: root.path(TRAFFIC_CONFIG),
+            message,
+        })?;
     let call_delay = civilian.longest_call_delay(
         population.corpse_seconds,
         f32::from(perception.slots) * tick,
@@ -175,6 +185,7 @@ pub fn compose_sim(
         .insert_resource(police)
         .insert_resource(vehicle)
         .insert_resource(vehicle_damage)
+        .insert_resource(traffic)
         .add_plugins((
             FlowPlugin,
             PhysicsPlugins::default(),
@@ -192,7 +203,7 @@ pub fn compose_sim(
             WantedPlugin,
         ));
     // Outside the tuple: `Plugins` is implemented for tuples of at most 15.
-    app.add_plugins(VehiclePlugin);
+    app.add_plugins((VehiclePlugin, TrafficPlugin));
     Ok(())
 }
 

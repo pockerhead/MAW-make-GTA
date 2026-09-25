@@ -1,5 +1,6 @@
 use super::{
-    DamageConfig, PreStepVelocity, Vehicle, VehicleDamage, VehicleHealth, VehicleHit, VehicleImpact,
+    CabinHit, DamageConfig, PreStepVelocity, Vehicle, VehicleConfig, VehicleDamage, VehicleHealth,
+    VehicleHit, VehicleImpact,
 };
 use crate::character::{CharacterScheme, Dead, Health};
 use crate::combat::{
@@ -145,17 +146,62 @@ pub(super) fn apply_impacts(
     }
 }
 
+/// `point` lies inside the cabin zone of a car at `position` / `rotation`.
+pub fn in_cabin(cfg: &VehicleConfig, position: Vec3, rotation: Quat, point: Vec3) -> bool {
+    let local = rotation.inverse() * (point - position) - cfg.cabin_centre();
+    let half = cfg.cabin_half_extents();
+    local.x.abs() <= half.x && local.y.abs() <= half.y && local.z.abs() <= half.z
+}
+
+/// Driver wound of a cabin pellet of `damage` base damage.
+pub fn cabin_wound(damage: f32, share: f32) -> f32 {
+    (damage * share).round()
+}
+
+/// Car health loss per pellet; a pellet in the cabin also wounds the seated driver.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_bullet_hits(
     mut bullets: MessageReader<BulletHitVehicle>,
     dmg: Res<DamageConfig>,
-    mut vehicles: Query<&mut VehicleHealth>,
+    cfg: Res<VehicleConfig>,
+    mut vehicles: Query<(&mut VehicleHealth, &Vehicle, &Position, &Rotation)>,
+    mut drivers: Query<&mut Health, Without<Dead>>,
+    mut cabin: MessageWriter<CabinHit>,
+    mut dealt: MessageWriter<DamageDealt>,
 ) {
     for hit in bullets.read() {
-        let Ok(mut health) = vehicles.get_mut(hit.vehicle) else {
+        let Ok((mut health, vehicle, position, rotation)) = vehicles.get_mut(hit.vehicle) else {
             continue;
         };
         let loss = bullet_damage(hit.damage, dmg.vehicle.bullet_scale);
         health.current = (health.current - loss).max(0.0);
+        if !in_cabin(&cfg, position.0, rotation.0, hit.point) {
+            continue;
+        }
+        cabin.write(CabinHit {
+            shooter: hit.shooter,
+            attack: hit.attack,
+            vehicle: hit.vehicle,
+            point: hit.point,
+            damage: hit.damage,
+        });
+        let Some(driver) = vehicle.driver else {
+            continue;
+        };
+        let Ok(mut life) = drivers.get_mut(driver) else {
+            continue;
+        };
+        let wound = cabin_wound(hit.damage, dmg.vehicle.cabin_driver_share);
+        let killed = life.take(wound);
+        dealt.write(DamageDealt {
+            shooter: hit.shooter,
+            shot: hit.attack,
+            target: driver,
+            point: hit.point,
+            damage: wound as u32,
+            headshot: false,
+            killed,
+        });
     }
 }
 
@@ -191,10 +237,28 @@ mod tests {
             per_mps: 40.0,
             bullet_scale: 1.0,
             scrape_normal: 0.5,
+            cabin_driver_share: 0.5,
         };
         assert_eq!(vehicle_damage(4.0, &cfg), 0.0);
         assert_eq!(vehicle_damage(10.0, &cfg), 200.0);
         assert_eq!(vehicle_damage(28.0, &cfg), 920.0);
+    }
+
+    #[test]
+    fn cabin_rows() {
+        let root =
+            crate::config::ConfigRoot(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").into());
+        let cfg: VehicleConfig = crate::config::load_config(&root, crate::vehicle::VEHICLE_CONFIG)
+            .expect("GATE BROKEN: sedan.ron");
+        let (p, r) = (Vec3::new(3.0, 1.16, -2.0), Quat::from_rotation_y(0.7));
+        let at = |local: Vec3| p + r * local;
+        // Side window, roof over the seat: inside. Hood, low door: outside.
+        assert!(in_cabin(&cfg, p, r, at(Vec3::new(1.2, 0.5, 0.0))));
+        assert!(in_cabin(&cfg, p, r, at(Vec3::new(0.0, 0.92, 0.3))));
+        assert!(!in_cabin(&cfg, p, r, at(Vec3::new(0.0, 0.3, -2.04))));
+        assert!(!in_cabin(&cfg, p, r, at(Vec3::new(1.2, -0.3, 0.0))));
+        // Pistol 25 x 0.5 = 12.5 rounds half away from zero.
+        assert_eq!(cabin_wound(25.0, 0.5), 13.0);
     }
 
     #[test]

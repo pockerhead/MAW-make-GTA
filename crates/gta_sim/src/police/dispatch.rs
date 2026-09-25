@@ -1,6 +1,7 @@
 //! `PoliceDispatcher`: foot units up to the star row, spawned where the player cannot see them, and
 //! sent home once off-frame (GDD §6.1, §6.4).
 
+use super::cars::PoliceCar;
 use super::fsm::{pick_spawn, spawn_kind};
 use super::{
     CopState, EscalationConfig, PoliceDispatcher, PoliceRng, PoliceUnit, UnitKind,
@@ -14,6 +15,7 @@ use crate::population::{
     Appearance, CameraView, OCCLUSION_RAYS_PER_POINT, Offscreen, PopulationConfig, PopulationLoad,
     occluded, outside_cone, spawn_points,
 };
+use crate::traffic::TrafficGraph;
 use crate::wanted::WantedLevel;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -54,10 +56,11 @@ pub(super) fn despawn_police(
     }
 }
 
-/// Keeps the active units (not dead, not leaving) at the current star row: SWAT first up to the row's
-/// share, one reinforcement delay after a loss, at most `spawns_per_tick` per tick, on sidewalk points
-/// of the spawn ring hidden from the camera (outside the cone or occluded), nearest to the last known
-/// position first or, when the row surrounds, from the side farthest from the units already out.
+/// Keeps the active units (not dead, not leaving; crews aboard police cars included) at the current star
+/// row: SWAT first up to the row's share, one reinforcement delay after a loss, at most `spawns_per_tick`
+/// per tick, on sidewalk points of the spawn ring hidden from the camera (outside the cone or occluded),
+/// nearest to the last known position first or, when the row surrounds, from the side farthest from the
+/// units already out. With a lane graph the seats of the row's missing police cars stay reserved.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn dispatch_police(
     mut commands: Commands,
@@ -81,6 +84,8 @@ pub(super) fn dispatch_police(
     units: Query<(&Position, &PoliceUnit)>,
     lost: Query<(), (With<PoliceUnit>, Added<Dead>)>,
     bodies: Query<&Position, With<Character>>,
+    lanes: Option<Res<TrafficGraph>>,
+    cars: Query<(&Position, &PoliceCar)>,
 ) {
     let (esc, cfg, weapons) = configs;
     let (loco, health, handle) = characters;
@@ -95,6 +100,11 @@ pub(super) fn dispatch_police(
         .filter(|(_, u)| !matches!(u.state, CopState::Dead | CopState::Leave))
         .map(|(p, u)| (p.0, u.kind))
         .collect();
+    let mut active_cars = 0;
+    for (position, car) in cars.iter().filter(|(_, c)| c.active()) {
+        active_cars += 1;
+        active.extend(car.crew.iter().map(|&kind| (position.0, kind)));
+    }
     let count = |active: &[(Vec3, UnitKind)]| {
         let swat = active.iter().filter(|a| a.1 == UnitKind::Swat).count() as u32;
         (active.len() as u32, swat)
@@ -105,7 +115,14 @@ pub(super) fn dispatch_police(
     else {
         return;
     };
+    let reserved = if lanes.is_some() {
+        row.cars.saturating_sub(active_cars) * esc.car.crew
+    } else {
+        0
+    };
+    let fits = |units: u32| units + reserved < row.units;
     if dispatcher.reinforce_left > 0.0
+        || !fits(dispatcher.units)
         || spawn_kind(row, dispatcher.units, dispatcher.swat).is_none()
     {
         return;
@@ -122,6 +139,9 @@ pub(super) fn dispatch_police(
     let mut spawned = 0;
     while spawned < esc.spawns_per_tick {
         let (units, swat) = count(&active);
+        if !fits(units) {
+            break;
+        }
         let Some(kind) = spawn_kind(row, units, swat) else {
             break;
         };

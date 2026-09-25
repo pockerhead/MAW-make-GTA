@@ -480,13 +480,30 @@ fn driver_is_not_hit_over_the_roof() {
             hits.read(&app);
         }
     }
+    // T15: the roof over the seat is cabin, so every pellet wounds the driver by the cabin share;
+    // the head sensor stays off while driving: never a headshot.
     let at_player: Vec<_> = shots.dealt_log.iter().filter(|h| h.target == me).collect();
-    assert!(at_player.is_empty(), "the driver was hit: {at_player:?}");
+    assert!(
+        at_player.iter().all(|h| !h.headshot),
+        "a headshot on the driver: {at_player:?}"
+    );
+    assert_eq!(
+        at_player.len(),
+        4,
+        "every roof pellet over the seat is a cabin hit"
+    );
+    let share = damage_cfg(&app).vehicle.cabin_driver_share;
+    let wound = (weapons.pistol.damage * share).round() as u32;
+    assert!(
+        at_player.iter().all(|h| h.damage == wound),
+        "cabin wounds {at_player:?}, expected {wound} each"
+    );
     let fired = shots.shots.iter().filter(|s| s.shooter == shooter).count();
     assert_eq!(fired, 4, "GATE BROKEN: the dummy fired {fired} shots");
+    let taken: u32 = at_player.iter().map(|h| h.damage).sum();
     assert_eq!(
         app.world().get::<Health>(me).copied().unwrap().current,
-        player_health.current
+        player_health.current - taken as f32
     );
     let on_car = hits.1.iter().filter(|h| h.vehicle == car).count();
     assert_eq!(on_car, 4, "car hits: {:?}", hits.1);
@@ -586,4 +603,108 @@ fn a_cop_sees_the_driver_and_shoots_the_car() {
             .any(|h| h.vehicle == car && h.shooter == unit),
         "no cop bullet reached the car"
     );
+}
+
+// ---------------------------------------------------------------- T15 cabin wounds (O2)
+
+/// The player drives the broadside car (facing −X, its left side towards +Z); a dummy with `gun`
+/// stands 8 m off the left side. Returns (app, car, player, shooter).
+fn cabin_range(gun: Weapon) -> (App, Entity, Entity, Entity) {
+    let (mut app, car) = broadside_app();
+    drive_in(&mut app, car);
+    let me = player(&mut app);
+    let shooter = spawn_dummy(&mut app, Vec3::new(-25.0, 0.0, 8.0));
+    let weapons = app.world().resource::<WeaponsConfig>().clone();
+    let mut loadout = Loadout::default();
+    acquire(&mut loadout.guns[gun.index()], weapons.stats(gun), true);
+    loadout.held = Some(gun);
+    app.world_mut().entity_mut(shooter).insert(loadout);
+    run_ticks(&mut app, 32);
+    (app, car, me, shooter)
+}
+
+/// The dummy fires once (semi-auto) or for `ticks` (automatic) at the car's body-frame point `local`.
+fn fire_at_car(
+    app: &mut App,
+    shooter: Entity,
+    car: Entity,
+    local: Vec3,
+    ticks: u32,
+) -> (Shots, CarHits) {
+    let target = position_of(app, car) + rotation_of(app, car) * local;
+    let offset = app.world().resource::<AimConfig>().muzzle_offset();
+    let body = position_of(app, shooter);
+    let mut from = body;
+    let mut dir = Vec3::NEG_Z;
+    for _ in 0..4 {
+        dir = (target - from).normalize();
+        from = muzzle(body, dir, offset);
+    }
+    {
+        let mut aim = app
+            .world_mut()
+            .get_mut::<gta_sim::character::AimIntent>(shooter)
+            .unwrap();
+        aim.origin = from;
+        aim.direction = dir;
+        aim.aiming = true;
+    }
+    let mut shots = Shots::new(app);
+    let mut hits = CarHits::new(app);
+    for _ in 0..ticks {
+        app.world_mut()
+            .get_mut::<gta_sim::character::ActionIntent>(shooter)
+            .unwrap()
+            .fire_requested = true;
+        shots.run(app, 1);
+        hits.read(app);
+    }
+    for _ in 0..8 {
+        shots.run(app, 1);
+        hits.read(app);
+    }
+    (shots, hits)
+}
+
+#[test]
+fn cabin_shots_wound_the_driver() {
+    let share_wound = |app: &App| {
+        let w = app.world().resource::<WeaponsConfig>().pistol.damage;
+        (w * damage_cfg(app).vehicle.cabin_driver_share).round()
+    };
+    // (name, body-frame point, wounds the driver)
+    for (name, local, wounds) in [
+        ("side window", Vec3::new(-1.2, 0.5, 0.0), true),
+        ("front fender", Vec3::new(-1.2, 0.3, -1.8), false),
+        ("low door", Vec3::new(-1.2, -0.3, 0.0), false),
+        ("roof over the seat", Vec3::new(0.0, 0.92, 0.3), true),
+    ] {
+        let (mut app, car, me, shooter) = cabin_range(Weapon::Pistol);
+        let before = app.world().get::<Health>(me).unwrap().current;
+        let (_, hits) = fire_at_car(&mut app, shooter, car, local, 1);
+        assert_eq!(
+            hits.1.iter().filter(|h| h.vehicle == car).count(),
+            1,
+            "GATE BROKEN: {name}: the pellet missed the car"
+        );
+        let lost = before - app.world().get::<Health>(me).unwrap().current;
+        let expected = if wounds { share_wound(&app) } else { 0.0 };
+        assert_eq!(lost, expected, "{name}: the driver lost {lost}");
+    }
+}
+
+#[test]
+fn an_smg_burst_into_the_cabin_kills_the_driver_who_lands_on_the_ground() {
+    let (mut app, car, me, shooter) = cabin_range(Weapon::Smg);
+    fire_at_car(&mut app, shooter, car, Vec3::new(-1.2, 0.5, 0.0), 180);
+    assert!(
+        app.world().get::<Health>(me).unwrap().current <= 0.0,
+        "the driver survived: {:?}",
+        app.world().get::<Health>(me)
+    );
+    run_ticks(&mut app, 2);
+    assert_eq!(game_state(&app), gta_sim::flow::GameState::Wasted);
+    assert!(driving(&mut app).is_none(), "still seated after Wasted");
+    let feet = position(&mut app).y - float_height_of(&app);
+    assert!(feet.abs() < 0.05, "ejected with feet at {feet}");
 }

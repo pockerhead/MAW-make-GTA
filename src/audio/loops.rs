@@ -13,7 +13,7 @@ use bevy::{
 use gta_sim::{
     flow::GameState,
     player::Player,
-    police::{CopState, PoliceUnit},
+    police::{CopState, PoliceCar, PoliceUnit},
     wanted::WantedLevel,
     world::{City, contains_convex, dist_point_segment},
 };
@@ -199,6 +199,7 @@ fn update_sirens(
     wanted: Res<WantedLevel>,
     listeners: Query<&GlobalTransform, With<SpatialListener>>,
     cops: Query<(Entity, &GlobalTransform, &PoliceUnit)>,
+    cars: Query<(Entity, &GlobalTransform, &PoliceCar)>,
     sirens: Query<(Entity, &ChildOf), With<SirenEmitter>>,
     mut bank: ResMut<SoundBank>,
     mut stats: ResMut<SoundStats>,
@@ -220,11 +221,21 @@ fn update_sirens(
     let Some(ear) = listeners.iter().next().map(GlobalTransform::translation) else {
         return;
     };
-    let live = cops
+    // Police cars on the job carry the sirens; with none in earshot, the cops on foot do.
+    let on_cars = cars
         .iter()
-        .filter(|(_, _, unit)| !matches!(unit.state, CopState::Dead | CopState::Leave))
-        .map(|(cop, at, _)| (cop, at.translation()))
+        .filter(|(.., car)| car.active())
+        .map(|(car, at, _)| (car, at.translation()))
+        .filter(|(_, at)| at.distance(ear) <= cfg.audible)
         .collect::<Vec<_>>();
+    let live = if on_cars.is_empty() {
+        cops.iter()
+            .filter(|(_, _, unit)| !matches!(unit.state, CopState::Dead | CopState::Leave))
+            .map(|(cop, at, _)| (cop, at.translation()))
+            .collect::<Vec<_>>()
+    } else {
+        on_cars
+    };
     let current = sirens
         .iter()
         .map(|(_, parent)| parent.parent())
@@ -259,7 +270,15 @@ fn update_sirens(
             (
                 SirenEmitter,
                 ChildOf(cop),
-                Transform::from_xyz(0.0, cfg.height, 0.0),
+                Transform::from_xyz(
+                    0.0,
+                    if cars.contains(cop) {
+                        cfg.car_height
+                    } else {
+                        cfg.height
+                    },
+                    0.0,
+                ),
                 source,
                 settings,
             ),

@@ -95,7 +95,7 @@ fn every_star_has_a_row() {
     let error = sabotaged_load::<EscalationConfig>(
         POLICE_CONFIG,
         "police_rows",
-        "(units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true),",
+        "(units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true, cars: 5),",
         "",
     )
     .unwrap_err()

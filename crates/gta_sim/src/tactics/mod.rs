@@ -3,7 +3,9 @@
 
 mod fire_line;
 
-pub(crate) use fire_line::{Blocked, FireLine, Shooter, overreach, unblock};
+pub(crate) use fire_line::{
+    Blocked, CarRect, FireLine, Shooter, around_cars, car_blocks, nearby_cars, overreach, unblock,
+};
 
 use crate::character::{ActionIntent, Gait, MoveIntent, WeaponRequest};
 use crate::combat::{Loadout, Weapon};
@@ -173,6 +175,7 @@ pub(crate) fn hold_fire(
     line: FireLine,
     living: &[(Entity, Vec3, Option<Faction>)],
     shooters: &[Shooter],
+    cars: &[CarRect],
     spares: impl Fn(Option<Faction>) -> bool,
     plan: Option<Vec3>,
     on_slot: bool,
@@ -194,7 +197,10 @@ pub(crate) fn hold_fire(
         .filter(|&&(e, _, f)| e != at.entity && spares(f))
         .map(|&(_, p, _)| (p, flat_distance(p, at.chest) <= d.pressed_distance))
         .unzip();
-    if !line.blocked(chest, at.chest, &shields) {
+    let through_car = cars
+        .iter()
+        .any(|car| car_blocks(chest, at.chest, car, line.clearance()));
+    if !line.blocked(chest, at.chest, &shields) && !through_car {
         return hold;
     }
     hold.line_blocked = true;
@@ -219,6 +225,7 @@ pub(crate) fn hold_fire(
         shields: &shields,
         yielding: &yielding,
         bodies: &all,
+        cars,
     };
     let (spot, motion) = unblock(ctx, &blocked, plan, on_slot, d, radius, rays);
     hold.kept_spot = spot;

@@ -57,6 +57,32 @@ pub struct UnderbodyConfig {
     pub chamfer_height: f32,
 }
 
+/// Zone of the car body whose bullet hits reach the driver (body frame, m).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CabinConfig {
+    pub centre: (f32, f32, f32),
+    pub half_extents: (f32, f32, f32),
+}
+
+/// AI driving of a car (pure pursuit + speed control), shared by traffic and police cars.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct AutopilotConfig {
+    /// Shortest look-ahead distance of the steering target, m.
+    pub lookahead_min: f32,
+    /// Look-ahead distance per m/s of speed, s.
+    pub lookahead_per_mps: f32,
+    /// Throttle per m/s of speed error.
+    pub speed_gain: f32,
+    /// Below this speed with the throttle open the car counts as stuck, m/s.
+    pub stuck_speed: f32,
+    /// Seconds stuck before it backs up.
+    pub stuck_seconds: f32,
+    /// Seconds of backing up.
+    pub reverse_seconds: f32,
+}
+
 /// Raycast car handling (GDD §5.1).
 #[derive(Resource, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +107,8 @@ pub struct VehicleConfig {
     pub door: (f32, f32, f32),
     pub enter_radius: f32,
     pub exit_max_speed: f32,
+    pub cabin: CabinConfig,
+    pub autopilot: AutopilotConfig,
 }
 
 fn vec3((x, y, z): (f32, f32, f32)) -> Vec3 {
@@ -102,6 +130,14 @@ impl VehicleConfig {
 
     pub fn door(&self) -> Vec3 {
         vec3(self.door)
+    }
+
+    pub fn cabin_centre(&self) -> Vec3 {
+        vec3(self.cabin.centre)
+    }
+
+    pub fn cabin_half_extents(&self) -> Vec3 {
+        vec3(self.cabin.half_extents)
     }
 
     fn omega(&self) -> f32 {
@@ -213,6 +249,18 @@ impl VehicleConfig {
             dz,
             self.enter_radius,
             self.exit_max_speed,
+            self.cabin.centre.0,
+            self.cabin.centre.1,
+            self.cabin.centre.2,
+            self.cabin.half_extents.0,
+            self.cabin.half_extents.1,
+            self.cabin.half_extents.2,
+            self.autopilot.lookahead_min,
+            self.autopilot.lookahead_per_mps,
+            self.autopilot.speed_gain,
+            self.autopilot.stuck_speed,
+            self.autopilot.stuck_seconds,
+            self.autopilot.reverse_seconds,
         ];
         if !values.iter().all(|v| v.is_finite()) {
             return Err("vehicle values must be finite".into());
@@ -242,6 +290,18 @@ impl VehicleConfig {
             ("grip.rear", self.grip.rear),
             ("enter_radius", self.enter_radius),
             ("exit_max_speed", self.exit_max_speed),
+            ("cabin.half_extents.x", self.cabin.half_extents.0),
+            ("cabin.half_extents.y", self.cabin.half_extents.1),
+            ("cabin.half_extents.z", self.cabin.half_extents.2),
+            ("autopilot.lookahead_min", self.autopilot.lookahead_min),
+            (
+                "autopilot.lookahead_per_mps",
+                self.autopilot.lookahead_per_mps,
+            ),
+            ("autopilot.speed_gain", self.autopilot.speed_gain),
+            ("autopilot.stuck_speed", self.autopilot.stuck_speed),
+            ("autopilot.stuck_seconds", self.autopilot.stuck_seconds),
+            ("autopilot.reverse_seconds", self.autopilot.reverse_seconds),
         ] {
             if value <= 0.0 {
                 return Err(format!("{name} must be positive"));
@@ -295,6 +355,8 @@ pub struct VehicleDamage {
     /// A contact whose normal (car → other) has at least this component along the car's down axis
     /// is an underbody scrape (a curb edge, a flat landing): no crash damage, no impact.
     pub scrape_normal: f32,
+    /// Share of a cabin pellet's base damage the seated driver takes.
+    pub cabin_driver_share: f32,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -328,6 +390,7 @@ impl DamageConfig {
             v.per_mps,
             v.bullet_scale,
             v.scrape_normal,
+            v.cabin_driver_share,
             p.threshold_speed,
             p.per_mps,
             p.knockdown_speed,
@@ -350,6 +413,9 @@ impl DamageConfig {
         }
         if !(v.scrape_normal > 0.0 && v.scrape_normal <= 1.0) {
             return Err("vehicle.scrape_normal must be in (0, 1]".into());
+        }
+        if !(0.0..=1.0).contains(&v.cabin_driver_share) {
+            return Err("vehicle.cabin_driver_share must be in [0, 1]".into());
         }
         if p.threshold_speed < 0.0 {
             return Err("pedestrian.threshold_speed must be nonnegative".into());

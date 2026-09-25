@@ -1,24 +1,43 @@
 (
-    // Wanted stars 1..5 (GDD §6.4): foot units alive at most, of them SWAT; seconds before a lost unit is
-    // replaced; whether cops try to arrest instead of shooting; whether new units come in from other sides.
+    // Wanted stars 1..5 (GDD §6.4): units alive at most (on foot plus crews aboard police cars), of them
+    // SWAT; seconds before a lost unit is replaced; whether cops try to arrest instead of shooting; whether
+    // new units come in from other sides; police cars at most (GDD §6.4 table "Машины").
     stars: (
-        (units: 2,  swat: 0,  reinforce_seconds: 20.0, arrest: true,  surround: false),
-        (units: 4,  swat: 0,  reinforce_seconds: 15.0, arrest: false, surround: false),
-        (units: 6,  swat: 0,  reinforce_seconds: 10.0, arrest: false, surround: true),
-        (units: 8,  swat: 4,  reinforce_seconds: 8.0,  arrest: false, surround: true),
-        (units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true),
+        (units: 2,  swat: 0,  reinforce_seconds: 20.0, arrest: true,  surround: false, cars: 1),
+        (units: 4,  swat: 0,  reinforce_seconds: 15.0, arrest: false, surround: false, cars: 2),
+        (units: 6,  swat: 0,  reinforce_seconds: 10.0, arrest: false, surround: true, cars: 3),
+        (units: 8,  swat: 4,  reinforce_seconds: 8.0,  arrest: false, surround: true, cars: 4),
+        (units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true, cars: 5),
     ),
     // Gear and distance band per unit kind; SWAT keeps a closer band ("штурм").
     patrol: (gun: Pistol, armor: 0.0,  reserve: 120, keep_distance: (8.0, 18.0)),
     swat:   (gun: Smg,    armor: 50.0, reserve: 300, keep_distance: (5.0, 12.0)),
     spawn_ring: (40.0, 90.0),   // m from the player, sidewalk points off-frame or behind buildings
     spawns_per_tick: 1,
+    // Police cars (GDD §5.3): crew aboard (counted in the row's units); spawn ring on the lane graph, m;
+    // spawns per tick; speed on lanes and on intersection connectors, m/s; the crew dismounts within
+    // dismount_distance of the player, the car drives straight at a seen driver within
+    // direct_chase_distance (m); a crew gets out for a driver only once his car has stood stopped_seconds
+    // (then at any distance); the crew re-boards when the player's car has moved moving_seconds and is
+    // farther than reboard_distance (m), stragglers are left after reboard_timeout_seconds (the two
+    // windows keep a stop-and-go driver from making crews hop out and in); A* routes refresh every
+    // route_refresh_seconds, at most routes_per_tick; a responding car held up (at most exit speed) for
+    // blocked_seconds lets its crew go on on foot, inside an intersection only after blocked_seconds x
+    // junction_factor; a route ends on any lane within goal_margin (m) of the nearest lane to the target;
+    // a stopping car pulls over pull_over m to the right of its lane where that spot is free (0: never).
+    car: (crew: 2, spawn_ring: (30.0, 60.0), spawns_per_tick: 1, pursuit_speed: 20.0, turn_speed: 8.0,
+          dismount_distance: 20.0, direct_chase_distance: 40.0, stopped_seconds: 1.0, reboard_distance: 25.0,
+          reboard_timeout_seconds: 10.0, route_refresh_seconds: 1.0, routes_per_tick: 1, blocked_seconds: 2.0,
+          goal_margin: 10.0, pull_over: 3.25, moving_seconds: 2.0, junction_factor: 3.0),
     arrest: (
         distance: 1.5,            // m: a cop this close holds the player (GDD §6.4)
         stand_distance: 1.0,      // m: an arresting cop stops here
         seconds: 1.5,             // s the player stays passive within `distance` before BUSTED
         break_free_distance: 3.0, // m from the arresting cop: the player broke free, +1 star
         hostile_seconds: 5.0,     // s a witnessed attack by the player makes 1-star cops shoot
+        pull_out_seconds: 1.0,    // s a cop at the door of a stopped car takes to pull the driver out (T15)
+        pull_give_up_seconds: 3.0, // s more with the left door blocked: the driver is pulled out at either clear door, the arrest restarts on foot
+        approach_distance: 20.0,  // m: an arrest-row cop this close to a driver's door goes for it unseen, around the cars in the way
     ),
     search_arrive_distance: 3.0,  // m: a cop this close to its goal (last known position, search point) arrives
     combat: (

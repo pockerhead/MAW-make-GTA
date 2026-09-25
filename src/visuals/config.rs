@@ -38,9 +38,13 @@ pub struct RenderConfig {
     pub(super) pickups: PickupVisuals,
     pub(super) weapons: WeaponVisuals,
     pub(super) vehicle: VehicleVisuals,
+    pub(super) police_vehicle: VehicleVisuals,
+    pub(super) taxi_vehicle: VehicleVisuals,
+    /// Share of traffic cars drawn as a taxi (by their appearance roll).
+    pub(super) taxi_share: f32,
 }
 
-/// The car model on every `Vehicle` body.
+/// A car model on a `Vehicle` body (sedan, police car, taxi).
 #[derive(Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub(super) struct VehicleVisuals {
@@ -236,9 +240,11 @@ impl RenderConfig {
             .flat_map(|m| [m.model.as_str(), m.texture.as_str()])
     }
 
-    /// Asset path of the car model.
+    /// Asset paths of the car models.
     pub fn vehicle_asset_paths(&self) -> impl Iterator<Item = &str> {
-        std::iter::once(self.vehicle.model.as_str())
+        [&self.vehicle, &self.police_vehicle, &self.taxi_vehicle]
+            .into_iter()
+            .map(|v| v.model.as_str())
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -433,20 +439,26 @@ impl RenderConfig {
                 unit(name, value)?;
             }
         }
-        let v = &self.vehicle;
-        positive("vehicle.scale", v.scale)?;
-        check(
-            [v.offset.0, v.offset.1, v.offset.2]
-                .iter()
-                .all(|x| x.is_finite()),
-            "vehicle.offset",
-            "must be finite",
-        )?;
-        check(
-            v.wheels.iter().all(|w| !w.is_empty()),
-            "vehicle.wheels",
-            "must name four nodes",
-        )?;
+        for (name, v) in [
+            ("vehicle", &self.vehicle),
+            ("police_vehicle", &self.police_vehicle),
+            ("taxi_vehicle", &self.taxi_vehicle),
+        ] {
+            positive(&format!("{name}.scale"), v.scale)?;
+            check(
+                [v.offset.0, v.offset.1, v.offset.2]
+                    .iter()
+                    .all(|x| x.is_finite()),
+                &format!("{name}.offset"),
+                "must be finite",
+            )?;
+            check(
+                v.wheels.iter().all(|w| !w.is_empty()),
+                &format!("{name}.wheels"),
+                "must name four nodes",
+            )?;
+        }
+        unit("taxi_share", self.taxi_share)?;
         Ok(())
     }
 }

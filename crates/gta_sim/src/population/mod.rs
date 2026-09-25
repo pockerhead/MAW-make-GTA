@@ -574,7 +574,7 @@ fn spawn_civilians(
                 1.0 - t,
             ),
         };
-        let temperament = roll_temperament(&mut rng, civilian_cfg.reaction.temperament_spread);
+        let temperament = roll_temperament(&mut rng.0, civilian_cfg.reaction.temperament_spread);
         let appearance = Appearance(rng.next_u32());
         commands.spawn(civilian_bundle(
             &loco,

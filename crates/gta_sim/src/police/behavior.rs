@@ -1,5 +1,6 @@
 //! Cop systems: the hostility alert, the cop FSM and death.
 
+use super::cars::{CrewOf, PoliceCar, PoliceCarState, nearest_door};
 use super::fsm::{CopSenses, next_state};
 use super::{
     CopState, EscalationConfig, PoliceAlert, PoliceCombatConfig, PoliceRng, PoliceUnit, roll,
@@ -19,8 +20,10 @@ use crate::perception::{AiClock, Perception, PerceptionConfig, wall_blocked};
 use crate::player::Player;
 use crate::population::{PopulationConfig, corpse_components, spawn_points};
 use crate::tactics::{
-    Aim, Ctx, FireLine, Motion, Seek, Shooter, apply_motion, hold_fire, overreach, select,
+    Aim, CarRect, Ctx, FireLine, Motion, Seek, Shooter, apply_motion, around_cars, hold_fire,
+    nearby_cars, overreach, select,
 };
+use crate::vehicle::{Driving, Vehicle, VehicleConfig, door_point};
 use crate::wanted::{WantedConfig, WantedLevel, cop_sees, eye, witnesses};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -121,6 +124,7 @@ pub(super) fn police_fsm(
         Res<WeaponsConfig>,
         Res<PopulationConfig>,
         Res<AimConfig>,
+        Res<VehicleConfig>,
     ),
     state: (
         Res<AiClock>,
@@ -142,11 +146,19 @@ pub(super) fn police_fsm(
         &mut MoveIntent,
         &mut AimIntent,
         &mut ActionIntent,
+        Option<&CrewOf>,
     )>,
-    player: Query<(Entity, &Position, Has<Dead>), (With<Player>, Without<PoliceUnit>)>,
+    player: Query<
+        (Entity, &Position, Has<Dead>, Option<&Driving>),
+        (With<Player>, Without<PoliceUnit>),
+    >,
     characters: Query<(Entity, &Position, &Health, Option<&Faction>), With<Character>>,
+    cars: Query<
+        (Entity, &Position, &Rotation, Option<&PoliceCar>),
+        (With<Vehicle>, Without<PoliceUnit>),
+    >,
 ) {
-    let (esc, wanted_cfg, perception, loco, nav, weapons, population, aim_cfg) = configs;
+    let (esc, wanted_cfg, perception, loco, nav, weapons, population, aim_cfg, vehicle) = configs;
     let (clock, wanted, alert, graph) = state;
     let c = &esc.combat;
     let d = c.discipline();
@@ -161,7 +173,14 @@ pub(super) fn police_fsm(
         .single()
         .ok()
         .filter(|p| !p.2)
-        .map(|(e, p, _)| (e, p.0));
+        .map(|(e, p, ..)| (e, p.0));
+    // The door of the player's car: arresting cops walk up to it.
+    let player_door = player
+        .single()
+        .ok()
+        .and_then(|p| p.3)
+        .and_then(|d| cars.get(d.vehicle).ok())
+        .map(|(_, p, r, _)| door_point(vehicle.door(), p.0, r.0));
     let living: Vec<(Entity, Vec3, Option<Faction>)> = characters
         .iter()
         .filter(|(.., health, _)| health.current > 0.0)
@@ -196,6 +215,26 @@ pub(super) fn police_fsm(
                 .collect()
         })
         .unwrap_or_default();
+    let player_car = player.single().ok().and_then(|p| p.3).map(|d| d.vehicle);
+    let half = vehicle.half_extents();
+    let near_cars = nearby_cars(
+        &shooters,
+        cars.iter().map(|(e, p, r, _)| (e, p.0, r.0)),
+        player_car,
+        Vec2::new(half.x, half.z),
+    );
+    // Cars around the arrest point (the driver's door, or the player): an arresting cop walks around
+    // them (the wall avoidance does not see cars).
+    let arrest_cars: Vec<CarRect> = player_door
+        .or(live_player.map(|(_, at)| at))
+        .map(|centre| {
+            let reach = nav.direct_seek_distance + Vec2::new(half.x, half.z).length();
+            cars.iter()
+                .filter(|(_, p, ..)| flat_distance(p.0, centre) <= reach)
+                .map(|(_, p, r, _)| CarRect::of(p.0, r.0, Vec2::new(half.x, half.z)))
+                .collect()
+        })
+        .unwrap_or_default();
     let stars = wanted.stars;
     let row = (stars >= 1).then(|| &esc.stars[usize::from(stars) - 1]);
     let hostile = alert.hostile_left > 0.0;
@@ -209,6 +248,7 @@ pub(super) fn police_fsm(
         mut intent,
         mut aim,
         mut action,
+        crew_of,
     ) in &mut units
     {
         if unit.state == CopState::Dead {
@@ -230,6 +270,7 @@ pub(super) fn police_fsm(
                     rotation.0 * Vec3::NEG_Z,
                     eye(p, &loco),
                     &wanted_cfg,
+                    wanted_cfg.cop_view_distance,
                 )
             });
             unit.dest_clear = unit.dest.is_some_and(|d| !wall_blocked(&spatial, eyes, d));
@@ -250,6 +291,8 @@ pub(super) fn police_fsm(
             arrest_row: row.is_some_and(|r| r.arrest),
             stars,
             at_goal: goal.is_some_and(|g| flat_distance(chest, g) <= esc.search_arrive_distance),
+            near_driver: player_door
+                .is_some_and(|door| flat_distance(chest, door) <= esc.arrest.approach_distance),
         };
         let before = unit.state;
         unit.state = next_state(before, &senses);
@@ -277,6 +320,42 @@ pub(super) fn police_fsm(
                     &mut rng,
                 ));
             }
+        }
+
+        // 3b. A cop of a parked police car walks back to its door once the player drove off.
+        let door = crew_of
+            .and_then(|c| cars.get(c.car).ok())
+            .filter(|(_, p, _, car)| {
+                car.is_some_and(|c| {
+                    c.state == PoliceCarState::Dismounted
+                        && live_player.is_some_and(|(_, at)| {
+                            c.driven_off(&esc.car, player_door.is_some(), flat_distance(at, p.0))
+                        })
+                })
+            })
+            .map(|(_, p, r, _)| nearest_door(&vehicle, p.0, r.0, chest));
+        if let Some(door) = door {
+            aim.aiming = false;
+            unit.dest = None;
+            unit.reposition = None;
+            select(&mut action, loadout, Some(spec.gun));
+            let direct = flat_distance(chest, door) <= nav.direct_seek_distance;
+            let motion = Motion::Seek(Seek {
+                dest: door,
+                gait: c.chase_gait,
+                direct,
+            });
+            apply_motion(
+                &ctx,
+                motion,
+                chest,
+                on_slot,
+                &mut unit.avoid,
+                &mut route,
+                &mut load,
+                &mut intent,
+            );
+            continue;
         }
 
         // 4. Intents; `fire_requested` is only ever set here, the weapon systems take it.
@@ -309,11 +388,20 @@ pub(super) fn police_fsm(
                 (Some(spec.gun), dest, motion)
             }
             (CopState::Arrest, Some((_, at))) => {
+                // A driver is arrested at the car's door: the cop faces it, where he comes out.
+                let at = player_door.unwrap_or(at);
                 *aim = aim_from_eyes(at);
                 let distance = flat_distance(chest, at);
                 let motion = if distance > esc.arrest.stand_distance {
-                    let direct = unit.sees && distance <= nav.direct_seek_distance;
-                    seek(at, c.chase_gait, direct)
+                    // Unseen near a driver's door: straight on while no wall is in the way.
+                    let direct =
+                        (unit.sees || unit.dest_clear) && distance <= nav.direct_seek_distance;
+                    let via = if direct {
+                        around_cars(chest, at, &arrest_cars, radius, radius + nav.arrive_radius)
+                    } else {
+                        at
+                    };
+                    seek(via, c.chase_gait, direct)
                 } else {
                     Motion::Stand
                 };
@@ -345,6 +433,7 @@ pub(super) fn police_fsm(
                         line,
                         &living,
                         &shooters,
+                        &near_cars,
                         |f| f != Some(Faction::Player),
                         plan,
                         on_slot,

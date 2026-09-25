@@ -24,9 +24,16 @@ fn flat(a: Vec3, b: Vec3) -> f32 {
 
 /// 40 s at 2 stars with the player standing at `feet`; returns per unit the first tick it saw the
 /// player or came within its keep band, else its closest distance.
-fn chase(name: &str, feet: impl Fn(&App) -> Vec3) -> BTreeMap<Entity, Result<u32, f32>> {
+fn chase(
+    name: &str,
+    feet: impl Fn(&App) -> Vec3,
+    cars: bool,
+) -> BTreeMap<Entity, Result<u32, f32>> {
     let mut app = city_app(1);
     settle(&mut app);
+    if !cars {
+        no_police_cars(&mut app);
+    }
     set_population(&mut app, |p| {
         p.max_civilians = 0;
         p.max_gang_members = 0;
@@ -94,13 +101,19 @@ fn cops_reach_the_player_in_the_city() {
             app.world().resource::<CityLandmarks>().park_center
         }),
     ];
-    for (name, feet) in spots {
-        let reach = chase(name, feet);
-        assert!(!reach.is_empty(), "{name}: no unit dispatched in 40 s");
-        assert!(
-            reach.values().any(Result::is_ok),
-            "{name}: no cop reached the player in 40 s: {reach:?}"
-        );
+    // As shipped (cops mostly arrive by car) and on foot only (the sidewalk routing evidence).
+    for cars in [true, false] {
+        for (name, feet) in spots {
+            let reach = chase(name, feet, cars);
+            assert!(
+                !reach.is_empty(),
+                "{name} (cars {cars}): no unit dispatched"
+            );
+            assert!(
+                reach.values().any(Result::is_ok),
+                "{name} (cars {cars}): no cop reached the player: {reach:?}"
+            );
+        }
     }
 }
 

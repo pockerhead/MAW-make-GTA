@@ -20,6 +20,8 @@ const OBSERVED_TICKS: u32 = 640;
 fn police_bench() {
     let mut app = city_app(1);
     settle(&mut app);
+    // The subject is foot SWAT (police cars have their own bench, `traffic_bench.rs`).
+    no_police_cars(&mut app);
     set_population(&mut app, |p| p.max_civilians = 40);
     set_player_armor(&mut app, 1.0e6);
     let feet = position(&mut app) - Vec3::Y * float_height(&app);

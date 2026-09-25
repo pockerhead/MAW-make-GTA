@@ -11,7 +11,7 @@ use gta_sim::{
     combat::{BatPickup, Pickup, WeaponPickup},
     gang::{GangConfig, GangMember},
     player::Player,
-    police::PoliceUnit,
+    police::{PoliceCar, PoliceUnit},
     vehicle::{Driving, Vehicle},
     world::{HospitalSpawn, PoliceStationSpawn, map_px, project},
 };
@@ -20,6 +20,7 @@ use std::collections::HashSet;
 #[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MarkerKind {
     Police,
+    PoliceCar,
     Gang(u8),
     Pickup,
     Vehicle,
@@ -93,7 +94,7 @@ pub(super) fn spawn_landmarks(
 type Tracked<'w, 's, T> = Query<'w, 's, (Entity, &'static T), Without<Dead>>;
 
 /// Adds a dot for every new live cop, gang member, available pickup and car the player does not
-/// drive; drops dots whose target is gone, dead, taken or driven.
+/// drive (police cars in the police tint); drops dots whose target is gone, dead, taken or driven.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn sync_markers(
     mut commands: Commands,
@@ -109,7 +110,10 @@ pub(super) fn sync_markers(
         Query<(Entity, &WeaponPickup)>,
         Query<(Entity, &BatPickup)>,
     ),
-    cars: (Query<Entity, With<Vehicle>>, Query<&Driving, With<Player>>),
+    cars: (
+        Query<(Entity, Has<PoliceCar>), With<Vehicle>>,
+        Query<&Driving, With<Player>>,
+    ),
 ) {
     let cfg = &ui.hud.minimap;
     let (health, guns, bats) = pickups;
@@ -143,11 +147,18 @@ pub(super) fn sync_markers(
     let (vehicles, driving) = cars;
     let driven = driving.single().ok().map(|d| d.vehicle);
     let car = color(cfg.vehicle_color);
+    // Police cars wear the police tint instead of the grey car dot.
     live.extend(
         vehicles
             .iter()
-            .filter(|&e| Some(e) != driven)
-            .map(|e| (e, MarkerKind::Vehicle, car)),
+            .filter(|&(e, _)| Some(e) != driven)
+            .map(|(e, is_police)| {
+                if is_police {
+                    (e, MarkerKind::PoliceCar, police)
+                } else {
+                    (e, MarkerKind::Vehicle, car)
+                }
+            }),
     );
     let wanted: HashSet<Entity> = live.iter().map(|l| l.0).collect();
     let mut shown = HashSet::new();

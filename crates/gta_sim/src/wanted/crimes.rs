@@ -8,8 +8,9 @@ use crate::combat::{DamageDealt, MeleeHit, ShotFired};
 use crate::gang::{Faction, GangMember};
 use crate::perception::Cause;
 use crate::player::Player;
-use crate::police::PoliceUnit;
-use crate::vehicle::{VehicleEntered, VehicleHit};
+use crate::police::{PoliceCar, PoliceUnit};
+use crate::traffic::DriverScared;
+use crate::vehicle::{VehicleConfig, VehicleEntered, VehicleHit};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::collections::HashSet;
@@ -174,8 +175,7 @@ pub(crate) fn classify(victim: Victim, source: HitSource, killed: bool) -> Optio
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn record_crimes(
-    cfg: Res<WantedConfig>,
-    loco: Res<LocomotionConfig>,
+    configs: (Res<WantedConfig>, Res<LocomotionConfig>, Res<VehicleConfig>),
     time: Res<Time<Fixed>>,
     spatial: SpatialQuery,
     mut crimes: ResMut<Crimes>,
@@ -185,6 +185,7 @@ pub(super) fn record_crimes(
     mut dealt: MessageReader<DamageDealt>,
     mut run_over: MessageReader<VehicleHit>,
     mut entered: MessageReader<VehicleEntered>,
+    mut scared: MessageReader<DriverScared>,
     players: Query<&Position, With<Player>>,
     kinds: Query<(Has<Civilian>, Has<GangMember>, Has<PoliceUnit>)>,
     persons: Query<
@@ -192,7 +193,9 @@ pub(super) fn record_crimes(
         Or<(With<Civilian>, With<GangMember>, With<PoliceUnit>)>,
     >,
     cops: Query<(&Position, &Faction), Without<Dead>>,
+    cars: Query<(&Position, &Rotation, &PoliceCar)>,
 ) {
+    let (cfg, loco, vehicle) = configs;
     let now = time.elapsed_secs_f64();
     let merge = cfg.shooting_merge_seconds;
     let melee: HashSet<u32> = hits.read().map(|hit| hit.attack).collect();
@@ -260,6 +263,23 @@ pub(super) fn record_crimes(
         );
         touched.push(id);
     }
+    // A cabin shot that scared a traffic driver is a shooting (GDD §5.2 Q-Б): the driver is data, so
+    // the muzzle rule below has no person to count.
+    for fright in scared.read() {
+        let Ok(at) = players.get(fright.shooter) else {
+            continue;
+        };
+        let id = crimes.record(
+            Crime::Shooting,
+            fright.shooter,
+            None,
+            fright.attack,
+            at.0,
+            now,
+            merge,
+        );
+        touched.push(id);
+    }
     for id in always {
         if let Some((heat, at)) = crimes.report(id, &cfg.heat) {
             apply_report(&mut wanted, heat, at);
@@ -298,7 +318,18 @@ pub(super) fn record_crimes(
     let witnessed = cops
         .iter()
         .filter(|(_, faction)| **faction == Faction::Police)
-        .any(|(cop, _)| witnesses(&spatial, eye(cop.0, &loco), offender_eye, &cfg));
+        .any(|(cop, _)| witnesses(&spatial, eye(cop.0, &loco), offender_eye, &cfg))
+        || cars
+            .iter()
+            .filter(|(.., car)| car.crewed())
+            .any(|(position, rotation, _)| {
+                witnesses(
+                    &spatial,
+                    position.0 + rotation.0 * vehicle.seat(),
+                    offender_eye,
+                    &cfg,
+                )
+            });
     if !witnessed {
         return;
     }

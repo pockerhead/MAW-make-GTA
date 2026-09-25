@@ -8,6 +8,7 @@ use crate::character::{
     Character, CharacterSchemeConfig, Gait, Health, HealthConfig, HealthSystems, LocomotionConfig,
     MoveIntent, character_components,
 };
+use crate::combat::unit_f32;
 use crate::flow::NpcSystems;
 use crate::navigation::{
     GraphWalker, NavigationConfig, SidewalkGraph, flat_distance, flee_next, flee_start,
@@ -17,6 +18,7 @@ use crate::perception::{AiSystems, Cause, Perception, Threat, ThreatKind};
 use crate::population::{Appearance, NpcRng, Offscreen, corpse_components};
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use rand_chacha::ChaCha8Rng;
 use serde::Deserialize;
 
 /// Path of the civilian config, relative to the assets root.
@@ -227,8 +229,8 @@ pub fn civilian_bundle(
     )
 }
 
-pub fn roll_temperament(rng: &mut NpcRng, spread: f32) -> Temperament {
-    let mut factor = || 1.0 + spread * (2.0 * rng.unit() - 1.0);
+pub fn roll_temperament(rng: &mut ChaCha8Rng, spread: f32) -> Temperament {
+    let mut factor = || 1.0 + spread * (2.0 * unit_f32(rng) - 1.0);
     Temperament {
         flee: factor(),
         cower: factor(),

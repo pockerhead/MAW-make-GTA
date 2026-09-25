@@ -1,14 +1,19 @@
 //! Drivable cars (GDD §5, slice T14): one dynamic box body with four raycast wheels.
 
+mod autopilot;
 mod chassis;
 mod config;
 mod impact;
 mod seat;
 
+pub use autopilot::{Autopilot, follow_speed, pursuit_steer, speed_throttle};
+pub(crate) use seat::{ROOF_EXIT, exit_spots, pull_out};
+
 pub use chassis::{drive_force, lateral_force, spring_force, steer_limit, wheel_forward};
 pub use config::{
-    DAMAGE_CONFIG, DamageConfig, GRAVITY, GripConfig, PedestrianDamage, SteerConfig,
-    SuspensionConfig, UnderbodyConfig, VEHICLE_CONFIG, VehicleConfig, VehicleDamage, WheelsConfig,
+    AutopilotConfig, CabinConfig, DAMAGE_CONFIG, DamageConfig, GRAVITY, GripConfig,
+    PedestrianDamage, SteerConfig, SuspensionConfig, UnderbodyConfig, VEHICLE_CONFIG,
+    VehicleConfig, VehicleDamage, WheelsConfig,
 };
 pub use impact::{bullet_damage, pedestrian_damage, vehicle_damage};
 
@@ -16,6 +21,7 @@ use crate::character::{Character, HealthSystems};
 use crate::combat::aim_yaw;
 use crate::flow::{GameState, NEW_CITY, PlayingSystems};
 use crate::layers::GameLayer;
+use crate::police::PoliceSystems;
 use crate::world::{City, CityScoped};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -117,6 +123,18 @@ pub struct VehicleImpact {
     pub speed: f32,
 }
 
+/// A pellet hit a car inside its cabin zone (`VehicleConfig::cabin`).
+#[derive(Message, Reflect, Clone, Copy, Debug)]
+#[reflect(Message)]
+pub struct CabinHit {
+    pub shooter: Entity,
+    pub attack: u32,
+    pub vehicle: Entity,
+    pub point: Vec3,
+    /// Base damage of the pellet (before `bullet_scale`).
+    pub damage: f32,
+}
+
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VehicleSystems {
     Enter,
@@ -177,10 +195,12 @@ fn clear_vehicle_messages(
     mut entered: ResMut<Messages<VehicleEntered>>,
     mut hits: ResMut<Messages<VehicleHit>>,
     mut impacts: ResMut<Messages<VehicleImpact>>,
+    mut cabin: ResMut<Messages<CabinHit>>,
 ) {
     entered.clear();
     hits.clear();
     impacts.clear();
+    cabin.clear();
 }
 
 pub struct VehiclePlugin;
@@ -193,6 +213,9 @@ impl Plugin for VehiclePlugin {
             .add_message::<VehicleEntered>()
             .add_message::<VehicleHit>()
             .add_message::<VehicleImpact>()
+            .add_message::<CabinHit>()
+            .register_type::<CabinHit>()
+            .register_type::<Autopilot>()
             .register_type::<Vehicle>()
             .register_type::<WheelState>()
             .register_type::<VehicleHealth>()
@@ -210,11 +233,14 @@ impl Plugin for VehiclePlugin {
                         .in_set(PlayingSystems)
                         .before(HealthSystems::Damage),
                     VehicleSystems::Impact.in_set(HealthSystems::Damage),
-                    VehicleSystems::Bullets.after(HealthSystems::Damage),
+                    VehicleSystems::Bullets
+                        .after(HealthSystems::Damage)
+                        .before(HealthSystems::Death),
                     VehicleSystems::Drive
                         .after(VehicleSystems::Enter)
                         .after(VehicleSystems::Bullets)
-                        .after(VehicleSystems::Impact),
+                        .after(VehicleSystems::Impact)
+                        .after(PoliceSystems),
                 ),
             )
             .configure_sets(
@@ -230,7 +256,9 @@ impl Plugin for VehiclePlugin {
                     seat::enter_exit.in_set(VehicleSystems::Enter),
                     impact::apply_impacts.in_set(VehicleSystems::Impact),
                     impact::apply_bullet_hits.in_set(VehicleSystems::Bullets),
-                    chassis::drive_vehicles.in_set(VehicleSystems::Drive),
+                    (autopilot::steer_autopilots, chassis::drive_vehicles)
+                        .chain()
+                        .in_set(VehicleSystems::Drive),
                 ),
             )
             .add_systems(

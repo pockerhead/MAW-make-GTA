@@ -183,6 +183,8 @@ pub struct SirenConfig {
     pub switch_margin: f32,
     /// Above the cop's body centre, m.
     pub height: f32,
+    /// Above a police car's chassis centre (the roof light bar), m.
+    pub car_height: f32,
     /// The wail sweeps between these, Hz.
     pub lo_hz: f32,
     pub hi_hz: f32,
@@ -303,6 +305,7 @@ impl MixConfig {
                 s.height
             ));
         }
+        positive("siren.car_height", s.car_height)?;
         positive("siren.lo_hz", s.lo_hz)?;
         positive("siren.hi_hz", s.hi_hz)?;
         below("siren.lo_hz", s.lo_hz, "hi_hz", s.hi_hz)?;

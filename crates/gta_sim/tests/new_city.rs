@@ -25,6 +25,11 @@ use gta_sim::{
     player::{DebugDamage, Player},
     police::{ArrestAttempt, PoliceAlert, PoliceDispatcher, PoliceRng, UnitKind},
     population::{CameraView, NpcRng, PopulationPhase},
+    traffic::{
+        DriverScared, Junction, TrafficCar, TrafficGraph, TrafficIntersections, TrafficPhase,
+        TrafficStats,
+    },
+    vehicle::CabinHit,
     wanted::{Crimes, WantedLevel},
     world::{
         City, CityBlock, CityBuilding, CityEdgeWall, CityGround, CityLandmarks, CityLayoutHash,
@@ -302,13 +307,20 @@ fn new_city_replaces_the_city() {
             units: 3,
             swat: 1,
             reinforce_left: 2.0,
+            cars: 2,
         };
         *world.resource_mut::<ArrestAttempt>() = ArrestAttempt {
             cop: Some(unit),
             hold: 1.0,
+            pull: 0.5,
         };
         *world.resource_mut::<PoliceAlert>() = PoliceAlert { hostile_left: 5.0 };
         *world.resource_mut::<PopulationPhase>() = PopulationPhase::Steady;
+        *world.resource_mut::<TrafficPhase>() = TrafficPhase::Steady;
+        world
+            .resource_mut::<TrafficIntersections>()
+            .0
+            .insert(999, Junction::default());
         world
             .resource_mut::<StimulusLog>()
             .0
@@ -348,6 +360,18 @@ fn new_city_replaces_the_city() {
             about: Cause::Attack(1),
         });
         world.write_message(DebugDamage { amount: 1.0 });
+        world.write_message(DriverScared {
+            shooter: nobody,
+            attack: 1,
+            vehicle: nobody,
+        });
+        world.write_message(CabinHit {
+            shooter: nobody,
+            attack: 1,
+            vehicle: nobody,
+            point: Vec3::ZERO,
+            damage: 1.0,
+        });
     }
     let world = app.world();
     assert_eq!(world.resource::<GangHeat>().left[0], 5.0, "GATE BROKEN");
@@ -357,7 +381,31 @@ fn new_city_replaces_the_city() {
         "GATE BROKEN"
     );
     assert_eq!(world.resource::<PoliceDispatcher>().units, 3, "GATE BROKEN");
+    assert_eq!(world.resource::<PoliceDispatcher>().cars, 2, "GATE BROKEN");
     assert_eq!(world.resource::<ArrestAttempt>().hold, 1.0, "GATE BROKEN");
+    assert_eq!(world.resource::<ArrestAttempt>().pull, 0.5, "GATE BROKEN");
+    assert!(
+        world.resource::<TrafficStats>().cars > 0,
+        "GATE BROKEN: no traffic in the first city"
+    );
+    assert!(world.contains_resource::<TrafficGraph>(), "GATE BROKEN");
+    assert!(
+        !world.resource::<TrafficIntersections>().0.is_empty(),
+        "GATE BROKEN"
+    );
+    assert_eq!(
+        *world.resource::<TrafficPhase>(),
+        TrafficPhase::Steady,
+        "GATE BROKEN"
+    );
+    assert!(
+        !world.resource::<Messages<DriverScared>>().is_empty(),
+        "GATE BROKEN"
+    );
+    assert!(
+        !world.resource::<Messages<CabinHit>>().is_empty(),
+        "GATE BROKEN"
+    );
     assert_eq!(
         world.resource::<PoliceAlert>().hostile_left,
         5.0,
@@ -440,7 +488,10 @@ fn new_city_replaces_the_city() {
     );
     let dispatcher = *world.resource::<PoliceDispatcher>();
     assert!(
-        dispatcher.units == 0 && dispatcher.swat == 0 && dispatcher.reinforce_left == 0.0,
+        dispatcher.units == 0
+            && dispatcher.swat == 0
+            && dispatcher.reinforce_left == 0.0
+            && dispatcher.cars == 0,
         "A9: {dispatcher:?}"
     );
     assert_eq!(
@@ -508,6 +559,39 @@ fn new_city_replaces_the_city() {
     assert!(
         !world.resource::<Time<Virtual>>().is_paused(),
         "A23: still paused"
+    );
+    assert!(
+        !world.contains_resource::<TrafficGraph>(),
+        "A24: TrafficGraph"
+    );
+    assert!(
+        world.resource::<TrafficIntersections>().0.is_empty(),
+        "A25: TrafficIntersections"
+    );
+    assert_eq!(
+        *world.resource::<TrafficPhase>(),
+        TrafficPhase::InitialFill,
+        "A26: TrafficPhase"
+    );
+    assert_eq!(
+        *world.resource::<TrafficStats>(),
+        TrafficStats::default(),
+        "A27: TrafficStats"
+    );
+    assert_eq!(
+        world.resource::<Messages<DriverScared>>().len(),
+        0,
+        "A28: DriverScared"
+    );
+    assert_eq!(
+        world.resource::<Messages<CabinHit>>().len(),
+        0,
+        "A29: CabinHit"
+    );
+    assert_eq!(
+        count::<Or<(With<TrafficCar>, With<gta_sim::police::PoliceCar>)>>(&mut app),
+        0,
+        "A30: a traffic or police car survived"
     );
 
     // Case B: the new city is complete and alive.

@@ -17,4 +17,5 @@
     cop_witness_distance: 50.0,     // m, LOS, any direction: a cop witnesses a crime (GDD §6.4)
     cop_view_distance: 35.0,        // m on foot: a cop sees the player (search)
     cop_view_cone_deg: 110.0,       // full cone of that view
+    cop_car_view_distance: 50.0,    // m from a police car: its crew sees the player (GDD §6.4 "50 м из машины")
 )

@@ -310,6 +310,12 @@ fn standing_still_does_not_churn() {
 #[test]
 fn no_spawn_in_clear_view_over_60s_turning() {
     let mut app = city_app(1);
+    // The subject is the civilian spawner: a traffic car nudging a civilian spawned on a crosswalk in
+    // its first tick moved it 0.067 m off the graph (CI, TASK-016).
+    app.world_mut()
+        .resource_mut::<gta_sim::traffic::TrafficConfig>()
+        .bubble
+        .max_cars = 0;
     let cfg = population_cfg(&app);
     let head = loco(&app).head_height;
     let margin = cfg.spawn_view_margin_deg.to_radians();
@@ -365,6 +371,12 @@ fn street_ahead_stays_populated() {
     const RANGE: f32 = 60.0;
     let mut app = city_app(1);
     settle(&mut app);
+    // The subject is the civilian bubble: a traffic car queued across the run stopped the player
+    // at 130 m of 270 (TASK-016).
+    app.world_mut()
+        .resource_mut::<gta_sim::traffic::TrafficConfig>()
+        .bubble
+        .max_cars = 0;
     let speed = loco(&app).run_speed;
     let start = feet(&mut app);
     let (dir, length) = open_street(&mut app, start);

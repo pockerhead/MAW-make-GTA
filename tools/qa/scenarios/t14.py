@@ -78,9 +78,12 @@ def flat(a, b):
 
 
 def cars(game):
+    """Parked cars: every car body that is neither traffic nor police (T15)."""
+    moving = {e for e, _ in rows(game, ["TrafficCar"])} | {e for e, _ in rows(game, ["PoliceCar"])}
     return [
         {"entity": e, "position": vec3(p), "rotation": quat(r)}
         for e, (_, p, r) in rows(game, ["Vehicle", "Position", "Rotation"])
+        if e not in moving
     ]
 
 

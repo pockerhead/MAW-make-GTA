@@ -48,4 +48,14 @@
     // mirrored by the 180 deg model yaw.
     vehicle: (model: "third_party/car-kit/sedan.glb", scale: 1.6, offset: (0.0, -1.16, -0.04),
               wheels: ("wheel-front-left", "wheel-front-right", "wheel-back-left", "wheel-back-right")),
+    // Police car and taxi of the same kit on the same chassis: scale = 4.08 m chassis / body length
+    // (police 2.90 -> 1.4, taxi 2.75 -> 1.48); offset.y puts the wheel bottoms on the road; offset.z =
+    // scale x (body node z + body mesh centre z), mirrored by the 180 deg model yaw (police 1.4 x -0.1,
+    // taxi 1.48 x -0.025).
+    police_vehicle: (model: "third_party/car-kit/police.glb", scale: 1.4, offset: (0.0, -1.16, -0.14),
+                     wheels: ("wheel-front-left", "wheel-front-right", "wheel-back-left", "wheel-back-right")),
+    taxi_vehicle:   (model: "third_party/car-kit/taxi.glb", scale: 1.48, offset: (0.0, -1.16, -0.037),
+                     wheels: ("wheel-front-left", "wheel-front-right", "wheel-back-left", "wheel-back-right")),
+    // Share of traffic cars drawn as a taxi (by their appearance roll), [0, 1].
+    taxi_share: 0.25,
 )

@@ -82,6 +82,8 @@ pub struct WantedConfig {
     pub cop_view_distance: f32,
     /// Full view cone of a cop, degrees.
     pub cop_view_cone_deg: f32,
+    /// The crew of a police car sees the player within this distance, m.
+    pub cop_car_view_distance: f32,
 }
 
 fn positive(field: &str, value: f32) -> Result<(), String> {
@@ -125,6 +127,13 @@ impl WantedConfig {
         positive("shooting_radius", self.shooting_radius)?;
         positive("cop_witness_distance", self.cop_witness_distance)?;
         positive("cop_view_distance", self.cop_view_distance)?;
+        positive("cop_car_view_distance", self.cop_car_view_distance)?;
+        if self.cop_car_view_distance < self.cop_view_distance {
+            return Err(format!(
+                "cop_car_view_distance {} must be >= cop_view_distance {}",
+                self.cop_car_view_distance, self.cop_view_distance
+            ));
+        }
         let merge = self.shooting_merge_seconds;
         if !(merge.is_finite() && merge >= 0.0) {
             return Err(format!(

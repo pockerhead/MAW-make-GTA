@@ -13,7 +13,7 @@ use gta_sim::{
     combat::{BulletTrace, TraceHit},
     flow::GameState,
     player::DebugDamage,
-    police::{CopState, PoliceUnit, UnitKind},
+    police::{CopState, PoliceCar, PoliceCarState, PoliceUnit, UnitKind},
     vehicle::VehicleImpact,
     wanted::WantedLevel,
 };
@@ -252,6 +252,74 @@ fn sirens_ride_live_cops() {
         alive_of(&mut app, SoundClass::Siren).is_empty(),
         "sirens outlive the wanted level"
     );
+}
+
+/// Sirens on police cars (T15, correctness): a responding police car in earshot carries the siren
+/// (at the roof, `siren.car_height`) instead of the cops on foot; once the car is gone the sirens move
+/// to the live cops.
+#[test]
+fn sirens_ride_police_cars() {
+    let mut app = audio_app();
+    let mix = mix();
+    let (_, at) = player_at(&mut app);
+    app.world_mut()
+        .spawn((listener(0.3), Transform::from_translation(at)));
+    app.world_mut().resource_mut::<WantedLevel>().heat = 180;
+    app.update();
+    assert_eq!(
+        app.world().resource::<WantedLevel>().stars,
+        2,
+        "GATE BROKEN: heat 180 is not 2 stars"
+    );
+    let near = cop(&mut app, at + Vec3::X * 4.0, CopState::Respond);
+    let next = cop(&mut app, at + Vec3::Z * 6.0, CopState::Respond);
+    let car = app
+        .world_mut()
+        .spawn((
+            PoliceCar {
+                state: PoliceCarState::Respond,
+                crew: vec![UnitKind::Patrol, UnitKind::Patrol],
+                stopped: 0.0,
+                moving: 0.0,
+                blocked: 0.0,
+                reboard_left: 10.0,
+            },
+            Transform::from_translation(at + Vec3::Z * 30.0),
+        ))
+        .id();
+    let carriers = |app: &mut App| {
+        app.world_mut()
+            .query_filtered::<(&ChildOf, &Transform), With<SirenEmitter>>()
+            .iter(app.world())
+            .map(|(parent, transform)| (parent.parent(), transform.translation))
+            .collect::<Vec<_>>()
+    };
+    let mut sirens = Vec::new();
+    for _ in 0..80 {
+        app.update();
+        sirens = carriers(&mut app);
+        if !sirens.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(
+        sirens,
+        vec![(car, Vec3::Y * mix.siren.car_height)],
+        "cops {near} {next}"
+    );
+    app.world_mut().entity_mut(car).despawn();
+    let mut parents = Vec::new();
+    for _ in 0..200 {
+        app.update();
+        parents = carriers(&mut app).iter().map(|s| s.0).collect::<Vec<_>>();
+        if parents.len() == 2 {
+            break;
+        }
+    }
+    parents.sort();
+    let mut expected = vec![near, next];
+    expected.sort();
+    assert_eq!(parents, expected, "the sirens did not move to the cops");
 }
 
 /// Siren of each cop: `(cop, siren entity)`, sorted by cop.

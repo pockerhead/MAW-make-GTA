@@ -120,6 +120,11 @@
 - 2026-09-25 (TASK-026) — test graph `graph_app(10)` corner (10,0,10) sits on the test-area 1 m box: fleeing
   civilians jam there and a stuck fleer never ends its flight. Delayed-call fixtures use dead-end runs east of x=20.
 
+- 2026-09-25 (TASK-016) — a threshold equal to a controller's rest point never fires (stop-line request at IDM's s0).
+  Traffic fixtures must also satisfy every run condition of the system set (NpcSystems needs a SidewalkGraph):
+  assert liveness via the system's own counters, not "something moved". City gates now run with traffic — gates
+  about civilians set traffic max_cars = 0 explicitly.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

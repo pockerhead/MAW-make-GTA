@@ -16,6 +16,8 @@ pub struct CopSenses {
     pub stars: u8,
     /// Within `search_arrive_distance` of its goal (the last known position, the search point).
     pub at_goal: bool,
+    /// The player drives and the door of his car is within `arrest.approach_distance`.
+    pub near_driver: bool,
 }
 
 /// Next cop state; `Leave` is terminal (only death moves it on).
@@ -26,6 +28,8 @@ pub fn next_state(state: CopState, s: &CopSenses) -> CopState {
         Dead => Dead,
         Leave => Leave,
         _ if s.stars == 0 => Leave,
+        // A driver is arrested at his door, seen or not (a car in the line hides him).
+        Respond | Search if arrests && s.near_driver => Arrest,
         Respond | Search if s.sees => {
             if arrests {
                 Arrest
@@ -36,7 +40,7 @@ pub fn next_state(state: CopState, s: &CopSenses) -> CopState {
         Respond if s.at_goal => Search,
         Respond | Search => state,
         Arrest if !arrests => Attack,
-        Arrest if !s.sees => Respond,
+        Arrest if !s.sees && !s.near_driver => Respond,
         Arrest => Arrest,
         Attack if !s.sees => Respond,
         Attack if arrests => Arrest,
@@ -205,6 +209,7 @@ mod tests {
             arrest_row,
             stars,
             at_goal,
+            near_driver: false,
         }
     }
 
@@ -216,37 +221,55 @@ mod tests {
             for sees in [false, true] {
                 for hostile in [false, true] {
                     for at_goal in [false, true] {
-                        let s = senses(sees, hostile, row.arrest, stars, at_goal);
-                        let arrests = row.arrest && !hostile;
-                        let engaged = if arrests { Arrest } else { Attack };
-                        let expected = [
-                            (
-                                Respond,
-                                if sees {
-                                    engaged
-                                } else if at_goal {
-                                    Search
-                                } else {
-                                    Respond
-                                },
-                            ),
-                            (Search, if sees { engaged } else { Search }),
-                            (
-                                Arrest,
-                                if !arrests {
-                                    Attack
-                                } else if sees {
-                                    Arrest
-                                } else {
-                                    Respond
-                                },
-                            ),
-                            (Attack, if !sees { Respond } else { engaged }),
-                            (Leave, Leave),
-                            (Dead, Dead),
-                        ];
-                        for (from, to) in expected {
-                            assert_eq!(next_state(from, &s), to, "row {k} {from:?} {s:?}");
+                        for near_driver in [false, true] {
+                            let s = CopSenses {
+                                near_driver,
+                                ..senses(sees, hostile, row.arrest, stars, at_goal)
+                            };
+                            let arrests = row.arrest && !hostile;
+                            let engaged = if arrests { Arrest } else { Attack };
+                            // An arrest-row driver's door within reach counts as sight for arresting.
+                            let drawn = arrests && near_driver;
+                            let expected = [
+                                (
+                                    Respond,
+                                    if drawn {
+                                        Arrest
+                                    } else if sees {
+                                        engaged
+                                    } else if at_goal {
+                                        Search
+                                    } else {
+                                        Respond
+                                    },
+                                ),
+                                (
+                                    Search,
+                                    if drawn {
+                                        Arrest
+                                    } else if sees {
+                                        engaged
+                                    } else {
+                                        Search
+                                    },
+                                ),
+                                (
+                                    Arrest,
+                                    if !arrests {
+                                        Attack
+                                    } else if sees || near_driver {
+                                        Arrest
+                                    } else {
+                                        Respond
+                                    },
+                                ),
+                                (Attack, if !sees { Respond } else { engaged }),
+                                (Leave, Leave),
+                                (Dead, Dead),
+                            ];
+                            for (from, to) in expected {
+                                assert_eq!(next_state(from, &s), to, "row {k} {from:?} {s:?}");
+                            }
                         }
                     }
                 }

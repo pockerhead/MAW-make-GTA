@@ -83,7 +83,14 @@ pub(super) fn drive_vehicles(
     cfg: Res<VehicleConfig>,
     time: Res<Time<Fixed>>,
     mut load: ResMut<VehicleLoad>,
-    mut vehicles: Query<(Entity, &mut Vehicle, &VehicleHealth, Forces, Has<Sleeping>)>,
+    mut vehicles: Query<(
+        Entity,
+        &mut Vehicle,
+        &VehicleHealth,
+        &RigidBody,
+        Forces,
+        Has<Sleeping>,
+    )>,
     intents: Query<&DriveIntent>,
     blocks: Query<(), With<CityBlock>>,
 ) {
@@ -93,14 +100,17 @@ pub(super) fn drive_vehicles(
         return;
     }
     let reach = cfg.suspension.travel + cfg.wheels.radius;
-    for (entity, mut vehicle, health, mut forces, sleeping) in &mut vehicles {
-        if sleeping {
+    for (entity, mut vehicle, health, body, mut forces, sleeping) in &mut vehicles {
+        // A kinematic traffic car gets its wheel state from the traffic system.
+        if sleeping || !body.is_dynamic() {
             continue;
         }
         load.awake += 1;
+        // The seated driver's input, else the car's own AI driver.
         let mut intent = vehicle
             .driver
             .and_then(|driver| intents.get(driver).ok())
+            .or_else(|| intents.get(entity).ok())
             .copied()
             .unwrap_or_default();
         if health.current <= 0.0 {

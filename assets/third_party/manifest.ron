@@ -181,6 +181,8 @@
             license_file: "License.txt",
             files: [
                 (archive: "Models/GLB format/sedan.glb", path: "sedan.glb", sha256: "b532ea7d2c59f7f6b22b138cf1955218a2c1898f1cea932af4d3fd563c3959b7"),
+                (archive: "Models/GLB format/police.glb", path: "police.glb", sha256: "a617b880594f56239b7ac4cf6fd4d74ebdae3ba6c5d842e77c76a5906eff352a"),
+                (archive: "Models/GLB format/taxi.glb", path: "taxi.glb", sha256: "3803539718ffd3b84b515dbce8ed6b489f1ff5be58edb1903d2c5db5c584bdc7"),
                 (archive: "Models/GLB format/Textures/colormap.png", path: "Textures/colormap.png", sha256: "f3622a03a20c6696065cae9cbe391351be873508af190c2ebd1d420c055787a5"),
                 (archive: "License.txt", path: "License.txt", sha256: "c33b7f6453d134deae7b1b8493717d9ccfa754c25ab97f6de89b88f8fda19b00"),
             ],

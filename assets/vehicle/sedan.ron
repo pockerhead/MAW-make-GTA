@@ -51,4 +51,12 @@
     enter_radius: 2.5,
     // Entry and exit are allowed only at or below this car speed, m/s.
     exit_max_speed: 3.0,
+    // Cabin zone, body frame, m: a bullet hitting the body inside it reaches the seated driver. The
+    // x half extent and the top reach past the chassis (1.2 / 0.92), so hits on the surface count.
+    cabin: (centre: (0.0, 0.45, 0.1), half_extents: (1.25, 0.5, 1.0)),
+    // AI driving (traffic after a contact, police cars): pure pursuit to a target lookahead_min +
+    // lookahead_per_mps x speed ahead (m, s); throttle = speed error x speed_gain; below stuck_speed
+    // (m/s) with the throttle open for stuck_seconds the car backs up for reverse_seconds.
+    autopilot: (lookahead_min: 4.0, lookahead_per_mps: 0.5, speed_gain: 0.5, stuck_speed: 0.5,
+                stuck_seconds: 2.0, reverse_seconds: 1.5),
 )

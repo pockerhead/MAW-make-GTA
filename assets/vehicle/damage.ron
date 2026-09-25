@@ -10,6 +10,8 @@
         per_mps: 40.0,
         bullet_scale: 1.0,
         scrape_normal: 0.5,
+        // Share of a cabin pellet's base damage the seated driver takes (sedan.ron `cabin`).
+        cabin_driver_share: 0.5,
     ),
     // Pedestrian hit: loss = (closing speed - threshold_speed)·per_mps, 10 m/s -> 84.
     // knockdown_speed, m/s; shove_scale: knockback velocity per m/s of closing speed.

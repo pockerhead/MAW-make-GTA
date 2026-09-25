@@ -15,51 +15,71 @@ type Body<'a> = (
 );
 
 /// Where the driver stands after leaving a car: body centre and yaw.
-struct Spot {
-    centre: Vec3,
-    rotation: Quat,
+pub(crate) struct Spot {
+    pub(crate) centre: Vec3,
+    pub(crate) rotation: Quat,
 }
 
-/// Exit points around a car: the left door, the right door, the roof. A door counts only at the
-/// car's ground level and the roof only on the car's top, so the top of a low wall or an overhang
-/// is never an exit. The way from the seat to a spot must be free too, else a thin fence beside
-/// the door is walked through. `forced` falls back to the left door when none is clear.
-fn exit_spot(
-    spatial: &SpatialQuery,
+/// Index of the roof among the exit candidates (0 = left door, 1 = right door).
+pub(crate) const ROOF_EXIT: usize = 2;
+
+/// Exit points of a car: the left door, the right door, the roof, each with the feet level it
+/// counts at (the car's ground level at a door, the car's top on the roof).
+fn candidates(
     cfg: &VehicleConfig,
     loco: &LocomotionConfig,
-    car: (Entity, Vec3, Quat),
-    forced: bool,
-) -> Option<Spot> {
-    let (vehicle, position, rotation) = car;
+    position: Vec3,
+    rotation: Quat,
+) -> [(Vec3, f32); 3] {
     let door = cfg.door();
     let mirrored = Vec3::new(-door.x, door.y, door.z);
     let up = rotation * Vec3::Y;
     let roof = position + up * (cfg.half_extents().y + loco.float_height);
     let ground = (position - up * cfg.rest_height()).y;
     let top = (position + up * cfg.half_extents().y).y;
-    // (candidate, expected feet height)
-    let candidates = [
+    [
         (door_point(door, position, rotation), ground),
         (door_point(mirrored, position, rotation), ground),
         (roof, top),
-    ];
-    // A step the float spring walks over: the capsule's clearance above the ground.
-    let step = loco.float_height - loco.capsule_height / 2.0;
+    ]
+}
+
+/// Feet under `at`: the first floor (World or Vehicle) below `at` + 2 m.
+fn feet_below(spatial: &SpatialQuery, at: Vec3) -> Option<Vec3> {
+    let floors = SpatialQueryFilter::from_mask([GameLayer::World, GameLayer::Vehicle]);
+    spatial
+        .cast_ray(at + Vec3::Y * 2.0, Dir3::NEG_Y, 6.0, true, &floors)
+        .map(|hit| at + Vec3::Y * (2.0 - hit.distance))
+}
+
+/// A step the float spring walks over: the capsule's clearance above the ground.
+fn step(loco: &LocomotionConfig) -> f32 {
+    loco.float_height - loco.capsule_height / 2.0
+}
+
+/// Every clear exit point, in candidate order (index 0 = left door). A door counts only at the car's
+/// ground level and the roof only on the car's top, so the top of a low wall or an overhang is never
+/// an exit; the capsule must fit there (bodies of `exclude` aside) and the way from the seat must be
+/// free, else a thin fence beside the door is walked through.
+pub(crate) fn exit_spots(
+    spatial: &SpatialQuery,
+    cfg: &VehicleConfig,
+    loco: &LocomotionConfig,
+    car: (Entity, Vec3, Quat),
+    exclude: &[Entity],
+) -> Vec<(usize, Spot)> {
+    let (vehicle, position, rotation) = car;
+    let step = step(loco);
     let floors = SpatialQueryFilter::from_mask([GameLayer::World, GameLayer::Vehicle]);
     let blockers =
-        SpatialQueryFilter::from_mask([GameLayer::World, GameLayer::Vehicle, GameLayer::Character]);
+        SpatialQueryFilter::from_mask([GameLayer::World, GameLayer::Vehicle, GameLayer::Character])
+            .with_excluded_entities(exclude.iter().copied());
     let capsule = Collider::capsule(
         loco.capsule_radius,
         loco.capsule_height - 2.0 * loco.capsule_radius,
     );
-    let feet = |at: Vec3| {
-        spatial
-            .cast_ray(at + Vec3::Y * 2.0, Dir3::NEG_Y, 6.0, true, &floors)
-            .map(|hit| at + Vec3::Y * (2.0 - hit.distance))
-    };
     let seat = position + rotation * cfg.seat();
-    let walls = floors.clone().with_excluded_entities([vehicle]);
+    let walls = floors.with_excluded_entities([vehicle]);
     let ball = Collider::sphere(loco.capsule_radius);
     let path_free = |to: Vec3| {
         let Ok((direction, distance)) = Dir3::new_and_length(to - seat) else {
@@ -71,26 +91,57 @@ fn exit_spot(
             .is_none()
     };
     let yaw = Quat::from_rotation_y(aim_yaw(rotation * Vec3::NEG_Z));
-    let clear = candidates.into_iter().find_map(|(at, level)| {
-        let feet = feet(at).filter(|feet| (feet.y - level).abs() <= step)?;
-        let centre = feet + Vec3::Y * loco.float_height;
-        (path_free(centre)
-            && spatial
-                .shape_intersections(&capsule, centre, Quat::IDENTITY, &blockers)
-                .is_empty())
-        .then_some(centre)
+    candidates(cfg, loco, position, rotation)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(k, (at, level))| {
+            let feet = feet_below(spatial, at).filter(|feet| (feet.y - level).abs() <= step)?;
+            let centre = feet + Vec3::Y * loco.float_height;
+            (path_free(centre)
+                && spatial
+                    .shape_intersections(&capsule, centre, Quat::IDENTITY, &blockers)
+                    .is_empty())
+            .then_some((
+                k,
+                Spot {
+                    centre,
+                    rotation: yaw,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// The first clear exit point. `forced` (Wasted, Busted) never fails: the first candidate standing at
+/// its own level (a body or a fence may be in the way), else the car's roof with no ray at all (an
+/// overhang above the car); never the top of a wall beside a door.
+fn exit_spot(
+    spatial: &SpatialQuery,
+    cfg: &VehicleConfig,
+    loco: &LocomotionConfig,
+    car: (Entity, Vec3, Quat),
+    forced: bool,
+) -> Option<Spot> {
+    if let Some((_, spot)) = exit_spots(spatial, cfg, loco, car, &[]).into_iter().next() {
+        return Some(spot);
+    }
+    if !forced {
+        return None;
+    }
+    let (_, position, rotation) = car;
+    let rotation_yaw = Quat::from_rotation_y(aim_yaw(rotation * Vec3::NEG_Z));
+    let all = candidates(cfg, loco, position, rotation);
+    let step = step(loco);
+    let level = all.iter().find_map(|&(at, level)| {
+        feet_below(spatial, at).filter(|feet| (feet.y - level).abs() <= step)
     });
-    let centre = match clear {
-        Some(centre) => centre,
-        None if forced => {
-            let (at, _) = candidates[0];
-            feet(at).unwrap_or(at - Vec3::Y * cfg.rest_height()) + Vec3::Y * loco.float_height
-        }
-        None => return None,
+    let centre = match level {
+        Some(feet) => feet + Vec3::Y * loco.float_height,
+        None => all[2].0,
     };
     Some(Spot {
         centre,
-        rotation: yaw,
+        rotation: rotation_yaw,
     })
 }
 
@@ -124,6 +175,34 @@ fn leave(
 fn free_car(commands: &mut Commands, car: Entity, vehicle: &mut Vehicle) {
     vehicle.driver = None;
     commands.entity(car).try_remove::<SleepingDisabled>();
+}
+
+/// A cop pulls the driver out through the left door: only a clear left-door spot counts (the right
+/// door or the roof would put the player out of the cop's reach), unless `any_exit` (either door,
+/// never the roof). The bodies of `pullers` (the arresting cops) do not block a spot. `false`: nothing
+/// happened.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pull_out(
+    commands: &mut Commands,
+    spatial: &SpatialQuery,
+    cfg: &VehicleConfig,
+    loco: &LocomotionConfig,
+    player: (Entity, Option<&Children>),
+    heads: &Query<(), With<HeadHitbox>>,
+    car: (Entity, Vec3, Quat),
+    vehicle: &mut Vehicle,
+    pullers: &[Entity],
+    any_exit: bool,
+) -> bool {
+    let spot = exit_spots(spatial, cfg, loco, car, pullers)
+        .into_iter()
+        .find(|(k, _)| *k == 0 || (any_exit && *k != ROOF_EXIT));
+    let Some((_, spot)) = spot else {
+        return false;
+    };
+    leave(commands, player.0, player.1, heads, spot);
+    free_car(commands, car.0, vehicle);
+    true
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -169,7 +248,8 @@ pub(super) fn enter_exit(
             if car_vel.length() > cfg.exit_max_speed {
                 continue;
             }
-            let Some(spot) = exit_spot(&spatial, &cfg, &loco, (car, car_pos.0, car_rot.0), false) else {
+            let Some(spot) = exit_spot(&spatial, &cfg, &loco, (car, car_pos.0, car_rot.0), false)
+            else {
                 continue;
             };
             leave(&mut commands, player, children, &heads, spot);

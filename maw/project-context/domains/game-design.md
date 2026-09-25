@@ -63,6 +63,14 @@
   crouched for 30 s). Refresh only on a NEW cause (`civilian::already_fleeing`). Tuning goal for witnesses: a street
   kill with people around gets a star (94/100 seeds), gated on 100 seeds, never on 20 (thin margins flake).
 
+- 2026-09-25 (TASK-016) — reservations (junction room) must see every body (abandoned, hijacked, police), not only
+  their own agents. Police response by car is dominated by lane routing — measure per spot (park vs hospital: 63 s
+  vs 6 s). Police cars on a graph without U-turns spawn on lanes leading to the target. NPC walk avoidance is
+  walls-only: car bodies silently wall NPCs off (tactics::around_cars). Aiming turns the body.
+- 2026-09-25 (TASK-016) — without an oncoming-lane mechanism there is no go-around and no overtaking: police cars
+  stuck in traffic lose a fleeing car. Accepted as a GTA-like "escape by car" outcome (t15 records escape vs
+  pressure, ~2/5 escape); the fix path is TASK-032. Decide such design gaps after the 2nd failure of the same class.
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

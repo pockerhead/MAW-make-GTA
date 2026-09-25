@@ -123,6 +123,13 @@
   keep chassis clearance well above step heights (hull underbody lift + chamfer). Sight/fire checks through cars
   skip the car containing either endpoint; movement checks stay walls-only.
 
+- 2026-09-25 (TASK-016) — avian3d 0.7 kinematic bodies: two kinematic cars pass through each other (only
+  CollisionStart fires); switching to Dynamic on CollisionStart is one step late (hits like a wall). Switch
+  predictively by time-to-contact before the physics step. Kinematic forward casts skip kinematic traffic in the
+  occupancy, so any lateral move (overtake) needs a reservation other agents honour.
+- 2026-09-25 (TASK-016) — a state transition that can fail (dismount with no free door) must be undone, or its exit
+  rule flips it back every tick (1132 dismount/reboard transitions in 25 s). Add hysteresis in data.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

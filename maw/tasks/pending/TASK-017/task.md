@@ -43,3 +43,5 @@ Goal (GDD §13): `--bench-scene` (худшая сцена раздела 11), з
 
 ## Orchestrator notes (carried, binding)
 - Runtime scenario flakes to make deterministic before final acceptance: t9 (gang member in Attack does not fire within 6 s, ~1/3; fire-line starvation class), t13 (one OS mouse click lost in a 6-click burst, magazine 12→7, ~2/3 in TASK-015 fixer round 3). Every t*.py must pass N consecutive runs.
+- From TASK-016: traffic cannot go around a car stopped in its lane (abandoned / dismounted police car); the lane waits until the bubble despawns it (player 25 m away and out of view for 2 s). Owner-run judgement item; if it reads as a gridlock bug, a go-around needs an oncoming-lane reservation honoured by oncoming IDM, junction room() and the spawner (fixer estimate 150-200 lines; silent kinematic pass-through risk).
+- From TASK-016: intersection throughput ~1 car / 4 s (whole-connector reservation vs GDD "conflict points") — owner-run item.

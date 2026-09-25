@@ -76,6 +76,107 @@ impl FireLine {
     }
 }
 
+/// Flat footprint of a car: centre, unit right axis, half extents (right, forward).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CarRect {
+    pub(crate) centre: Vec2,
+    pub(crate) axis: Vec2,
+    pub(crate) half: Vec2,
+}
+
+impl CarRect {
+    pub(crate) fn of(position: Vec3, rotation: Quat, half: Vec2) -> Self {
+        let right = rotation * Vec3::X;
+        Self {
+            centre: flat2(position),
+            axis: Vec2::new(right.x, right.z).normalize_or(Vec2::X),
+            half,
+        }
+    }
+}
+
+/// The flat segment `from` -> `to` passes within `clearance` of `car` (no spread cone, nothing past
+/// the target: a car only stops the bullets that would reach the target through it).
+pub(crate) fn car_blocks(from: Vec3, to: Vec3, car: &CarRect, clearance: f32) -> bool {
+    car_entry(from, to, car, clearance).is_some()
+}
+
+/// Where along the flat segment `from` -> `to` (0..1) it first comes within `clearance` of `car`.
+fn car_entry(from: Vec3, to: Vec3, car: &CarRect, clearance: f32) -> Option<f32> {
+    let local = |p: Vec3| {
+        let d = flat2(p) - car.centre;
+        Vec2::new(d.dot(car.axis), d.dot(car.axis.perp()))
+    };
+    let (a, b) = (local(from), local(to));
+    let half = car.half + Vec2::splat(clearance);
+    let dir = b - a;
+    let (mut t0, mut t1) = (0.0_f32, 1.0_f32);
+    for (p, q, h) in [(a.x, dir.x, half.x), (a.y, dir.y, half.y)] {
+        if q.abs() < f32::EPSILON {
+            if p.abs() > h {
+                return None;
+            }
+            continue;
+        }
+        let (e0, e1) = ((-h - p) / q, (h - p) / q);
+        t0 = t0.max(e0.min(e1));
+        t1 = t1.min(e0.max(e1));
+    }
+    (t0 <= t1).then_some(t0)
+}
+
+/// Where a walker at `from` heads to reach `to` around parked or queued cars (their bodies are not
+/// in the wall avoidance): `to` while no car lies within `clearance` of the straight line; else the
+/// corner, `corner` m out, of the first car in the way that is in plain view and shortest to go via.
+pub(crate) fn around_cars(
+    from: Vec3,
+    to: Vec3,
+    cars: &[CarRect],
+    clearance: f32,
+    corner: f32,
+) -> Vec3 {
+    let first = cars
+        .iter()
+        .filter_map(|car| car_entry(from, to, car, clearance).map(|t| (t, car)))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    let Some((_, car)) = first else {
+        return to;
+    };
+    let half = car.half + Vec2::splat(corner);
+    let via = |p: Vec3| flat_distance(from, p) + flat_distance(p, to);
+    [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)]
+        .into_iter()
+        .map(|(u, v)| {
+            let c = car.centre + car.axis * (u * half.x) + car.axis.perp() * (v * half.y);
+            Vec3::new(c.x, to.y, c.y)
+        })
+        .filter(|&c| {
+            cars.iter()
+                .all(|other| car_entry(from, c, other, 0.0).is_none())
+        })
+        .min_by(|a, b| via(*a).total_cmp(&via(*b)))
+        .unwrap_or(to)
+}
+
+/// Cars a shooter of `shooters` could fire through (centre within its reach plus the car's half
+/// diagonal), except `exclude` (the car the target drives).
+pub(crate) fn nearby_cars(
+    shooters: &[Shooter],
+    cars: impl Iterator<Item = (Entity, Vec3, Quat)>,
+    exclude: Option<Entity>,
+    half: Vec2,
+) -> Vec<CarRect> {
+    let diagonal = half.length();
+    cars.filter(|&(car, ..)| Some(car) != exclude)
+        .filter(|&(_, p, _)| {
+            shooters
+                .iter()
+                .any(|s| flat_distance(s.chest, p) <= s.line.reach + diagonal)
+        })
+        .map(|(_, p, r)| CarRect::of(p, r, half))
+        .collect()
+}
+
 /// A shooter with its gun out and a live target: the line two shooters may block for each other.
 pub(crate) struct Shooter {
     pub(crate) entity: Entity,
@@ -98,6 +199,14 @@ pub(crate) struct Blocked<'a> {
     pub(crate) yielding: &'a [bool],
     /// Every other living body: a spot is not walked to through one.
     pub(crate) bodies: &'a [Vec3],
+    /// Cars near the shooter: the segment to the target must not cross one.
+    pub(crate) cars: &'a [CarRect],
+}
+
+impl FireLine {
+    pub(crate) fn clearance(&self) -> f32 {
+        self.clearance
+    }
 }
 
 /// Distance from `p` to the segment `a`-`b` in the ground plane.
@@ -116,7 +225,12 @@ fn usable(spatial: &SpatialQuery, b: &Blocked, spot: Vec3, radius: f32, rays: &m
         let pass = segment_distance(p, b.chest, spot);
         pass < 2.0 * radius && pass < flat_distance(p, b.chest) - 1e-3
     };
-    if b.line.blocked(spot, b.to, b.shields) || b.bodies.iter().any(|&p| bumps(p)) {
+    if b.line.blocked(spot, b.to, b.shields)
+        || b.bodies.iter().any(|&p| bumps(p))
+        || b.cars
+            .iter()
+            .any(|car| car_blocks(spot, b.to, car, b.line.clearance))
+    {
         return false;
     }
     *rays += 1;
@@ -182,6 +296,10 @@ fn pinned(b: &Blocked, d: &Discipline) -> bool {
         b.line
             .blockers(from, b.to, b.shields)
             .all(|k| b.yielding[k])
+            && !b
+                .cars
+                .iter()
+                .any(|car| car_blocks(from, b.to, car, b.line.clearance))
     })
 }
 
@@ -229,4 +347,26 @@ pub(crate) fn unblock(
         Some(spot),
         Some(Motion::Yaw(steer(b.chest, spot), d.reposition_gait)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A car at the origin along Z (half 1.2 x 2.04): a walker behind it heading for a point past its
+    /// left side goes via the near left corner; a clear line goes straight.
+    #[test]
+    fn around_cars_rows() {
+        let car = CarRect::of(Vec3::ZERO, Quat::IDENTITY, Vec2::new(1.2, 2.04));
+        let (from, to) = (Vec3::new(0.0, 0.0, 3.0), Vec3::new(-1.7, 0.0, -8.0));
+        let via = around_cars(from, to, &[car], 0.3, 0.8);
+        assert!((via - Vec3::new(-2.0, 0.0, 2.84)).length() < 1e-4, "{via}");
+        // From that corner the line along the side is clear.
+        assert_eq!(around_cars(via, to, &[car], 0.3, 0.8), to);
+        let clear = Vec3::new(-3.0, 0.0, -8.0);
+        assert_eq!(
+            around_cars(Vec3::new(-3.0, 0.0, 3.0), clear, &[car], 0.3, 0.8),
+            clear
+        );
+    }
 }

@@ -6,6 +6,8 @@ use crate::gang::Faction;
 use crate::navigation::flat_distance;
 use crate::perception::sight_blocked;
 use crate::player::Player;
+use crate::police::PoliceCar;
+use crate::vehicle::VehicleConfig;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
@@ -35,20 +37,21 @@ pub(crate) fn in_view(
     ahead.dot(to) >= (cone_deg / 2.0).to_radians().cos()
 }
 
-/// A cop sees the player: view cone, distance and a clear line.
+/// A cop sees the player: view cone, `distance` (on foot or from a car) and a clear line.
 pub(crate) fn cop_sees(
     spatial: &SpatialQuery,
     cop_eye: Vec3,
     cop_forward: Vec3,
     player_eye: Vec3,
     cfg: &WantedConfig,
+    distance: f32,
 ) -> bool {
     in_view(
         cop_eye,
         cop_forward,
         player_eye,
         cfg.cop_view_cone_deg,
-        cfg.cop_view_distance,
+        distance,
     ) && !sight_blocked(spatial, cop_eye, player_eye)
 }
 
@@ -94,24 +97,25 @@ pub(crate) fn search_step(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn track_search(
     cfg: Res<WantedConfig>,
     loco: Res<LocomotionConfig>,
+    vehicle: Res<VehicleConfig>,
     time: Res<Time<Fixed>>,
     spatial: SpatialQuery,
     mut wanted: ResMut<WantedLevel>,
     player: Query<&Position, (With<Player>, Without<Dead>)>,
     cops: Query<(&Position, &Rotation, &Faction), Without<Dead>>,
+    cars: Query<(&Position, &Rotation, &PoliceCar)>,
 ) {
     let Ok(player) = player.single() else {
         return;
     };
     let mut next = *wanted;
     let player_eye = eye(player.0, &loco);
-    let seen = next.heat > 0
-        && cops
-            .iter()
+    let on_foot = || {
+        cops.iter()
             .filter(|(.., faction)| **faction == Faction::Police)
             .any(|(cop, rotation, _)| {
                 cop_sees(
@@ -120,8 +124,25 @@ pub(super) fn track_search(
                     rotation.0 * Vec3::NEG_Z,
                     player_eye,
                     &cfg,
+                    cfg.cop_view_distance,
                 )
-            });
+            })
+    };
+    let from_cars = || {
+        cars.iter()
+            .filter(|(.., car)| car.crewed())
+            .any(|(position, rotation, _)| {
+                cop_sees(
+                    &spatial,
+                    position.0 + rotation.0 * vehicle.seat(),
+                    rotation.0 * Vec3::NEG_Z,
+                    player_eye,
+                    &cfg,
+                    cfg.cop_car_view_distance,
+                )
+            })
+    };
+    let seen = next.heat > 0 && (on_foot() || from_cars());
     search_step(
         &mut next,
         player.0,

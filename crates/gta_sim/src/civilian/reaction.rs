@@ -115,7 +115,7 @@ mod tests {
         let n = 20_000;
         let reports = (0..n)
             .filter(|_| {
-                let t = super::super::roll_temperament(&mut rng, cfg.temperament_spread);
+                let t = super::super::roll_temperament(&mut rng.0, cfg.temperament_spread);
                 choose_reaction(&threat, &t, &cfg, true) == Reaction::Report
             })
             .count();
@@ -128,7 +128,7 @@ mod tests {
         let spread = shipped().reaction.temperament_spread;
         let mut rng = crate::population::NpcRng::seeded(3);
         for _ in 0..1000 {
-            let t = super::super::roll_temperament(&mut rng, spread);
+            let t = super::super::roll_temperament(&mut rng.0, spread);
             for v in [t.flee, t.cower, t.report] {
                 assert!((1.0 - spread..=1.0 + spread).contains(&v), "{v}");
             }

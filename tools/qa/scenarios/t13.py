@@ -166,6 +166,13 @@ def star_pulse(game):
     raise AssertionError("no StarPulse row")
 
 
+def active_police_cars(game):
+    """Police cars on the job (T15 carries the sirens on them): entity -> state."""
+    found = rows(game, ["PoliceCar"])
+    return {e: variant(c["state"]) for e, (c,) in found
+            if variant(c["state"]) in ("Respond", "Chase", "Dismounted")}
+
+
 def sirens(game):
     found = rows(game, ["Sound", "ChildOf"], with_="Sound")
     return [(e, int(scalar(parent))) for e, (s, parent) in found if variant(s["class"]) == "Siren"]
@@ -367,8 +374,10 @@ def run(out):
             start = time.monotonic()
             carried = poll("a siren", lambda: sirens(game), SIREN_DEADLINE_S, 0.25)
             units = {c["entity"]: c for c in cops(game)}
+            police_cars = active_police_cars(game)
             here = me(game)["position"]
-            siren_rows = [{"parent": p, "state": units.get(p, {}).get("state"),
+            # A siren rides a live cop or (T15) a police car on the job.
+            siren_rows = [{"parent": p, "state": units.get(p, {}).get("state") or police_cars.get(p),
                            "distance_m": round(math.dist(units[p]["position"], here), 1) if p in units else None}
                           for _, p in carried]
             bad = [r for r in siren_rows if r["state"] in (None, "Dead", "Leave")]
@@ -376,8 +385,10 @@ def run(out):
                 # A cop can die or leave between two re-picks (1 s): look again after one.
                 time.sleep(1.2)
                 units = {c["entity"]: c for c in cops(game)}
+                police_cars = active_police_cars(game)
                 carried = sirens(game)
-                bad = [p for _, p in carried if units.get(p, {}).get("state") in (None, "Dead", "Leave")]
+                bad = [p for _, p in carried
+                       if (units.get(p, {}).get("state") or police_cars.get(p)) in (None, "Dead", "Leave")]
             phases["sirens"] = {"after_s": round(time.monotonic() - start, 1), "count": len(carried),
                                 "rows": siren_rows, "bad_after_repick": bad}
             if not 1 <= len(carried) <= caps[CLASSES.index("Siren")] or bad:

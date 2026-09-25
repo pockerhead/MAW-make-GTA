@@ -204,3 +204,16 @@ pub fn assert_shipped_police(app: &App) {
         "GATE BROKEN: busted timing"
     );
 }
+
+/// Named mutation: no police cars in any row (the row's units all come on foot; with `cars = 0` the
+/// foot dispatcher reserves no seats).
+pub fn no_police_cars(app: &mut App) {
+    for row in app
+        .world_mut()
+        .resource_mut::<EscalationConfig>()
+        .stars
+        .iter_mut()
+    {
+        row.cars = 0;
+    }
+}
