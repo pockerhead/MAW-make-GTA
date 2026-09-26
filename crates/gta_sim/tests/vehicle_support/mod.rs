@@ -8,7 +8,11 @@ use gta_sim::{
     character::LocomotionConfig,
     combat::aim_yaw,
     layers::GameLayer,
-    vehicle::{DamageConfig, DriveIntent, Driving, VehicleConfig, VehicleHealth, vehicle_bundle},
+    traffic::{TrafficGraph, TrafficLane},
+    vehicle::{
+        DamageConfig, DriveIntent, Driving, VehicleConfig, VehicleHealth, pursuit_steer,
+        vehicle_bundle,
+    },
 };
 
 pub fn vehicle_cfg(app: &App) -> VehicleConfig {
@@ -129,4 +133,43 @@ pub fn set_car_health(app: &mut App, car: Entity, current: f32) {
 
 pub fn float_height_of(app: &App) -> f32 {
     app.world().resource::<LocomotionConfig>().float_height
+}
+
+/// Steers the player's car along the lane ahead at `speed` m/s (pure pursuit 8 m ahead).
+pub fn cruise(app: &mut App, car: Entity, speed: f32) {
+    let cfg = app.world().resource::<VehicleConfig>().clone();
+    let graph = app.world().resource::<TrafficGraph>().clone();
+    let (p, f) = (position_of(app, car), forward_of(app, car));
+    let v = velocity_of(app, car).dot(f);
+    let lane = graph
+        .lanes()
+        .iter()
+        .filter(|l| l.dir.dot(f) > 0.7)
+        .min_by(|a, b| {
+            let d = |l: &TrafficLane| {
+                let s = (p - l.from).dot(l.dir).clamp(0.0, l.length);
+                (l.from + l.dir * s - p).with_y(0.0).length()
+            };
+            d(a).total_cmp(&d(b))
+        })
+        .cloned();
+    let steer = lane.map_or(0.0, |l| {
+        let s = (p - l.from).dot(l.dir) + 8.0;
+        let target = if s <= l.length {
+            l.from + l.dir * s
+        } else {
+            let next = l
+                .out
+                .iter()
+                .map(|&c| graph.lane(graph.connector(c).to_lane))
+                .max_by(|a, b| a.dir.dot(l.dir).total_cmp(&b.dir.dot(l.dir)))
+                .expect("GATE BROKEN: dead-end lane");
+            next.from + next.dir * (s - l.length).min(next.length)
+        };
+        pursuit_steer(&cfg, p, f, v, target)
+    });
+    set_drive(app, |d| {
+        d.throttle = ((speed - v) * 0.5).clamp(-1.0, 1.0);
+        d.steer = steer;
+    });
 }

@@ -3,6 +3,7 @@
 //! driver bailing out of a shot-at car.
 
 mod bail;
+mod box_rules;
 mod config;
 mod contact;
 mod drive;
@@ -10,18 +11,27 @@ mod graph;
 mod hijack;
 pub mod idm;
 mod junction;
+mod lanes;
+pub mod lateral;
+mod manoeuvre;
+mod pass;
+mod recover;
+mod sirens;
 mod spawn;
+mod stuck;
 
 pub use config::{
-    Band, BubbleConfig, DesiredSpeed, IdmConfig, LostConfig, SwitchConfig, TRAFFIC_CONFIG,
-    TrafficConfig,
+    Band, BubbleConfig, DesiredSpeed, IdmConfig, LateralConfig, LostConfig, PassConfig,
+    RecoverConfig, SirensConfig, SwitchConfig, TRAFFIC_CONFIG, TrafficConfig,
 };
 pub use contact::{FlatRect, swept_circle_hits_rect, swept_rect_hits_rect};
 pub use graph::{Segment, TrafficConnector, TrafficGraph, TrafficLane, control_point, lane_slot};
+pub use pass::derived_claim;
 pub use spawn::{in_frame, spawn_traffic_car};
 
 use crate::combat::unit_f32;
 use crate::flow::{GameState, NEW_CITY, NpcSystems};
+use crate::occupancy::OccupancySystems;
 use crate::population::Offscreen;
 use crate::vehicle::{Autopilot, DriveIntent, VehicleSystems};
 use crate::wanted::WantedSystems;
@@ -68,6 +78,42 @@ pub struct TrafficCar {
     pub mode: TrafficMode,
     /// Fixed tick the car joined its intersection's queue.
     pub waiting: Option<u64>,
+    /// Offset of a kinematic car from its path line, m (+ = right of the path tangent).
+    pub lateral: f32,
+    pub manoeuvre: Manoeuvre,
+    /// Seconds a `Dynamic` car has met every recovery condition.
+    pub calm: f32,
+    /// Seconds a `Dynamic` car has stood (at most the vehicle `hold_speed`) without recovering.
+    pub stood: f32,
+    /// Seconds left of ignoring sirens (after a yield timed out).
+    pub deaf: f32,
+}
+
+/// A sideways move of a traffic car off its path line.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Default)]
+pub enum Manoeuvre {
+    #[default]
+    None,
+    /// Back onto the path line (after a recovery).
+    Rejoin,
+    /// Around a standing `obstacle`: `offset` while the rear is before `merge_s`; the nose holds at
+    /// `hold_s` while `|lateral| < need`; the claim runs to `end_s` (all m along the lane). The claim
+    /// is published at once; the car moves out (`go`) once no body is left in it.
+    Pass {
+        obstacle: Entity,
+        offset: f32,
+        need: f32,
+        hold_s: f32,
+        merge_s: f32,
+        end_s: f32,
+        go: bool,
+    },
+    /// Pulled to the curb for a siren car since fixed tick `since`.
+    Yield {
+        siren: Entity,
+        since: u64,
+        offset: f32,
+    },
 }
 
 impl TrafficCar {
@@ -110,6 +156,8 @@ pub struct Junction {
     pub waiters: Vec<(u64, Entity, u32)>,
     /// Lease of each occupant: the last fixed tick it moved.
     pub moved: HashMap<Entity, u64>,
+    /// A car going around a body inside the box holds all of it (car, its exit lane).
+    pub whole: Option<(Entity, u32)>,
 }
 
 /// Intersection reservations by node.
@@ -200,8 +248,19 @@ pub(crate) fn abandon(
         .try_remove::<(Autopilot, DriveIntent, SleepingDisabled)>();
     junctions.release(entity);
     car.mode = TrafficMode::Abandoned;
+    clear_ai_state(car);
+}
+
+/// Drops everything the traffic AI keeps about a car it no longer drives (its path choice, queue
+/// place and manoeuvre, whose pass claim the snapshot would otherwise keep publishing).
+pub(crate) fn clear_ai_state(car: &mut TrafficCar) {
     car.next = None;
     car.waiting = None;
+    car.lateral = 0.0;
+    car.manoeuvre = Manoeuvre::None;
+    car.calm = 0.0;
+    car.stood = 0.0;
+    car.deaf = 0.0;
 }
 
 pub struct TrafficPlugin;
@@ -217,6 +276,7 @@ impl Plugin for TrafficPlugin {
             .register_type::<Segment>()
             .register_type::<TrafficMode>()
             .register_type::<TrafficCar>()
+            .register_type::<Manoeuvre>()
             .register_type::<TrafficStats>()
             .register_type::<TrafficPhase>()
             .register_type::<DriverScared>()
@@ -230,8 +290,11 @@ impl Plugin for TrafficPlugin {
                     TrafficSystems::Drive
                         .after(TrafficSystems::Hijack)
                         .after(TrafficSystems::Bail)
+                        .after(OccupancySystems)
                         .before(VehicleSystems::Drive),
-                    TrafficSystems::Bubble.after(TrafficSystems::Drive),
+                    TrafficSystems::Bubble
+                        .after(TrafficSystems::Drive)
+                        .after(OccupancySystems),
                 )
                     .in_set(NpcSystems)
                     .run_if(running),
@@ -244,7 +307,11 @@ impl Plugin for TrafficPlugin {
                         .in_set(TrafficSystems::Hijack),
                     bail::bail_out.in_set(TrafficSystems::Bail),
                     drive::advance_traffic.in_set(TrafficSystems::Drive),
-                    (spawn::despawn_traffic, spawn::spawn_traffic)
+                    (
+                        stuck::despawn_stuck,
+                        spawn::despawn_traffic,
+                        spawn::spawn_traffic,
+                    )
                         .chain()
                         .in_set(TrafficSystems::Bubble),
                 ),

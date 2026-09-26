@@ -83,6 +83,10 @@
 
 - **NPC lethality is `damage_scale` by victim, not aim error (TASK-035).** Aim error widens the hold-fire line cone by the same angle (police overshoot 60 m), so a wider cone makes cops stop firing in crowds while shotgun head pellets still one-shot. Scale only damage whose resolved body is the player (`ColliderOf.body`), including the driver's cabin share; cars and NPC victims take full damage, or car stops and gang wars silently stretch 3-7x. Gate: `tests/lethality.rs` median TTK floor and ceiling over 7 seeds. Trigger: `aim_error_deg` or `damage_scale` edits meant to change TTK.
 
+- **A give-up timeout also breaks every lock it resolves silently (TASK-032).** Narrowing the traffic give-up to "off its lane with nothing ahead" (to stop `Abandoned` columns) turned four green city gates into 53-100 s `Dynamic` stands they had only passed through the give-up. Before narrowing or removing such a timeout, run every city gate's stand bounds and list which locks it was ending. Trigger: `give_up_seconds`, `stood`, any "never gives up while ..." rule.
+
+- **Traffic cannot shove a parked car (TASK-032).** An unmanned sedan grips sideways at about 16 kN; a sedan drives at about 6.9 kN. A push-through only rams in cycles. A kinematic pusher moves anything but drives through a pinned body (G1 class). Design around re-routing or despawn, not pushing. Trigger: any "push through" or "shove" traffic design.
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

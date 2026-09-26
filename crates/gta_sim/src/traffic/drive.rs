@@ -2,25 +2,34 @@
 //! intersections, IDM on the nearest obstacle (leader, stop line, forward cast), kinematic motion
 //! or autopilot targets, and the driver getting out of a stopped bailing car.
 
+use super::box_rules::shift_pass;
 use super::hijack::spawn_driver;
 use super::idm::{ballistic_step, idm_acceleration};
 use super::junction::{self, has_grant};
+use super::lateral::{
+    effective_lateral, heading_yaw, offset_pose, step_lateral, target_lateral, turn_towards,
+};
+use super::manoeuvre::{passing, plan, sense};
+use super::pass::pass_done;
+use super::recover::{Recovery, recover_dynamic};
+use super::sirens::yield_gap;
 use super::{
-    Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections, TrafficMode,
-    TrafficRng, TrafficStats, abandon,
+    FlatRect, Manoeuvre, Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections,
+    TrafficMode, TrafficRng, TrafficStats, abandon,
 };
 use crate::character::{CharacterControlConfig, HealthConfig, LocomotionConfig};
 use crate::civilian::CivilianConfig;
 use crate::combat::aim_yaw;
-use crate::layers::GameLayer;
 use crate::navigation::SidewalkGraph;
+use crate::occupancy::{BodyKind, ClaimFilter, RoadOccupancy};
 use crate::perception::Cause;
 use crate::vehicle::{
-    Autopilot, Vehicle, VehicleConfig, VehicleHealth, WheelState, exit_spots, follow_speed,
+    Autopilot, DriveIntent, Vehicle, VehicleConfig, VehicleHealth, WheelState, exit_spots,
+    follow_speed,
 };
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// A traffic AI car as this tick sees it.
 pub(super) struct Snap {
@@ -193,6 +202,7 @@ pub(super) fn advance_traffic(
     mut junctions: ResMut<TrafficIntersections>,
     mut rng: ResMut<TrafficRng>,
     mut stats: ResMut<TrafficStats>,
+    mut road: ResMut<RoadOccupancy>,
     mut cars: Query<CarItem>,
     others: Query<(&Position, &LinearVelocity), Without<TrafficCar>>,
 ) {
@@ -243,11 +253,30 @@ pub(super) fn advance_traffic(
     snaps.sort_by_key(|s| s.entity.to_bits());
 
     // 1. Dynamic cars: back onto their path, or given up. 2. Wrecks bail out.
+    let mut recovered: Vec<(Entity, f32)> = Vec::new();
     for snap in &mut snaps {
         if snap.dynamic {
             let forward = snap.rotation * Vec3::NEG_Z;
             snap.car.speed = snap.velocity.dot(forward).max(0.0);
             snap.abandon = reproject(&graph, &junctions, snap, &cfg);
+        }
+        if snap.dynamic && !snap.abandon && snap.car.mode == TrafficMode::Dynamic {
+            match recover_dynamic(snap, &road, &graph, &cfg, &vcfg, dt) {
+                Recovery::Stay => {}
+                Recovery::Recover { lateral } => recovered.push((snap.entity, lateral)),
+                // A car with no door free is given up at once: bailing, it would stand forever.
+                Recovery::GiveUp => {
+                    let car = (snap.entity, snap.position, snap.rotation);
+                    if exit_spots(&spatial, &vcfg, &loco, car, &[]).is_empty() {
+                        snap.abandon = true;
+                    } else {
+                        snap.car.mode = TrafficMode::Bailing {
+                            attack: None,
+                            shooter: None,
+                        };
+                    }
+                }
+            }
         }
         if snap.health <= 0.0
             && matches!(snap.car.mode, TrafficMode::Kinematic | TrafficMode::Dynamic)
@@ -262,21 +291,23 @@ pub(super) fn advance_traffic(
     // 3. Occupancy, 4. intersections.
     let occupied = occupancy(&graph, &snaps);
     let rest = vcfg.rest_height();
-    // Vehicles outside the occupancy (abandoned, taken, police) on the first `length` m of `lane`.
-    let others_on_lane = SpatialQueryFilter::from_mask(GameLayer::Vehicle)
-        .with_excluded_entities(snaps.iter().filter(|s| !s.abandon).map(|s| s.entity));
+    // Bodies outside the path occupancy (not AI cars on their path, not dynamic AI cars: `room` counts
+    // those) or a pass claim on the first `length` m of `lane`.
     let lane_start_free = |lane: u32, length: f32| {
         let l = graph.lane(lane);
         let length = length.min(l.length);
-        let centre = l.from + l.dir * (length / 2.0) + Vec3::Y * rest;
-        spatial
-            .shape_intersections(
-                &Collider::cuboid(2.0 * half.x, 2.0 * half.y, length),
-                centre,
-                Quat::from_rotation_y(aim_yaw(l.dir)),
-                &others_on_lane,
-            )
-            .is_empty()
+        let centre = l.from + l.dir * (length / 2.0);
+        let rect = FlatRect::of(
+            centre,
+            Quat::from_rotation_y(aim_yaw(l.dir)),
+            Vec2::new(half.x, length / 2.0),
+        );
+        let skip = |b: &crate::occupancy::RoadBody| {
+            b.kind == BodyKind::Character
+                || b.kind == BodyKind::OnPathTraffic
+                || (b.kind == BodyKind::Traffic && b.dynamic)
+        };
+        road.blocked(&rect, skip, ClaimFilter::All).is_none()
     };
     let lease_ticks = (cfg.reservation_timeout / dt).ceil() as u64;
     junction::update(
@@ -290,26 +321,14 @@ pub(super) fn advance_traffic(
         (lease_ticks, vcfg.hold_speed),
         &mut rng,
         &lane_start_free,
+        &junction::BoxInputs {
+            road: &road,
+            half_width: half.x + cfg.conflict_margin / 2.0,
+            stuck_seconds: cfg.pass.vehicle_seconds,
+        },
     );
 
     // 5. Obstacles and 6. acceleration.
-    let kinematic: HashSet<Entity> = snaps
-        .iter()
-        .filter(|s| !s.dynamic)
-        .map(|s| s.entity)
-        .collect();
-    let slab = Collider::cuboid(2.0 * half.x, 2.0 * half.y, 0.1);
-    // The cast starts at the nose (slab front face on the bumper): a body pressed against the flank is
-    // beside the car, not in its way, and must not hold it (a walker and a car waiting on each other).
-    let nose = half_length - 0.05;
-    let filter = SpatialQueryFilter::from_mask([GameLayer::Character, GameLayer::Vehicle]);
-    let speed_of = |e: Entity| {
-        cars.get(e)
-            .map(|c| c.4.0)
-            .ok()
-            .or_else(|| others.get(e).ok().map(|o| o.1.0))
-            .unwrap_or(Vec3::ZERO)
-    };
     let mut accelerations = vec![0.0; snaps.len()];
     for k in 0..snaps.len() {
         let snap = &snaps[k];
@@ -339,6 +358,10 @@ pub(super) fn advance_traffic(
             }
             Segment::Connector(_) => cfg.turn_speed,
         };
+        let v0 = match car.manoeuvre {
+            Manoeuvre::Pass { .. } | Manoeuvre::Yield { .. } => v0.min(cfg.pass.speed),
+            _ => v0,
+        };
         let mut a = idm_acceleration(v, v0, None, idm);
         let mut obstacle = |gap: f32, other: f32| {
             a = a.min(idm_acceleration(v, v0, Some((gap, v - other)), idm));
@@ -351,33 +374,51 @@ pub(super) fn advance_traffic(
         if let (Segment::Lane(l), false) = (car.segment, granted) {
             obstacle(graph.lane(l).stop - (car.s + half_length), 0.0);
         }
-        let (_, tangent) = graph.pose(car.segment, car.s);
-        let reach = match car.segment {
-            Segment::Lane(_) => cfg.sense_distance,
-            Segment::Connector(_) => cfg.turn_sense_distance,
-        };
-        if let Ok(direction) = Dir3::new(tangent) {
-            stats.casts = stats.casts.wrapping_add(1);
-            counts.casts = stats.casts;
-            let me = snap.entity;
-            let config = ShapeCastConfig::from_max_distance(half_length + reach - nose);
-            let hit = spatial.cast_shape_predicate(
-                &slab,
-                snap.position + tangent * nose,
-                Quat::from_rotation_y(aim_yaw(tangent)),
-                direction,
-                &config,
-                &filter,
-                &|e| e != me && !kinematic.contains(&e),
-            );
-            if let Some(hit) = hit {
-                obstacle(
-                    nose + hit.distance - half_length,
-                    speed_of(hit.entity).dot(tangent),
-                );
+        match car.manoeuvre {
+            // Out of the way first (at most at the manoeuvre speed), then a stop.
+            Manoeuvre::Yield { offset, .. } if (car.lateral - offset).abs() < 0.05 => {
+                obstacle(yield_gap(v, idm), 0.0)
             }
+            // Behind the committed obstacle until the car is out beside it.
+            Manoeuvre::Pass { need, hold_s, .. } if car.lateral.abs() < need && car.s <= hold_s => {
+                obstacle(hold_s - car.s, 0.0)
+            }
+            _ => {}
         }
+        stats.casts = stats.casts.wrapping_add(1);
+        counts.casts = stats.casts;
+        let (ahead, beside) = sense(&graph, &road, &cfg, snap, half);
+        for hit in ahead.iter().chain(beside.iter()) {
+            obstacle(hit.gap, hit.speed_along);
+        }
+        let update = plan(
+            (&road, &spatial, &graph, &junctions),
+            snap,
+            ahead,
+            (tick, dt),
+            (&cfg, &vcfg),
+        );
         accelerations[k] = a;
+        let Some(update) = update else {
+            continue;
+        };
+        snaps[k].car.manoeuvre = update.manoeuvre;
+        snaps[k].car.deaf = snaps[k].car.deaf.max(update.deaf);
+        road.claims_extend(update.claim);
+        if let Some(c) = update.whole_box {
+            let conn = graph.connector(c);
+            let me = snaps[k].entity;
+            let junction = junctions.0.entry(conn.node).or_default();
+            junction.whole = Some((me, conn.to_lane));
+            // The whole box is held through the car's own grant (a demoted car has none): without it
+            // the lease finds no move of the car and lapses the next tick.
+            junction.waiters.retain(|w| w.1 != me);
+            if !junction.occupants.contains(&(c, me)) {
+                junction.occupants.push((c, me));
+            }
+            junction.moved.insert(me, tick);
+            snaps[k].car.waiting = None;
+        }
     }
 
     // Motion: kinematic cars step along the path, dynamic cars get an autopilot target.
@@ -392,6 +433,18 @@ pub(super) fn advance_traffic(
         }
         let a = accelerations[k];
         let granted = has_grant(&graph, &junctions, snap);
+        // A car on a connector without its grant (demoted, or switched to another exit) holds.
+        let held = match snap.car.segment {
+            Segment::Connector(c) => {
+                let node = graph.connector(c).node;
+                !junctions.granted(node, c, snap.entity)
+                    && junctions
+                        .0
+                        .get(&node)
+                        .is_none_or(|j| j.whole.map(|w| w.0) != Some(snap.entity))
+            }
+            Segment::Lane(_) => false,
+        };
         let Ok((_, _, _, _, mut velocity, mut angular, mut vehicle, _, _, pilot)) =
             cars.get_mut(snap.entity)
         else {
@@ -405,14 +458,28 @@ pub(super) fn advance_traffic(
                 .max(vcfg.autopilot.lookahead_per_mps * v);
             let next = granted.then_some(snap.car.next).flatten();
             let (seg, s) = ahead(&graph, snap.car.segment, snap.car.s, next, lookahead);
+            let side = match seg {
+                Segment::Lane(_) => target_lateral(&snap.car, snap.car.s - half_length),
+                Segment::Connector(_) => 0.0,
+            };
             if let Some(mut pilot) = pilot {
-                pilot.target = graph.pose(seg, s).0;
-                pilot.speed = follow_speed(&vcfg, v, a, dt);
+                pilot.target = offset_pose(&graph, seg, s, side).0;
+                pilot.speed = if held {
+                    0.0
+                } else {
+                    follow_speed(&vcfg, v, a, dt)
+                };
             }
             continue;
         }
         let car = &mut snap.car;
-        let (travel, mut v) = ballistic_step(0.0, car.speed, a, dt);
+        car.deaf = (car.deaf - dt).max(0.0);
+        let before = effective_lateral(&graph, car.segment, car.s, car.lateral, passing(car));
+        let (travel, mut v) = if held {
+            (0.0, 0.0)
+        } else {
+            ballistic_step(0.0, car.speed, a, dt)
+        };
         let mut s = car.s + travel;
         let mut seg = car.segment;
         for _ in 0..3 {
@@ -424,6 +491,7 @@ pub(super) fn advance_traffic(
                     {
                         s -= length;
                         seg = Segment::Connector(c);
+                        shift_pass(&mut car.manoeuvre, -length);
                         continue;
                     }
                     // A driver never runs the stop line.
@@ -438,21 +506,60 @@ pub(super) fn advance_traffic(
                     seg = Segment::Lane(graph.connector(c).to_lane);
                     car.next = None;
                     car.waiting = None;
+                    // A pass in the box goes on along the exit lane (its marks move with the
+                    // origin); any other offset has decayed to 0 along the connector.
+                    if passing(car) {
+                        shift_pass(&mut car.manoeuvre, -length);
+                    } else {
+                        car.lateral = 0.0;
+                    }
                     continue;
                 }
                 Segment::Connector(_) => {}
             }
             break;
         }
+        if let Manoeuvre::Pass { need, hold_s, .. } = car.manoeuvre
+            && car.lateral.abs() < need
+            && car.s <= hold_s
+            && s > hold_s
+        {
+            s = hold_s.max(car.s);
+            v = 0.0;
+        }
         car.segment = seg;
         car.s = s;
         car.speed = v;
-        let (point, tangent) = graph.pose(seg, s);
+        let manoeuvring = car.lateral != 0.0 || car.manoeuvre != Manoeuvre::None;
+        if manoeuvring && (matches!(seg, Segment::Lane(_)) || passing(car)) {
+            let target = target_lateral(car, s - half_length);
+            car.lateral = step_lateral(car.lateral, target, v, dt, &cfg.lateral);
+        }
+        let lateral = effective_lateral(&graph, seg, s, car.lateral, passing(car));
+        let (point, tangent) = offset_pose(&graph, seg, s, lateral);
         let target = Vec3::new(point.x, rest, point.z);
         velocity.0 = (target - snap.position) / dt;
         let yaw = aim_yaw(snap.rotation * Vec3::NEG_Z);
-        let yaw_rate = wrap(aim_yaw(tangent) - yaw) / dt;
-        angular.0 = Vec3::new(0.0, yaw_rate, 0.0);
+        let path_error = wrap(aim_yaw(tangent) - yaw);
+        // Off the path line the heading follows the sideways move at a limited turn rate; on it the
+        // yaw snaps to the path in one tick.
+        angular.0 = if manoeuvring {
+            let heading = heading_yaw(tangent, v, (lateral - before) / dt);
+            turn_towards(snap.rotation, heading, dt, &cfg.lateral)
+        } else {
+            Vec3::new(0.0, path_error / dt, 0.0)
+        };
+        if pass_done(car, half_length) {
+            car.manoeuvre = Manoeuvre::None;
+        }
+        if car.manoeuvre == Manoeuvre::Rejoin
+            && car.lateral.abs() < 0.01
+            && path_error.abs() < 1f32.to_radians()
+        {
+            car.lateral = 0.0;
+            car.manoeuvre = Manoeuvre::None;
+        }
+        let yaw_rate = angular.0.y;
         let limit = vcfg.steer.max_deg.to_radians();
         // Bicycle model, visual only: yaw rate = v / wheelbase · tan(steer).
         vehicle.steer = (2.0 * vcfg.wheels.half_wheelbase * yaw_rate / v.max(1.0))
@@ -505,6 +612,23 @@ pub(super) fn advance_traffic(
     for snap in &mut snaps {
         if snap.abandon {
             abandon(&mut commands, &mut junctions, snap.entity, &mut snap.car);
+        }
+        if let Some(&(_, lateral)) = recovered.iter().find(|r| r.0 == snap.entity)
+            && !snap.abandon
+        {
+            commands
+                .entity(snap.entity)
+                .try_insert(RigidBody::Kinematic);
+            commands
+                .entity(snap.entity)
+                .try_remove::<(Autopilot, DriveIntent, SleepingDisabled)>();
+            let car = &mut snap.car;
+            car.mode = TrafficMode::Kinematic;
+            car.lateral = lateral;
+            car.manoeuvre = Manoeuvre::Rejoin;
+            car.calm = 0.0;
+            car.stood = 0.0;
+            car.speed = 0.0;
         }
         if let Ok((_, mut car, ..)) = cars.get_mut(snap.entity) {
             *car = snap.car;

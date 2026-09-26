@@ -308,6 +308,8 @@ fn new_city_replaces_the_city() {
             swat: 1,
             reinforce_left: 2.0,
             cars: 2,
+            sector_spawns: [1, 2, 3],
+            sector_fallbacks: 1,
         };
         *world.resource_mut::<ArrestAttempt>() = ArrestAttempt {
             cop: Some(unit),
@@ -491,7 +493,9 @@ fn new_city_replaces_the_city() {
         dispatcher.units == 0
             && dispatcher.swat == 0
             && dispatcher.reinforce_left == 0.0
-            && dispatcher.cars == 0,
+            && dispatcher.cars == 0
+            && dispatcher.sector_spawns == [0; 3]
+            && dispatcher.sector_fallbacks == 0,
         "A9: {dispatcher:?}"
     );
     assert_eq!(

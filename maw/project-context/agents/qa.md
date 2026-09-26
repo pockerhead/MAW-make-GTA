@@ -15,6 +15,8 @@ Loop:
   `curl -s -X POST http://127.0.0.1:15702 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"brp_extras/screenshot","params":{"path":"<abs path>.png"}}'`.
   Methods: `rpc.discover` (list all), `world.query`, `world.get_components`, `world.mutate_components`, `brp_extras/screenshot`, `brp_extras/send_keys`, `brp_extras/move_mouse`, `brp_extras/click_mouse`, `brp_extras/get_diagnostics`, `brp_extras/shutdown`. Confirm params with `rpc.discover` — do not guess them.
 - One BRP screenshot at a time: wait for the file before requesting the next. Two concurrent `brp_extras/screenshot` calls panic the game (bevy inserts `Captured` on an already-despawned screenshot entity, exit 101; TASK-031 M4). That crash is the harness, not a game bug.
+- After restoring a flipped file, `touch` it before the GREEN run. `mv`/`cp` restores an older mtime and cargo does not rebuild, so the gate stays RED with the correct content (TASK-032). sha256 proves the content, not the build.
+- A/B baseline exception: a runtime comparison against the pre-task build may use a detached `git worktree` of that commit plus its own `--target-dir` under the task scratch. Remove both at the end (about 2.7 GB, 8 min cold release build). This is the only allowed second checkout or target (TASK-032).
 - Screenshots and scenario output go to the task's `scratch/qa/`; cite them in QA_REPORT.md by path, with what you saw in each.
 - FPS: read `brp_extras/get_diagnostics` after >= 5 s of warm-up, in a `--release` build; report min/avg frame time, not one sample.
 - FPS under vsync (`PresentMode::Fifo`) equals the display refresh, not the game cost: this host's only

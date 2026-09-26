@@ -7,10 +7,14 @@
 //! - Lease (correctness): no junction grant stays with a car standing before its stop line longer
 //!   than the SHIPPED `reservation_timeout` (plus one tick) while a car waits at that node for a
 //!   conflicting connector. Uncontested, or with the nose past the stop line, the holder keeps it.
+//! - G1 (correctness, TASK-032): no two vehicle footprints interpenetrate while one of them is
+//!   kinematic (`traffic_support::Footprints`, every tick); no AI car stands longer than 30 s in
+//!   `Dynamic` (`traffic_support::StandClock`).
 //! - Stop lines (correctness, geometry): on the seed-1 graph every stop line sits more than a walker's
 //!   reach (navigation `keep_right` + capsule radius) before the crossing at its lane end.
 
 mod common;
+mod traffic_support;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -26,6 +30,7 @@ use gta_sim::{
     world::PlayerSpawn,
 };
 use std::collections::HashMap;
+use traffic_support::{Footprints, StandClock};
 
 const SECONDS: u32 = 120;
 const STOP_SPEED: f32 = 0.5;
@@ -42,6 +47,8 @@ struct Run {
     grants: u32,
     mean_cars: f32,
     casts: u32,
+    oracle: Footprints,
+    clock: StandClock,
 }
 
 fn run(seed: u64) -> (Run, f32, u32) {
@@ -69,10 +76,14 @@ fn run(seed: u64) -> (Run, f32, u32) {
         grants: 0,
         mean_cars: 0.0,
         casts: 0,
+        oracle: Footprints::new(&app),
+        clock: StandClock::default(),
     };
     let mut car_ticks = 0;
     for tick in 0..SECONDS * hz {
         run_ticks(&mut app, 1);
+        result.oracle.record(&mut app, tick);
+        result.clock.record(&mut app);
         let cars: HashMap<Entity, (TrafficCar, bool, Vec3)> = app
             .world_mut()
             .query::<(Entity, &TrafficCar, &LinearVelocity, &Position)>()
@@ -148,6 +159,15 @@ fn nobody_playing(seed: u64) {
         run.long_stops,
         run.worst_stale as f32 / hz as f32
     );
+    eprintln!(
+        "seed {seed}: G1 oracle: {} close pairs, max depth {:.3} m, {} violation ticks, pairs {:?}; \
+         worst Dynamic stand {:.1} s",
+        run.oracle.pairs,
+        run.oracle.max_depth(),
+        run.oracle.violations.len(),
+        run.oracle.summary(),
+        run.clock.worst_dynamic()
+    );
     assert!(
         run.mean_cars >= 10.0 && run.grants >= 40 && run.casts > 0,
         "GATE BROKEN: seed {seed}: thin traffic ({:.1} cars, {} grants, {} casts)",
@@ -173,6 +193,14 @@ fn nobody_playing(seed: u64) {
             run.worst_stale as f32 / hz as f32
         ));
     }
+    if !run.oracle.violations.is_empty() {
+        failures.push(format!(
+            "G1: {} kinematic interpenetration ticks, pairs {:?}",
+            run.oracle.violations.len(),
+            run.oracle.summary()
+        ));
+    }
+    failures.extend(run.clock.dynamic_violation());
     assert!(failures.is_empty(), "seed {seed}: {}", failures.join("; "));
 }
 

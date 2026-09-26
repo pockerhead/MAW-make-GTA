@@ -2,12 +2,12 @@
 //! frame they spawn at 15-25 m and go past 25 m, and never before 2 s off frame.
 
 use super::{
-    Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections, TrafficMode,
-    TrafficPhase, TrafficRng, TrafficStats,
+    FlatRect, Manoeuvre, Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections,
+    TrafficMode, TrafficPhase, TrafficRng, TrafficStats,
 };
 use crate::combat::aim_yaw;
-use crate::layers::GameLayer;
 use crate::navigation::flat_distance;
+use crate::occupancy::{ClaimFilter, RoadOccupancy};
 use crate::player::Player;
 use crate::population::{Appearance, CameraView, Offscreen, ViewCone};
 use crate::vehicle::{DamageConfig, VehicleConfig, vehicle_bundle};
@@ -67,6 +67,11 @@ pub fn spawn_traffic_car(
                 next: None,
                 mode: TrafficMode::Kinematic,
                 waiting: None,
+                lateral: 0.0,
+                manoeuvre: Manoeuvre::None,
+                calm: 0.0,
+                stood: 0.0,
+                deaf: 0.0,
             },
             Appearance(appearance),
         ))
@@ -122,7 +127,7 @@ pub(super) fn despawn_traffic(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn spawn_traffic(
     mut commands: Commands,
-    spatial: SpatialQuery,
+    road: Res<RoadOccupancy>,
     configs: (Res<TrafficConfig>, Res<VehicleConfig>, Res<DamageConfig>),
     graph: Res<TrafficGraph>,
     view: Res<CameraView>,
@@ -191,8 +196,6 @@ pub(super) fn spawn_traffic(
                     .is_none_or(|cars| cars.iter().all(|&c| (c - s).abs() > clear))
         })
         .collect();
-    let chassis = Collider::cuboid(2.0 * half.x, 2.0 * half.y, 2.0 * half.z);
-    let filter = SpatialQueryFilter::from_mask([GameLayer::Character, GameLayer::Vehicle]);
     let mut spawned: Vec<(u32, f32)> = Vec::new();
     let mut checks = 0;
     while (spawned.len() as u32) < budget && !candidates.is_empty() && checks < 4 * budget {
@@ -206,11 +209,12 @@ pub(super) fn spawn_traffic(
         }
         checks += 1;
         let (point, tangent) = graph.pose(Segment::Lane(lane), s);
-        let centre = point + Vec3::Y * vehicle.rest_height();
         let rotation = Quat::from_rotation_y(aim_yaw(tangent));
-        if !spatial
-            .shape_intersections(&chassis, centre, rotation, &filter)
-            .is_empty()
+        let chassis = FlatRect::of(point, rotation, Vec2::new(half.x, half.z));
+        // Every character and vehicle (a passing car included) and every pass claim.
+        if road
+            .blocked(&chassis, |_| false, ClaimFilter::All)
+            .is_some()
         {
             continue;
         }

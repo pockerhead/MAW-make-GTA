@@ -29,6 +29,10 @@ pub struct TrafficLane {
     pub end_node: u32,
     /// Connectors leaving the lane end.
     pub out: Vec<u32>,
+    /// Lateral distance to the opposite inner lane on the left, m (`None`: one-way).
+    pub left_gap: Option<f32>,
+    /// A curb lane (an avenue's slot 1, parked cars) runs on the right.
+    pub curb_lane: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -208,8 +212,15 @@ impl TrafficGraph {
                 v0,
                 end_node,
                 out: Vec::new(),
+                left_gap: None,
+                curb_lane: false,
             });
         }
+        let gaps = super::lanes::left_gaps(&built, half_width);
+        built
+            .iter_mut()
+            .zip(gaps)
+            .for_each(|(lane, gap)| lane.left_gap = gap);
         let mut conns = Vec::with_capacity(connectors.len());
         for (id, &(a, b, node)) in connectors.iter().enumerate() {
             if a as usize >= built.len() || b as usize >= built.len() {
@@ -318,6 +329,9 @@ impl TrafficGraph {
             })
             .collect();
         let mut graph = Self::new(lanes, &connectors, cfg, half_width)?;
+        for k in super::lanes::curb_lanes(layout, width, &index) {
+            graph.lanes[k as usize].curb_lane = true;
+        }
         let walks = &layout.sidewalks;
         for lane in &mut graph.lanes {
             let (a, r) = (flat(lane.from), flat(lane.to - lane.from));
@@ -336,6 +350,12 @@ impl TrafficGraph {
             }
         }
         Ok(graph)
+    }
+
+    /// Test floors only: marks a curb lane on the right of `lane`.
+    #[doc(hidden)]
+    pub fn set_curb_lane(&mut self, lane: u32, curb: bool) {
+        self.lanes[lane as usize].curb_lane = curb;
     }
 
     pub fn lanes(&self) -> &[TrafficLane] {

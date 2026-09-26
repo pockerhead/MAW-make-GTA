@@ -130,6 +130,8 @@
 - 2026-09-25 (TASK-016) — a state transition that can fail (dismount with no free door) must be undone, or its exit
   rule flips it back every tick (1132 dismount/reboard transitions in 25 s). Add hysteresis in data.
 
+- **Standing timers must reset on teleport (TASK-032).** "Standing time" from velocity alone misses teleports: QA `put` and respawn keep velocity 0. A teleported player counted as standing for minutes, and traffic went around them at once. Reset on displacement > hold_speed x dt (`occupancy::snapshot_road`). Do not reset `TrafficCar.lateral` on a car the kinematic law still moves; drop derived state (claims) at the reader instead. Trigger: any `standing`/`stood` timer read by AI, `lateral = 0.0` outside `abandon()`/hijack.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

@@ -26,11 +26,47 @@
     // Vermeij bands (GTA III/VC/SA, GDD §5.2): in frame spawn at 70 m / despawn at 90 m, off frame
     // 15 / 25 m, despawn only after 2 s off frame; cap 24 cars in the bubble.
     // spawn_spacing: spawn points every this many metres along a lane.
+    // stuck_despawn_seconds: a cheat (TASK-032) for geometry no pass fits around (two bodies in a
+    // junction box): a traffic car, or a driverless car in a box, standing this long out of frame
+    // despawns. Above the 40 s saturated-junction stand bound (TASK-033), so a car waiting its turn is
+    // never removed and a liveness gate sees any lock before the cheat hides it, s.
+    // stuck_in_view_distance: a driverless car in a box farther than this from the player, or with only
+    // a corner in frame, counts as out of frame for that cheat (a car the player looks at from nearby
+    // never pops; one across a wide junction or at the frame edge does), m.
     bubble: (max_cars: 24, in_view: (spawn: 70.0, despawn: 90.0), off_view: (spawn: 15.0, despawn: 25.0),
-             offscreen_seconds: 2.0, spawns_per_tick: 1, initial_spawns_per_tick: 4, spawn_spacing: 10.0),
+             offscreen_seconds: 2.0, spawns_per_tick: 1, initial_spawns_per_tick: 4, spawn_spacing: 10.0,
+             stuck_despawn_seconds: 45.0, stuck_in_view_distance: 40.0),
     // Time-to-contact switch to a dynamic body: broadphase reach, m; sweep horizon, s; skin on the
     // car's footprint, m. reach >= (sedan max_speed 28 + v0 16) x 0.1 = 4.4 m.
     switch: (reach: 5.0, horizon_seconds: 0.1, skin: 0.1),
     // A dynamic car this far off its path, or heading off the path tangent by more, is given up, m / degrees.
     lost: (distance: 4.0, angle_deg: 60.0),
+    // Sideways move of a kinematic car off its lane line (rejoin after a bump, go-around, yield to a
+    // siren): rate = rate_at_rest + slope x speed, m/s; heading turned into the move at most
+    // yaw_rate_deg per second. At rest a go-around shifts 2.9 m in 2.9 / 0.8 = 3.6 s, under the ~4 s
+    // left of the 7.5 s per queued car (60 s for 8 cars); at 6 m/s the rate is 1.7 m/s, a 3.25 m
+    // shift takes 1.9 s (11.5 m of travel) with the nose 15.8 deg off the lane.
+    lateral: (rate_at_rest: 0.8, slope: 0.15, yaw_rate_deg: 60.0),
+    // A bumped (dynamic) traffic car drives on kinematic again once for `seconds` it is upright (tilt
+    // under max_tilt_deg), within `lost`, at rest (vehicle hold_speed), no dynamic body's relative
+    // sweep over horizon_seconds reaches its footprint grown by skin, and its rejoin corridor to the
+    // lane line is clear; skin and horizon are four and five times the switch's, so a body that
+    // would switch it again within a tick never lets it recover. A car that stood give_up_seconds
+    // without recovering, out of its lane and with nothing ahead in it, is given up (the driver gets
+    // out); one in a queue or behind a standing body waits, s / m / s / degrees / s.
+    recover: (seconds: 1.5, skin: 0.4, horizon_seconds: 0.5, max_tilt_deg: 10.0, give_up_seconds: 10.0),
+    // Going around a standing body (a left or wrecked car, a dismounted police car, a person): a car
+    // with the obstacle within trigger_gap (the queue head at the jam gap, or the car right behind a
+    // head that has moved out beside it: jam gap + car length + jam gap = 8.1 m, so two pass in
+    // tandem) passes a vehicle that stood
+    // vehicle_seconds or a person that stood character_seconds (longer: a pedestrian usually steps
+    // aside; also more than reservation_timeout 5 s, so a car held behind a walker keeps its junction
+    // lease that long), with `clearance` to it on the curb lane (avenues) or the opposite lane, at most
+    // at `speed`, s / s / m / m / m/s.
+    pass: (vehicle_seconds: 3.0, character_seconds: 6.0, trigger_gap: 10.0, clearance: 0.5, speed: 6.0),
+    // Sirens (a police car responding or chasing): a car it comes up behind, or drives at, within
+    // yield_distance pulls to its curb side (the curb lane on an avenue when free, else the 0.425 m
+    // slack of its own lane) and stops; it drives on once the siren car is past, or after
+    // timeout_seconds, and then ignores sirens that long, m / s. yield_distance 0: nobody yields.
+    sirens: (yield_distance: 40.0, timeout_seconds: 8.0),
 )

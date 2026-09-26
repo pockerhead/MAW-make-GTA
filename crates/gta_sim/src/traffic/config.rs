@@ -47,6 +47,12 @@ pub struct BubbleConfig {
     pub spawns_per_tick: u32,
     pub initial_spawns_per_tick: u32,
     pub spawn_spacing: f32,
+    /// A car standing this long out of frame (a traffic car anywhere, a driverless car in a junction
+    /// box) despawns, s.
+    pub stuck_despawn_seconds: f32,
+    /// A driverless car in a junction box farther than this from the player counts as out of frame
+    /// for the stuck cheat (and so does one with only a corner in frame), m.
+    pub stuck_in_view_distance: f32,
 }
 
 /// Time-to-contact switch of a kinematic car to a dynamic body.
@@ -66,6 +72,60 @@ pub struct SwitchConfig {
 pub struct LostConfig {
     pub distance: f32,
     pub angle_deg: f32,
+}
+
+/// Sideways motion of a kinematic car off its path (rejoin, pass, yield): rate `rate_at_rest + slope
+/// x speed`, m/s; heading turned towards the move at most `yaw_rate_deg` per second.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LateralConfig {
+    pub rate_at_rest: f32,
+    pub slope: f32,
+    pub yaw_rate_deg: f32,
+}
+
+impl LateralConfig {
+    /// Lateral rate at speed `v`, m/s.
+    pub fn rate(&self, v: f32) -> f32 {
+        self.rate_at_rest + self.slope * v.max(0.0)
+    }
+}
+
+/// A bumped (`Dynamic`) traffic car goes back to kinematic driving: upright, not lost, at rest, no
+/// dynamic body whose relative sweep over `horizon_seconds` reaches its footprint grown by `skin`, and
+/// a clear rejoin corridor, all for `seconds`; one that stood `give_up_seconds` without that is
+/// given up.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverConfig {
+    pub seconds: f32,
+    pub skin: f32,
+    pub horizon_seconds: f32,
+    pub max_tilt_deg: f32,
+    pub give_up_seconds: f32,
+}
+
+/// Going around a standing body: a car whose nearest obstacle ahead within `trigger_gap` has stood
+/// `vehicle_seconds` (a vehicle) or `character_seconds` (a character) passes it with `clearance` on
+/// each side, at most at `speed`.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PassConfig {
+    pub vehicle_seconds: f32,
+    pub character_seconds: f32,
+    pub trigger_gap: f32,
+    pub clearance: f32,
+    pub speed: f32,
+}
+
+/// Yielding to a siren car: a car it comes up behind (or that it drives at) within `yield_distance`
+/// pulls to its curb side and stops; it drives on once the car has passed or after `timeout_seconds`
+/// (then it ignores sirens that long).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct SirensConfig {
+    pub yield_distance: f32,
+    pub timeout_seconds: f32,
 }
 
 /// Traffic tuning (GDD §5.2).
@@ -88,6 +148,10 @@ pub struct TrafficConfig {
     pub bubble: BubbleConfig,
     pub switch: SwitchConfig,
     pub lost: LostConfig,
+    pub lateral: LateralConfig,
+    pub recover: RecoverConfig,
+    pub pass: PassConfig,
+    pub sirens: SirensConfig,
 }
 
 fn positive(field: &str, value: f32) -> Result<(), String> {
@@ -125,9 +189,24 @@ impl TrafficConfig {
             ("bubble.off_view.despawn", b.off_view.despawn),
             ("bubble.offscreen_seconds", b.offscreen_seconds),
             ("bubble.spawn_spacing", b.spawn_spacing),
+            ("bubble.stuck_despawn_seconds", b.stuck_despawn_seconds),
+            ("bubble.stuck_in_view_distance", b.stuck_in_view_distance),
             ("switch.reach", s.reach),
             ("switch.horizon_seconds", s.horizon_seconds),
             ("lost.distance", self.lost.distance),
+            ("lateral.rate_at_rest", self.lateral.rate_at_rest),
+            ("lateral.slope", self.lateral.slope),
+            ("lateral.yaw_rate_deg", self.lateral.yaw_rate_deg),
+            ("recover.seconds", self.recover.seconds),
+            ("recover.skin", self.recover.skin),
+            ("recover.horizon_seconds", self.recover.horizon_seconds),
+            ("recover.give_up_seconds", self.recover.give_up_seconds),
+            ("pass.vehicle_seconds", self.pass.vehicle_seconds),
+            ("pass.character_seconds", self.pass.character_seconds),
+            ("pass.trigger_gap", self.pass.trigger_gap),
+            ("pass.clearance", self.pass.clearance),
+            ("pass.speed", self.pass.speed),
+            ("sirens.timeout_seconds", self.sirens.timeout_seconds),
         ] {
             positive(field, value)?;
         }
@@ -168,6 +247,53 @@ impl TrafficConfig {
         }
         if !(s.skin.is_finite() && s.skin >= 0.0) {
             return Err(format!("switch.skin {} must be finite and >= 0", s.skin));
+        }
+        let r = &self.recover;
+        if !(r.max_tilt_deg.is_finite() && 0.0 < r.max_tilt_deg && r.max_tilt_deg < 90.0) {
+            return Err(format!(
+                "recover.max_tilt_deg {} must be in (0, 90)",
+                r.max_tilt_deg
+            ));
+        }
+        // Hysteresis: a body that would switch the car again within a tick never lets it recover.
+        if r.skin <= s.skin {
+            return Err(format!(
+                "recover.skin {} must be > switch.skin {}",
+                r.skin, s.skin
+            ));
+        }
+        if r.horizon_seconds < s.horizon_seconds {
+            return Err(format!(
+                "recover.horizon_seconds {} must be >= switch.horizon_seconds {}",
+                r.horizon_seconds, s.horizon_seconds
+            ));
+        }
+        // Bodies stand in the road snapshot only within in_view.despawn + look_ahead of the player.
+        let snapshot = b.in_view.despawn + self.look_ahead;
+        if b.stuck_in_view_distance >= snapshot {
+            return Err(format!(
+                "bubble.stuck_in_view_distance {} must be < in_view.despawn + look_ahead {snapshot}",
+                b.stuck_in_view_distance
+            ));
+        }
+        let y = self.sirens.yield_distance;
+        // 0 = nobody yields.
+        if !(y.is_finite() && y >= 0.0) {
+            return Err(format!("sirens.yield_distance {y} must be finite and >= 0"));
+        }
+        let p = &self.pass;
+        // A threshold at IDM's rest gap never fires (the queue head stands exactly there).
+        if p.trigger_gap <= i.min_gap {
+            return Err(format!(
+                "pass.trigger_gap {} must be > idm.min_gap {}",
+                p.trigger_gap, i.min_gap
+            ));
+        }
+        if p.character_seconds < p.vehicle_seconds {
+            return Err(format!(
+                "pass.character_seconds {} must be >= pass.vehicle_seconds {}",
+                p.character_seconds, p.vehicle_seconds
+            ));
         }
         // Law: the sweep covers at least two fixed steps.
         if s.horizon_seconds < 2.0 * tick {

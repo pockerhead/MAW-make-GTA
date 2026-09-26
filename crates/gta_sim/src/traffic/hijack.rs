@@ -3,6 +3,7 @@
 
 use super::{
     SwitchCause, TrafficCar, TrafficIntersections, TrafficMode, TrafficRng, TrafficStats, abandon,
+    clear_ai_state,
 };
 use crate::character::{CharacterControlConfig, HealthConfig, LocomotionConfig};
 use crate::civilian::{Civilian, CivilianConfig, CivilianState, civilian_bundle, roll_temperament};
@@ -113,8 +114,7 @@ pub(super) fn on_hijack(
             .try_remove::<(Autopilot, DriveIntent)>();
         junctions.release(entry.vehicle);
         car.mode = TrafficMode::Taken;
-        car.next = None;
-        car.waiting = None;
+        clear_ai_state(&mut car);
     }
 }
 

@@ -41,7 +41,6 @@ from t5 import resource_value  # noqa: E402
 from t14 import driving, put, quat, ron_number, ron_tuple, rotate  # noqa: E402
 from t7 import reaction_name  # noqa: E402
 
-SEED = 1
 MIN_TRAFFIC = 12
 MEAN_SPEED = 3.0
 MAX_SPEED = 16.5
@@ -163,7 +162,7 @@ def crew(game):
             for e, (c, p) in rows(game, ["CrewOf", "Position"])]
 
 
-def run(out):
+def run(out, seed=1):
     out.mkdir(parents=True, exist_ok=True)
     check = subprocess.run([sys.executable, str(REPO / "tools" / "fetch_assets.py"), "--check"], cwd=REPO)
     if check.returncode != 0:
@@ -184,9 +183,9 @@ def run(out):
     if math.hypot(stand_local[0] - door[0], stand_local[2] - door[2]) >= enter_radius - 0.1:
         raise AssertionError(f"GATE BROKEN: stand point {stand_local} out of reach of the door {door}")
     float_height = ron_number("character/locomotion.ron", "float_height")
-    summary = {"seed": SEED, "enums": {"TrafficMode": modes, "PoliceCarState": car_states}}
+    summary = {"seed": seed, "enums": {"TrafficMode": modes, "PoliceCarState": car_states}}
     try:
-        with Game(features=("dev",), args=("--seed", str(SEED)), release=True) as game:
+        with Game(features=("dev",), args=("--seed", str(seed)), release=True) as game:
             paths = (game.component_path("Position"), game.component_path("Transform"),
                      game.component_path("Rotation"))
             poll("GameState Playing", lambda: game_state(game) == "Playing", 180, 0.05)
@@ -362,7 +361,9 @@ def run(out):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=REPO / "target" / "qa" / "t15")
-    run(parser.parse_args().out)
+    parser.add_argument("--seed", type=int, default=1)
+    args = parser.parse_args()
+    run(args.out, args.seed)
 
 
 if __name__ == "__main__":

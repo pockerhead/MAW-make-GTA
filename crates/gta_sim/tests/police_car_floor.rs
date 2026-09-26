@@ -3,7 +3,8 @@
 //! a free door waits and gets out once one clears; with no free door at all the car stays on the job),
 //! a car with no lane route to the player lets its crew out where it stands instead of driving straight
 //! at the player, a car pulls away from rest behind another at the IDM rate, not at a crawl, and a
-//! car never spawns behind AI traffic on its lane route to the player.
+//! responding car behind a traffic queue gets past it (the queue yields, the car takes the opposite
+//! lane) instead of standing behind it.
 
 mod common;
 mod police_support;
@@ -16,9 +17,8 @@ use bevy::prelude::*;
 use common::*;
 use gta_sim::{
     combat::aim_yaw,
-    police::{CrewOf, PoliceCar, PoliceCarRoute, PoliceCarState, PoliceUnit, UnitKind},
-    traffic::{Segment, TrafficConfig, TrafficGraph},
-    vehicle::{Autopilot, DriveIntent, vehicle_bundle},
+    police::{CrewOf, EscalationConfig, PoliceCar, PoliceCarState, PoliceUnit, UnitKind},
+    traffic::{Manoeuvre, Segment, TrafficConfig, TrafficGraph},
 };
 use police_support::*;
 use traffic_support::*;
@@ -94,41 +94,6 @@ fn hold_two_stars(app: &mut App) {
     app.world_mut()
         .resource_mut::<gta_sim::wanted::WantedLevel>()
         .hidden = 0.0;
-}
-
-/// A responding police car (the production component set of the car dispatcher) on the road at `at`
-/// heading `dir` at `speed`.
-fn spawn_police_car(app: &mut App, at: Vec3, dir: Vec3, speed: f32, crew: Vec<UnitKind>) -> Entity {
-    let cfg = vehicle_cfg(app);
-    let dmg = damage_cfg(app);
-    let body = Vec3::new(at.x, cfg.rest_height(), at.z);
-    let transform =
-        Transform::from_translation(body).with_rotation(Quat::from_rotation_y(aim_yaw(dir)));
-    let car = app
-        .world_mut()
-        .spawn((
-            vehicle_bundle(&cfg, &dmg, transform),
-            PoliceCar {
-                state: PoliceCarState::Respond,
-                crew,
-                stopped: 0.0,
-                moving: 0.0,
-                blocked: 0.0,
-                reboard_left: 10.0,
-            },
-            PoliceCarRoute::default(),
-            Autopilot {
-                target: body + dir * cfg.autopilot.lookahead_min,
-                ..default()
-            },
-            DriveIntent::default(),
-            SleepingDisabled,
-        ))
-        .id();
-    app.world_mut()
-        .entity_mut(car)
-        .insert((Name::new("Police car"), LinearVelocity(dir * speed)));
-    car
 }
 
 fn police_car(app: &App, car: Entity) -> PoliceCar {
@@ -512,72 +477,67 @@ fn police_car_stuck_in_an_intersection_lets_its_crew_out() {
     );
 }
 
-// ------------------------------------------------------------------ spawn behind a queue
+// ------------------------------------------------------------------ behind a queue
 
-fn police_cars_at(app: &mut App) -> Vec<(Entity, Vec3)> {
-    app.world_mut()
-        .query_filtered::<(Entity, &Position), With<PoliceCar>>()
-        .iter(app.world())
-        .map(|(e, p)| (e, p.0))
-        .collect()
-}
-
-/// Fixer round 4 (t15 chase): police cars spawned in the traffic queue behind a driving player never
-/// closed in (they cannot pass traffic). The player drives lane 0 of the loop (+X) at 8 m/s, a traffic
-/// car follows him 10 m behind; every ring point heading to him (lane 0 behind, lane 3 into lane 0)
-/// lies behind that car, so no police car spawns. Once the traffic car is gone a car spawns at once
-/// (the queue, nothing else, held the dispatcher back).
+/// TASK-032 (replaces the TASK-016 "never spawns behind a queue" row, whose spawn filter is gone): on
+/// a two-way street a responding car starts 26 m behind two traffic cars, the player on foot beyond
+/// them. The cars yield (pull to the curb and stop), the police car passes them in the opposite lane
+/// and lets its crew out only past the queue, never held up (`blocked` under `blocked_seconds`).
+/// No kinematic footprint is overlapped (G1 oracle).
 #[test]
-fn police_car_never_spawns_behind_a_traffic_queue() {
-    let (lanes, connectors) = loop_lanes(12.0);
+fn police_car_gets_past_a_traffic_queue() {
+    let (lanes, connectors) = two_way_street(74.0);
     let mut app = traffic_floor(lanes, &connectors, &[]);
-    // Named mutation: the queue car fills the traffic bubble, the traffic spawner adds none.
-    set_traffic(&mut app, |t| t.bubble.max_cars = 1);
-    let car = spawn_car(&mut app, Vec2::new(10.0, 37.0), -90.0);
-    drive_in(&mut app, car);
-    set_player_armor(&mut app, 1.0e6);
-    let heat = wanted_cfg(&app).stars[1].heat;
-    raise_heat(&mut app, heat);
-    let queue = spawn_traffic_car(&mut app, Segment::Lane(0), 34.0, 0.0);
-    let exit_speed = vehicle_cfg(&app).exit_max_speed;
-    let speed = 8.0;
-    kick(&mut app, car, speed);
-    let hold = |app: &mut App| {
-        let v = velocity_of(app, car).dot(forward_of(app, car));
-        set_drive(app, |d| d.throttle = ((speed - v) * 0.5).clamp(-1.0, 1.0));
-        let at = position_of(app, car);
-        // The camera looks ahead: every ring point behind the player is hidden.
-        set_view(app, Some(chase_view(at, Vec3::X)));
-        run_ticks(app, 1);
-        hold_two_stars(app);
-    };
-    for tick in 0..64 {
-        hold(&mut app);
-        let v = velocity_of(&app, car).length();
-        assert!(
-            v > exit_speed,
-            "GATE BROKEN: tick {tick}: the player's car slowed to {v:.2} m/s (no pursuit)"
-        );
-        let queue_x = position_of(&app, queue).x;
-        let cars = police_cars_at(&mut app);
-        assert!(
-            cars.is_empty(),
-            "tick {tick}: police car spawned behind the traffic car at x = {queue_x}: {cars:?}"
-        );
-    }
-    app.world_mut().entity_mut(queue).despawn();
-    // Named mutation: no traffic car replaces it.
-    set_traffic(&mut app, |t| t.bubble.max_cars = 0);
-    let mut spawned = None;
-    for tick in 0..16 {
-        hold(&mut app);
-        if !police_cars_at(&mut app).is_empty() {
-            spawned = Some(tick);
+    wanted_player(&mut app, Vec3::new(34.0, 0.0, 34.5));
+    let graph: TrafficGraph = graph(&app);
+    let queue = [30.0, 38.0].map(|s| spawn_traffic_car(&mut app, Segment::Lane(0), s, 0.0));
+    let (at, dir) = graph.pose(Segment::Lane(0), 4.0);
+    // Arriving at 8 m/s (above exit speed): `blocked` counts only being held up, not the start.
+    let car = spawn_police_car(&mut app, at, dir, 8.0, vec![UnitKind::Patrol; 2]);
+    let blocked_limit = app
+        .world()
+        .resource::<EscalationConfig>()
+        .car
+        .blocked_seconds;
+    let half = vehicle_cfg(&app).half_extents().z;
+    let mut oracle = Footprints::new(&app);
+    let mut yielded = [false; 2];
+    let mut worst_blocked = 0.0f32;
+    let mut dismounted_at = None;
+    for tick in 0..20 * 64 {
+        run_ticks(&mut app, 1);
+        hold_two_stars(&mut app);
+        oracle.record(&mut app, tick);
+        for (k, &q) in queue.iter().enumerate() {
+            yielded[k] |= matches!(traffic_car(&app, q).manoeuvre, Manoeuvre::Yield { .. });
+        }
+        let police = police_car(&app, car);
+        worst_blocked = worst_blocked.max(police.blocked);
+        if police.state == PoliceCarState::Dismounted {
+            dismounted_at = Some(position_of(&app, car));
             break;
         }
     }
-    assert!(
-        spawned.is_some(),
-        "GATE BROKEN: no police car spawned with the lane clear (the queue did not hold it back)"
+    let head = queue
+        .iter()
+        .map(|&q| position_of(&app, q).x)
+        .fold(f32::MIN, f32::max);
+    eprintln!(
+        "yielded {yielded:?}, worst blocked {worst_blocked:.2} s, dismounted at {dismounted_at:?}, queue head x {head:.1}"
     );
+    let mut violations = Vec::new();
+    if yielded != [true; 2] {
+        violations.push(format!("not every queued car yielded: {yielded:?}"));
+    }
+    if worst_blocked >= blocked_limit {
+        violations.push(format!("held up {worst_blocked:.2} s behind the queue"));
+    }
+    match dismounted_at {
+        Some(p) if p.x > head + 2.0 * half => {}
+        other => violations.push(format!(
+            "the crew got out at {other:?}, not past the queue head (x {head:.1})"
+        )),
+    }
+    assert!(violations.is_empty(), "{violations:#?}");
+    oracle.assert_clean("police car past a queue");
 }

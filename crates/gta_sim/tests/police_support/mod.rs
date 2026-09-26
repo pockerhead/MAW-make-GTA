@@ -3,15 +3,20 @@
 
 use crate::common::*;
 use crate::wanted_support::*;
+use avian3d::prelude::*;
 use bevy::prelude::*;
 use gta_sim::{
     character::{CharacterControlConfig, Gait, HealthConfig, LocomotionConfig},
-    combat::{Loadout, WeaponsConfig},
+    combat::{Loadout, WeaponsConfig, aim_yaw},
     flow::{BustedPhase, RespawnConfig},
     navigation::SidewalkGraph,
     perception::PerceptionConfig,
-    police::{ArrestAttempt, CopState, EscalationConfig, PoliceUnit, UnitKind, police_unit_bundle},
+    police::{
+        ArrestAttempt, CopState, EscalationConfig, PoliceCar, PoliceCarRoute, PoliceCarState,
+        PoliceUnit, UnitKind, police_unit_bundle,
+    },
     population::{Appearance, PopulationConfig},
+    vehicle::{Autopilot, DamageConfig, DriveIntent, VehicleConfig, vehicle_bundle},
     wanted::stars_for,
 };
 
@@ -216,4 +221,45 @@ pub fn no_police_cars(app: &mut App) {
     {
         row.cars = 0;
     }
+}
+
+/// A responding police car (the production component set of the car dispatcher) on the road at `at`
+/// heading `dir` at `speed`.
+pub fn spawn_police_car(
+    app: &mut App,
+    at: Vec3,
+    dir: Vec3,
+    speed: f32,
+    crew: Vec<UnitKind>,
+) -> Entity {
+    let cfg = app.world().resource::<VehicleConfig>().clone();
+    let dmg = app.world().resource::<DamageConfig>().clone();
+    let body = Vec3::new(at.x, cfg.rest_height(), at.z);
+    let transform =
+        Transform::from_translation(body).with_rotation(Quat::from_rotation_y(aim_yaw(dir)));
+    let car = app
+        .world_mut()
+        .spawn((
+            vehicle_bundle(&cfg, &dmg, transform),
+            PoliceCar {
+                state: PoliceCarState::Respond,
+                crew,
+                stopped: 0.0,
+                moving: 0.0,
+                blocked: 0.0,
+                reboard_left: 10.0,
+            },
+            PoliceCarRoute::default(),
+            Autopilot {
+                target: body + dir * cfg.autopilot.lookahead_min,
+                ..default()
+            },
+            DriveIntent::default(),
+            SleepingDisabled,
+        ))
+        .id();
+    app.world_mut()
+        .entity_mut(car)
+        .insert((Name::new("Police car"), LinearVelocity(dir * speed)));
+    car
 }

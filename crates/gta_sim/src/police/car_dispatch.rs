@@ -1,18 +1,18 @@
 //! Police car dispatch (GDD §5.3, §6.4): `row.cars` cars on the job, crews counted in the row's units,
 //! spawned on hidden lane points of the car ring; the car bubble.
 
-use super::car_route::{approach_clear, lane_costs_to};
 use super::cars::{PoliceCar, PoliceCarRoute, PoliceCarState};
 use super::fsm::{pick_spawn, spawn_kind};
 use super::{CopState, EscalationConfig, PoliceDispatcher, PoliceUnit, UnitKind};
 use crate::combat::aim_yaw;
 use crate::layers::GameLayer;
 use crate::navigation::flat_distance;
+use crate::perception::wall_blocked;
 use crate::player::Player;
 use crate::population::{
-    CameraView, OCCLUSION_RAYS_PER_POINT, Offscreen, PopulationConfig, PopulationLoad, occluded,
+    CameraView, OCCLUSION_RAYS_PER_POINT, Offscreen, PopulationConfig, PopulationLoad,
 };
-use crate::traffic::{Segment, TrafficCar, TrafficConfig, TrafficGraph, in_frame};
+use crate::traffic::{Segment, TrafficConfig, TrafficGraph, in_frame};
 use crate::vehicle::{
     Autopilot, DamageConfig, DriveIntent, Driving, Vehicle, VehicleConfig, vehicle_bundle,
 };
@@ -83,8 +83,8 @@ pub(super) fn despawn_police_cars(
 
 /// Keeps `row.cars` active police cars while the row's units (foot plus aboard) allow one more cop;
 /// a car spawns on a lane point of the car ring hidden from the camera. While the player drives a
-/// moving car (a pursuit) the point also needs no AI traffic ahead on its lane route to him: a police
-/// car cannot pass traffic (one reverse route search per tick, only while a car is missing).
+/// moving car (a pursuit) the points are drawn by sector around his heading (ahead, beside, behind)
+/// to the data shares.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn dispatch_police_cars(
     mut commands: Commands,
@@ -102,7 +102,6 @@ pub(super) fn dispatch_police_cars(
     speeds: Query<&LinearVelocity>,
     units: Query<(&Position, &PoliceUnit)>,
     cars: Query<(&Position, &PoliceCar)>,
-    traffic: Query<&TrafficCar>,
 ) {
     let (esc, population, vehicle, dmg) = configs;
     let (wanted, view, graph) = state;
@@ -126,9 +125,10 @@ pub(super) fn dispatch_police_cars(
     else {
         return;
     };
-    let pursuit = driving
+    let heading = driving
         .and_then(|d| speeds.get(d.vehicle).ok())
-        .is_some_and(|v| v.0.length() > vehicle.exit_max_speed);
+        .filter(|v| v.0.length() > vehicle.exit_max_speed)
+        .map(|v| v.0.with_y(0.0).normalize_or_zero());
     let c = &esc.car;
     let half = vehicle.half_extents();
     let (inner, outer) = c.spawn_ring;
@@ -148,39 +148,51 @@ pub(super) fn dispatch_police_cars(
             (inner..=outer).contains(&flat_distance(*p, player.0)) && t.dot(centre - *p) > 0.0
         })
         .collect();
-    let queue: Vec<(Segment, f32)> = traffic
-        .iter()
-        .filter(|t| t.is_ai())
-        .map(|t| (t.segment, t.s))
-        .collect();
-    let radius = graph
-        .nearest(player.0)
-        .map_or(0.0, |(_, _, d)| d + c.goal_margin);
-    let mut costs: Option<Vec<u32>> = None;
     let mut spawned = 0;
     while spawned < c.spawns_per_tick && active < row.cars {
         let units = kinds.len() as u32;
         if units + 1 > row.units {
             break;
         }
-        let points: Vec<Vec3> = candidates.iter().map(|c| c.0).collect();
+        // In a pursuit, the sector most behind its share that still has points.
+        let sector = heading.and_then(|h| {
+            let sectors = &c.spawn_sectors;
+            let order = sectors.order(dispatcher.sector_spawns);
+            let has = |k: usize| {
+                candidates
+                    .iter()
+                    .any(|p| sectors.sector(p.0 - player.0, h) == k)
+            };
+            let pick = order.into_iter().find(|&k| has(k))?;
+            Some((h, pick, pick != order[0]))
+        });
+        let points: Vec<Vec3> = candidates
+            .iter()
+            .map(|p| p.0)
+            .filter(|&p| {
+                sector.is_none_or(|(h, k, _)| c.spawn_sectors.sector(p - player.0, h) == k)
+            })
+            .collect();
         let Some(k) = pick_spawn(&points, centre, &out, row.surround) else {
             break;
         };
-        let (at, tangent, spot) = candidates.swap_remove(k);
-        if pursuit {
-            let costs = costs.get_or_insert_with(|| lane_costs_to(&graph, player.0, radius));
-            if !approach_clear(&graph, costs, &queue, spot, player.0, radius) {
-                continue;
-            }
-        }
+        let k = candidates
+            .iter()
+            .position(|p| p.0 == points[k])
+            .expect("the point comes from the candidates");
+        let (at, tangent, _) = candidates.swap_remove(k);
         let rotation = Quat::from_rotation_y(aim_yaw(tangent));
         let body = at + Vec3::Y * height;
         let corners = [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
             .map(|(x, z)| body + rotation * Vec3::new(x * half.x, half.y, z * half.z));
+        // Occluded: world geometry blocks the ray to every top corner (seen at an angle a car is wider
+        // than its width, so rays across the width alone let a corner show).
         let hidden = corners.iter().all(|&p| !view.contains(p, margin))
             || (load.rays + OCCLUSION_RAYS_PER_POINT <= population.occlusion_rays_per_tick
-                && occluded(&spatial, &view, at, height + half.y, half.x, &mut load.rays));
+                && corners.iter().all(|&p| {
+                    load.rays += 1;
+                    wall_blocked(&spatial, view.origin, p)
+                }));
         if !hidden
             || !spatial
                 .shape_intersections(&chassis, body, rotation, &filter)
@@ -223,6 +235,10 @@ pub(super) fn dispatch_police_cars(
         out.push(body);
         active += 1;
         spawned += 1;
+        if let Some((_, k, fallback)) = sector {
+            dispatcher.sector_spawns[k] += 1;
+            dispatcher.sector_fallbacks += u32::from(fallback);
+        }
     }
     dispatcher.cars = active;
 }

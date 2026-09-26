@@ -8,12 +8,16 @@ mod car_route;
 mod cars;
 mod dispatch;
 pub mod fsm;
+mod siren;
+mod spawn_sector;
 
 pub use arrest::ArrestAttempt;
 pub use car_route::find_lane_route;
 pub use cars::{
     CarSenses, CrewOf, PoliceCar, PoliceCarRng, PoliceCarRoute, PoliceCarState, next_car_state,
 };
+pub use siren::{SirenConfig, SirenLane, sirens_on};
+pub use spawn_sector::SectorConfig;
 
 use crate::character::{
     Character, CharacterSchemeConfig, Gait, Health, HealthConfig, HealthSystems, LocomotionConfig,
@@ -23,10 +27,11 @@ use crate::combat::{DamageScale, Loadout, Weapon, WeaponsConfig, acquire, unit_f
 use crate::flow::{GameState, NEW_CITY, NpcSystems, PlayingSystems};
 use crate::gang::Faction;
 use crate::navigation::Route;
+use crate::occupancy::OccupancySystems;
 use crate::perception::{AiSystems, Perception};
 use crate::population::{Appearance, Offscreen, PopulationSystems};
 use crate::tactics::Discipline;
-use crate::traffic::TrafficGraph;
+use crate::traffic::{TrafficGraph, TrafficSystems};
 use crate::wanted::{STARS, WantedSystems};
 use crate::world::CitySeed;
 use bevy::prelude::*;
@@ -114,6 +119,10 @@ pub struct PoliceCarConfig {
     pub moving_seconds: f32,
     /// A car held up inside an intersection lets its crew out there after `blocked_seconds` times this.
     pub junction_factor: f32,
+    /// Lane choice with the sirens on.
+    pub sirens: SirenConfig,
+    /// Sectors around a fleeing driver the cars spawn in.
+    pub spawn_sectors: SectorConfig,
 }
 
 /// Gear and distance band of one unit kind.
@@ -269,6 +278,8 @@ impl EscalationConfig {
                 c.junction_factor
             ));
         }
+        c.sirens.validate()?;
+        c.spawn_sectors.validate()?;
         if c.dismount_distance >= c.direct_chase_distance {
             return Err(format!(
                 "car.dismount_distance {} must be < car.direct_chase_distance {}",
@@ -503,6 +514,10 @@ pub struct PoliceDispatcher {
     pub reinforce_left: f32,
     /// Police cars responding, chasing or with their crew out.
     pub cars: u32,
+    /// Cars spawned while pursuing, by sector (ahead, beside, behind), and picks that fell back to
+    /// another sector.
+    pub sector_spawns: [u32; 3],
+    pub sector_fallbacks: u32,
 }
 
 /// A player attack on police: arrest-row cops shoot while `hostile_left > 0`.
@@ -586,12 +601,15 @@ impl Plugin for PolicePlugin {
             .register_type::<PoliceCarState>()
             .register_type::<PoliceCarRoute>()
             .register_type::<CrewOf>()
+            .register_type::<SirenLane>()
             // After the population (it resets the shared ray budget) and the wanted level (fresh stars).
             .configure_sets(
                 FixedUpdate,
                 PoliceSystems
                     .after(PopulationSystems)
                     .after(WantedSystems)
+                    .after(OccupancySystems)
+                    .after(TrafficSystems::Drive)
                     .in_set(NpcSystems),
             )
             .add_systems(

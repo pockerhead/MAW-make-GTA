@@ -40,7 +40,7 @@ pub enum PoliceCarState {
 /// A police car and the cops aboard it.
 #[derive(Component, Reflect, Clone, Debug)]
 #[reflect(Component)]
-#[require(Offscreen)]
+#[require(Offscreen, super::SirenLane)]
 pub struct PoliceCar {
     pub state: PoliceCarState,
     /// Kinds of the cops aboard.

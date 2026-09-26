@@ -12,7 +12,9 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use common::*;
 use gta_sim::{
-    police::{CopState, CrewOf, PoliceCar, PoliceCarState, PoliceDispatcher, PoliceUnit},
+    police::{
+        CopState, CrewOf, PoliceCar, PoliceCarState, PoliceDispatcher, PoliceUnit, SirenLane,
+    },
     vehicle::Autopilot,
     world::HospitalSpawn,
 };
@@ -392,9 +394,13 @@ fn car_chases_a_driver() {
             if c.state == PoliceCarState::Chase {
                 assert!(d <= chase + 1.0, "chasing from {d} m");
                 let target = app.world().get::<Autopilot>(police).unwrap().target;
+                // With the sirens on it may take the opposite lane (TASK-032): the target is the
+                // player shifted by its lane offset (street lane pitch 3.25 m).
+                let lane = app.world().get::<SirenLane>(police).unwrap().offset;
+                let off = (target - me).with_y(0.0).length();
                 assert!(
-                    (target - me).with_y(0.0).length() < 0.5,
-                    "chase target {target}, player {me}"
+                    (off - lane.abs() * 3.25).abs() < 0.5,
+                    "chase target {target}, player {me}, lane offset {lane}"
                 );
                 chased = true;
             }

@@ -5,19 +5,21 @@ use super::cars::{
     CarSenses, CrewOf, PoliceCar, PoliceCarRng, PoliceCarRoute, PoliceCarState, crews_outside,
     dismount, next_car_state,
 };
+use super::siren::{SirenLane, choose_lane, corridor_obstacle, lane_frame, sirens_on, strip_at};
 use super::{EscalationConfig, PoliceUnit};
 use crate::character::{CharacterControlConfig, Dead, HealthConfig, LocomotionConfig};
 use crate::combat::{WeaponsConfig, aim_yaw};
 use crate::layers::GameLayer;
 use crate::navigation::flat_distance;
+use crate::occupancy::{RoadBody, RoadOccupancy};
 use crate::player::Player;
-use crate::traffic::{Segment, TrafficConfig, TrafficGraph, idm::idm_acceleration};
+use crate::traffic::{
+    Segment, TrafficConfig, TrafficGraph, idm::idm_acceleration, lateral::right_of,
+};
 use crate::vehicle::{Autopilot, Driving, VehicleConfig, follow_speed};
 use crate::wanted::{WantedConfig, WantedLevel, cop_sees, eye};
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 
 /// Integer centimetres: `astar` needs an `Ord` cost.
 fn cm(metres: f32) -> u32 {
@@ -63,84 +65,6 @@ pub fn find_lane_route(
         },
     )
     .map(|(path, _)| path)
-}
-
-/// Cost of a lane step in `find_lane_route`: the connector and the lane it leads to.
-fn step_cost(graph: &TrafficGraph, connector: u32) -> u32 {
-    let conn = graph.connector(connector);
-    cm(conn.length + graph.lane(conn.to_lane).length)
-}
-
-/// Route cost from every lane to the goal of `find_lane_route` (one reverse Dijkstra over the lane
-/// graph, same costs): 0 on a lane passing within `radius` of `goal_point`, `u32::MAX` if unreachable.
-pub(super) fn lane_costs_to(graph: &TrafficGraph, goal_point: Vec3, radius: f32) -> Vec<u32> {
-    let n = graph.lanes().len();
-    let mut cost = vec![u32::MAX; n];
-    let mut incoming: Vec<Vec<(u32, u32)>> = vec![Vec::new(); n];
-    for (k, conn) in graph.connectors().iter().enumerate() {
-        incoming[conn.to_lane as usize].push((conn.from_lane, step_cost(graph, k as u32)));
-    }
-    let mut heap = BinaryHeap::new();
-    for lane in 0..n as u32 {
-        if lane_distance(graph, lane, goal_point, 0.0) <= radius {
-            cost[lane as usize] = 0;
-            heap.push(Reverse((0u32, lane)));
-        }
-    }
-    while let Some(Reverse((at, lane))) = heap.pop() {
-        if at > cost[lane as usize] {
-            continue;
-        }
-        for &(from, step) in &incoming[lane as usize] {
-            let via = at.saturating_add(step);
-            if via < cost[from as usize] {
-                cost[from as usize] = via;
-                heap.push(Reverse((via, from)));
-            }
-        }
-    }
-    cost
-}
-
-/// Whether no AI traffic car (`traffic`: segment and s) stands ahead of a car `s` m along `lane` on its
-/// cheapest lane route (`costs` from `lane_costs_to`) to `goal_point`, up to the goal's projection on
-/// the last lane. Police cars cannot pass traffic: one spawned behind a queue never closes in.
-pub(super) fn approach_clear(
-    graph: &TrafficGraph,
-    costs: &[u32],
-    traffic: &[(Segment, f32)],
-    (lane, s): (u32, f32),
-    goal_point: Vec3,
-    radius: f32,
-) -> bool {
-    let queued = |seg: Segment, from: f32, to: f32| {
-        traffic
-            .iter()
-            .any(|&(at, ts)| at == seg && (from..=to).contains(&ts))
-    };
-    let (mut lane, mut from) = (lane, s);
-    for _ in 0..graph.lanes().len() {
-        let l = graph.lane(lane);
-        if lane_distance(graph, lane, goal_point, from) <= radius {
-            let goal_s = (goal_point - l.from).dot(l.dir).clamp(from, l.length);
-            return !queued(Segment::Lane(lane), from, goal_s);
-        }
-        if queued(Segment::Lane(lane), from, f32::INFINITY) {
-            return false;
-        }
-        let next = l.out.iter().copied().min_by_key(|&c| {
-            costs[graph.connector(c).to_lane as usize].saturating_add(step_cost(graph, c))
-        });
-        let Some(c) = next else {
-            return false;
-        };
-        let to = graph.connector(c).to_lane;
-        if costs[to as usize] == u32::MAX || queued(Segment::Connector(c), 0.0, f32::INFINITY) {
-            return false;
-        }
-        (lane, from) = (to, 0.0);
-    }
-    false
 }
 
 /// The lane under a car at `position` heading along `forward`: the nearest lane not pointing against it.
@@ -299,7 +223,12 @@ pub(super) fn drive_police_cars(
         Res<CharacterControlConfig>,
         Res<WeaponsConfig>,
     ),
-    state: (Res<TrafficGraph>, Res<WantedLevel>, Res<Time<Fixed>>),
+    state: (
+        Res<TrafficGraph>,
+        Res<WantedLevel>,
+        Res<Time<Fixed>>,
+        Res<RoadOccupancy>,
+    ),
     mut rng: ResMut<PoliceCarRng>,
     player: Query<(Entity, &Position, Option<&Driving>, Has<Dead>), With<Player>>,
     speeds: Query<&LinearVelocity>,
@@ -310,12 +239,13 @@ pub(super) fn drive_police_cars(
         &mut Autopilot,
         &Position,
         &Rotation,
+        &mut SirenLane,
     )>,
     crews: Query<(Entity, &CrewOf, &PoliceUnit)>,
 ) {
     let (esc, wanted_cfg, vehicle, traffic, loco) = configs;
     let (health, handle, weapons) = crew_cfg;
-    let (graph, wanted, time) = state;
+    let (graph, wanted, time, road) = state;
     let dt = time.delta_secs();
     let c = &esc.car;
     let half = vehicle.half_extents();
@@ -331,7 +261,8 @@ pub(super) fn drive_police_cars(
     let mut searches = 0;
     let slab = Collider::cuboid(2.0 * half.x, 2.0 * half.y, 0.1);
     for entity in order {
-        let Ok((_, mut car, mut route, mut pilot, position, rotation)) = cars.get_mut(entity)
+        let Ok((_, mut car, mut route, mut pilot, position, rotation, mut lane)) =
+            cars.get_mut(entity)
         else {
             continue;
         };
@@ -568,10 +499,41 @@ pub(super) fn drive_police_cars(
             }
             _ => (position + forward * lookahead, 0.0, None),
         };
-        // IDM on whatever stands ahead (the player's car is rammed in a chase).
+        // Sirens on: any lane where the road ahead is clearer (the opposite one included), IDM on the
+        // corridor of the chosen lane.
+        let frame = sirens_on(car.state)
+            .then(|| lane_frame(&graph, position, forward))
+            .flatten();
+        let nose = position + forward * half.z;
+        let skip = |b: &RoadBody| b.entity == entity || Some(b.entity) == ignore;
+        let strip = |f, o| strip_at(f, nose, o, traffic.sense_distance, half.x);
+        // Lanes are compared from the tail (a car still alongside keeps the lane occupied) over the
+        // sensing reach, or farther at speed: a lane hold plus a comfortable stop ahead.
+        let decide = v.max(0.0) * c.sirens.lane_hold_seconds
+            + v * v / (2.0 * traffic.idm.comfortable_deceleration);
+        let (tail, reach) = (
+            position - forward * half.z,
+            traffic.sense_distance.max(decide) + 2.0 * half.z,
+        );
+        let lanes = |f, o| strip_at(f, tail, o, reach, half.x);
+        match frame {
+            Some(f) => choose_lane(&road, &mut lane, &c.sirens, |o| lanes(f, o), skip, dt),
+            None => *lane = SirenLane::default(),
+        }
+        let target = frame.map_or(target, |(_, dir, pitch)| {
+            target + right_of(dir) * lane.offset * pitch
+        });
         if speed > 0.0
+            && let Some(f) = frame
+        {
+            if let Some((gap, other)) = corridor_obstacle(&road, &strip(f, lane.offset), skip) {
+                let a = idm_acceleration(v.max(0.0), speed, Some((gap, v - other)), &traffic.idm);
+                speed = speed.min(follow_speed(&vehicle, v.max(0.0), a, dt));
+            }
+        } else if speed > 0.0
             && let Ok(direction) = Dir3::new(forward.with_y(0.0))
         {
+            // IDM on whatever stands ahead (the player's car is rammed in a chase).
             let filter = SpatialQueryFilter::from_mask([GameLayer::Character, GameLayer::Vehicle]);
             // Turning, a straight cast would see the cars waiting at the other stop lines.
             let sense = if turning {
@@ -598,62 +560,5 @@ pub(super) fn drive_police_cars(
         }
         pilot.target = target;
         pilot.speed = speed;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::{ConfigRoot, load_config};
-    use crate::traffic::TRAFFIC_CONFIG;
-
-    /// A square loop of side 80 (lanes 0..4 clockwise from the north side, heading +X, -Z, -X, +Z).
-    fn square() -> TrafficGraph {
-        let root = ConfigRoot(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").into());
-        let cfg: TrafficConfig =
-            load_config(&root, TRAFFIC_CONFIG).expect("GATE BROKEN: traffic.ron");
-        let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
-        let lanes = vec![
-            (at(-37.0, 40.0), at(37.0, 40.0), 12.0, 0),
-            (at(40.0, 37.0), at(40.0, -37.0), 12.0, 1),
-            (at(37.0, -40.0), at(-37.0, -40.0), 12.0, 2),
-            (at(-40.0, -37.0), at(-40.0, 37.0), 12.0, 3),
-        ];
-        TrafficGraph::new(
-            lanes,
-            &[(0, 1, 0), (1, 2, 1), (2, 3, 2), (3, 0, 3)],
-            &cfg,
-            1.0,
-        )
-        .expect("GATE BROKEN: square graph")
-    }
-
-    /// Start 10 m along lane 0, the goal by the middle of lane 2 (x = 0): the route runs lane 0,
-    /// connector 0, lane 1, connector 1, lane 2 up to s = 37.
-    #[test]
-    fn approach_clear_rows() {
-        let graph = square();
-        let goal = Vec3::new(0.0, 0.0, -44.0);
-        let radius = 4.0 + 10.0;
-        let costs = lane_costs_to(&graph, goal, radius);
-        assert_eq!(costs[2], 0);
-        assert!(costs[1] < costs[0] && costs[0] < costs[3], "{costs:?}");
-        let c0 = graph.lane(0).out[0];
-        let rows: [(&[(Segment, f32)], bool); 7] = [
-            (&[], true),
-            (&[(Segment::Lane(0), 5.0)], true),
-            (&[(Segment::Lane(0), 30.0)], false),
-            (&[(Segment::Connector(c0), 1.0)], false),
-            (&[(Segment::Lane(1), 60.0)], false),
-            (&[(Segment::Lane(2), 20.0)], false),
-            (&[(Segment::Lane(2), 50.0), (Segment::Lane(3), 5.0)], true),
-        ];
-        for (traffic, clear) in rows {
-            assert_eq!(
-                approach_clear(&graph, &costs, traffic, (0, 10.0), goal, radius),
-                clear,
-                "traffic {traffic:?}"
-            );
-        }
     }
 }

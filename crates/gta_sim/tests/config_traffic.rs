@@ -90,6 +90,32 @@ fn traffic_rules_fire_with_their_keyword() {
         ),
         ("max_cars: 24", "max_cars: 0", "bubble.max_cars"),
         (
+            "stuck_despawn_seconds: 45.0",
+            "stuck_despawn_seconds: 0.0",
+            "bubble.stuck_despawn_seconds",
+        ),
+        (
+            "stuck_in_view_distance: 40.0",
+            "stuck_in_view_distance: -40.0",
+            "bubble.stuck_in_view_distance -40",
+        ),
+        // Past the road snapshot radius (90 + 60 m) no body stands in it.
+        (
+            "stuck_in_view_distance: 40.0",
+            "stuck_in_view_distance: 150.0",
+            "bubble.stuck_in_view_distance 150 must be < in_view.despawn + look_ahead",
+        ),
+        (
+            "yield_distance: 40.0",
+            "yield_distance: -1.0",
+            "sirens.yield_distance",
+        ),
+        (
+            "timeout_seconds: 8.0",
+            "timeout_seconds: 0.0",
+            "sirens.timeout_seconds",
+        ),
+        (
             "spawns_per_tick: 1, initial",
             "spawns_per_tick: 0, initial",
             "bubble.spawns_per_tick",
@@ -110,6 +136,61 @@ fn traffic_rules_fire_with_their_keyword() {
             "horizon_seconds: 0.1",
             "horizon_seconds: 0.02",
             "two fixed ticks",
+        ),
+        (
+            "rate_at_rest: 0.8",
+            "rate_at_rest: 0.0",
+            "lateral.rate_at_rest",
+        ),
+        ("slope: 0.15", "slope: -0.15", "lateral.slope"),
+        (
+            "yaw_rate_deg: 60.0",
+            "yaw_rate_deg: NaN",
+            "lateral.yaw_rate_deg",
+        ),
+        (
+            "recover: (seconds: 1.5",
+            "recover: (seconds: 0.0",
+            "recover.seconds",
+        ),
+        (
+            "give_up_seconds: 10.0",
+            "give_up_seconds: -1.0",
+            "recover.give_up_seconds",
+        ),
+        (
+            "max_tilt_deg: 10.0",
+            "max_tilt_deg: 95.0",
+            "recover.max_tilt_deg",
+        ),
+        // Hysteresis laws: skin wider than the switch's (0.1), horizon no shorter (0.1 s).
+        (
+            "skin: 0.4",
+            "skin: 0.09",
+            "recover.skin 0.09 must be > switch.skin",
+        ),
+        (
+            "vehicle_seconds: 3.0",
+            "vehicle_seconds: 0.0",
+            "pass.vehicle_seconds",
+        ),
+        ("clearance: 0.5", "clearance: -0.5", "pass.clearance"),
+        ("speed: 6.0)", "speed: NaN)", "pass.speed"),
+        // A trigger at IDM's jam gap never fires; a person is waited for at least as long as a car.
+        (
+            "trigger_gap: 10.0",
+            "trigger_gap: 1.9",
+            "pass.trigger_gap 1.9 must be > idm.min_gap",
+        ),
+        (
+            "character_seconds: 6.0",
+            "character_seconds: 2.9",
+            "pass.character_seconds 2.9 must be >= pass.vehicle_seconds",
+        ),
+        (
+            "horizon_seconds: 0.5",
+            "horizon_seconds: 0.09",
+            "recover.horizon_seconds 0.09 must be >= switch.horizon_seconds",
         ),
     ];
     for (i, (from, to, keyword)) in rows.into_iter().enumerate() {
@@ -216,6 +297,28 @@ fn t15_police_rules_fire_with_their_keyword() {
             "junction_factor: 3.0",
             "junction_factor: 0.5",
             "car.junction_factor 0.5 must be finite and >= 1",
+        ),
+        (
+            "lane_offsets: [-1.0]",
+            "lane_offsets: [-1.5]",
+            "car.sirens.lane_offsets -1.5 must be finite",
+        ),
+        (
+            "lane_hold_seconds: 1.0",
+            "lane_hold_seconds: -1.0",
+            "car.sirens.lane_hold_seconds",
+        ),
+        ("lane_gain: 5.0", "lane_gain: NaN", "car.sirens.lane_gain"),
+        // Shares sum to 1 (0.5 + 0.3 + 0.4 = 1.2); ahead_deg below behind_deg (135).
+        (
+            "spawn_sectors: (ahead: 0.3",
+            "spawn_sectors: (ahead: 0.5",
+            "car.spawn_sectors shares",
+        ),
+        (
+            "ahead_deg: 45.0",
+            "ahead_deg: 140.0",
+            "car.spawn_sectors must satisfy 0 < ahead_deg 140",
         ),
     ];
     for (i, (from, to, keyword)) in rows.into_iter().enumerate() {

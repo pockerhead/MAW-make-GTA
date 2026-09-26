@@ -8,6 +8,7 @@ pub mod flow;
 pub mod gang;
 pub mod layers;
 pub mod navigation;
+pub mod occupancy;
 pub mod perception;
 pub mod player;
 pub mod police;
@@ -32,6 +33,7 @@ use config::{ConfigError, ConfigRoot, load_config};
 use flow::{FlowPlugin, RESPAWN_CONFIG, RespawnConfig};
 use gang::{GANG_CONFIG, GangConfig, GangPlugin};
 use navigation::{NAVIGATION_CONFIG, NavigationConfig, NavigationPlugin};
+use occupancy::OccupancyPlugin;
 use perception::{PERCEPTION_CONFIG, PerceptionConfig, PerceptionPlugin};
 use player::PlayerPlugin;
 use police::{EscalationConfig, POLICE_CONFIG, PolicePlugin};
@@ -204,7 +206,7 @@ pub fn compose_sim(
             WantedPlugin,
         ));
     // Outside the tuple: `Plugins` is implemented for tuples of at most 15.
-    app.add_plugins((VehiclePlugin, TrafficPlugin));
+    app.add_plugins((VehiclePlugin, TrafficPlugin, OccupancyPlugin));
     Ok(())
 }
 

@@ -29,7 +29,16 @@
     car: (crew: 2, spawn_ring: (30.0, 60.0), spawns_per_tick: 1, pursuit_speed: 20.0, turn_speed: 8.0,
           dismount_distance: 20.0, direct_chase_distance: 40.0, stopped_seconds: 1.0, reboard_distance: 25.0,
           reboard_timeout_seconds: 10.0, route_refresh_seconds: 1.0, routes_per_tick: 1, blocked_seconds: 2.0,
-          goal_margin: 10.0, pull_over: 3.25, moving_seconds: 2.0, junction_factor: 3.0),
+          goal_margin: 10.0, pull_over: 3.25, moving_seconds: 2.0, junction_factor: 3.0,
+          // Sirens on (responding, chasing): lateral positions in lane pitches right of the lane line
+          // it may take (-1.0: the opposite lane centre, 1.275 m clear of a street car yielded by its
+          // 0.425 m slack; -0.7 would leave 0.30 m and still sit in the opposite lane), kept at least
+          // lane_hold_seconds; leaving its own lane needs lane_gain m more clear road, s / m.
+          sirens: (lane_offsets: [-1.0], lane_hold_seconds: 1.0, lane_gain: 5.0),
+          // A deliberate cheat (GDD 5.3): while the player drives, cars spawn ahead of (within
+          // ahead_deg of his heading), beside and behind (past behind_deg) him by these shares;
+          // spawns stay hidden and within the per-star car caps.
+          spawn_sectors: (ahead: 0.3, beside: 0.3, behind: 0.4, ahead_deg: 45.0, behind_deg: 135.0)),
     arrest: (
         distance: 1.5,            // m: a cop this close holds the player (GDD §6.4)
         stand_distance: 1.0,      // m: an arresting cop stops here
