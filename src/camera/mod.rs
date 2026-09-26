@@ -1,4 +1,6 @@
 mod config;
+#[cfg(test)]
+mod hide_gate;
 pub use config::{CAMERA_CONFIG, CameraConfig};
 
 use crate::input::CursorCaptured;
@@ -53,6 +55,9 @@ impl Plugin for CameraPlugin {
                 PostUpdate,
                 (
                     follow_player.before(TransformSystems::Propagate),
+                    hide_player_near_camera
+                        .after(follow_player)
+                        .before(TransformSystems::Propagate),
                     publish_camera_view
                         .after(follow_player)
                         .run_if(any_with_component::<Player>),
@@ -224,6 +229,26 @@ pub fn follow_player(
     aim.origin = camera_transform.translation;
     aim.direction = rotation * Vec3::NEG_Z;
     camera_transform.rotation = rotation * Quat::from_rotation_x(recoil.pitch) * shake.rotation;
+}
+
+/// Hides the player body (its model and the gun in its hand inherit it) while the camera is pushed
+/// into it; the band past the threshold keeps a hovering camera from toggling it every frame.
+fn hide_player_near_camera(
+    config: Res<CameraConfig>,
+    camera: Single<&Transform, With<OrbitCamera>>,
+    player: Single<(&Transform, &mut Visibility), With<Player>>,
+) {
+    let (body, mut visibility) = player.into_inner();
+    let distance = camera.translation.distance(body.translation);
+    let limit = match *visibility {
+        Visibility::Hidden => config.hide_player_distance + config.hide_player_band,
+        _ => config.hide_player_distance,
+    };
+    visibility.set_if_neq(if distance < limit {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    });
 }
 
 /// Hands the sim the camera's view cone (final pose, recoil and shake included) for off-screen spawning.

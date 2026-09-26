@@ -21,4 +21,8 @@
     car_pitch_deg: -8.0,
     car_yaw_half_life: 0.2,
     car_look_return: 1.5,
+    // Camera pushed into the player (back to a wall): hide the model below this camera-to-body
+    // distance, m; show it again only past distance + band (no flicker at the threshold).
+    hide_player_distance: 1.4,
+    hide_player_band: 0.3,
 )

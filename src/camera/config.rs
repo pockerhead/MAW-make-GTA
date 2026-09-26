@@ -33,6 +33,10 @@ pub struct CameraConfig {
     pub car_yaw_half_life: f32,
     /// Seconds without mouse look before the camera returns behind the car.
     pub car_look_return: f32,
+    /// Camera closer than this to the player body (m) hides the player model; it shows again only
+    /// past `hide_player_distance + hide_player_band`, so the threshold never flickers.
+    pub hide_player_distance: f32,
+    pub hide_player_band: f32,
 }
 
 impl CameraConfig {
@@ -47,6 +51,8 @@ impl CameraConfig {
             ("car_pivot_height", self.car_pivot_height),
             ("car_yaw_half_life", self.car_yaw_half_life),
             ("car_look_return", self.car_look_return),
+            ("hide_player_distance", self.hide_player_distance),
+            ("hide_player_band", self.hide_player_band),
         ] {
             if !(value.is_finite() && value > 0.0) {
                 return Err(format!("{field} must be a finite number > 0, got {value}"));
