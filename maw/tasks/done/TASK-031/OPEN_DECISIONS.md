@@ -1,0 +1,8 @@
+- 2026-09-26: playtest stopped after 2/9 sessions with a MAJOR finding F1 (traffic gridlock with no player input). Decision: fix first (TASK-033 small-fix, reservation-as-lease rule), then resume the playtest on the fixed build (a gridlocked city would skew the remaining 7 sessions). QA settings dir residue (invert_y) deleted by the orchestrator.
+- 2026-09-26: playtest finished 9/9 on the fixed build 181caa1. Triage (orchestrator):
+  - M1 MAJOR (abandoned or bumped car freezes traffic; bumped traffic cars stay `Dynamic` forever) → meets TASK-032's run condition. Folded into TASK-032: a bumped traffic car recovers to its lane (GTA drivers drive on) or becomes a plain lane obstacle that the shared "pull to curb + pass" rule handles. The M1 repro R1 becomes a TASK-032 gate.
+  - M2 MINOR (camera at 0.5 m inside the player model near walls) → new small-fix TASK-034: fade/hide the player model when the camera is closer than a data threshold.
+  - M3 MINOR (1★ patrol kills a standing player in ~3 s, a traffic car one-shots from full HP) → new small-fix TASK-035: balance by data with a headless time-to-kill gate.
+  - M4 (two concurrent BRP screenshots panic the game) → QA-harness rule in `agents/qa.md`, no task.
+  - P1 (no traffic lights) → outside GDD, noted in narrative-graph backlog. P2, P3 unconfirmed → noted only.
+  - Order: TASK-034 → TASK-035 (cheap, independent of traffic) → TASK-032 → TASK-028.

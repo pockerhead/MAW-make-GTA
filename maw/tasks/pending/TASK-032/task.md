@@ -2,7 +2,7 @@
 
 Type: feature
 Mode: full
-Priority: medium
+Priority: high
 Branch: feature/oncoming-lane
 Domains: bevy-ecs, gates, game-design
 
@@ -30,3 +30,4 @@ Do NOT build a general oncoming-lane reservation first. Redesign around two idea
 Acceptance adds: the chase metric from t15 over seeds 1-3 (pressure rate ≥ X/Y), plus the shared-occupancy migration gates (each consumer sees cars and characters).
 - From TASK-017 bench: the bench car sits in traffic queues ~45 % of the measured window (no go-around/overtake) — evidence for the redesign.
 - From TASK-033 (known residue): the junction lease lapses only on the source lane before the stop line; a holder standing ON its connector or with its nose past the stop line (e.g. behind a player-parked car in the box, outside the AI occupancy) keeps its grant indefinitely — the shared occupancy rule should cover it.
+- From TASK-031 playtest M1 (MAJOR, the run condition above is met): an abandoned player car or a player-bumped traffic car freezes nearby traffic for 100-160 s (columns up to 16 cars). Traffic cars switched to `Dynamic` by a hit never resume (87-155 s). Scope adds: a bumped traffic car recovers to its lane and drives on once upright and slow (GTA drivers do), or it becomes a plain lane obstacle handled by the shared "pull to curb + pass" rule. Gate: the M1 repro R1 (`D:/test-gta-like/maw/tasks/done/TASK-031/scratch/tools/repro_abandoned_car.py`, seed 1: park at a junction queue tail, step 12 m away, stand 150 s) → no traffic car stands > 30 s; also civilians walk around the abandoned car (unconfirmed side symptom).

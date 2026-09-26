@@ -1,1 +1,0 @@
-- 2026-09-26: playtest stopped after 2/9 sessions with a MAJOR finding F1 (traffic gridlock with no player input). Decision: fix first (TASK-033 small-fix, reservation-as-lease rule), then resume the playtest on the fixed build (a gridlocked city would skew the remaining 7 sessions). QA settings dir residue (invert_y) deleted by the orchestrator.
