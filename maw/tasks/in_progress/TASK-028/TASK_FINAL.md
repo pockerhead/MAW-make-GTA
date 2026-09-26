@@ -24,3 +24,9 @@ Decide and document (ADR): trigger (tag `v*` push → release; plus manual `work
 - blocked by TASK-017
 - blocked by TASK-031 (release after the playtest triage)
 - blocked by TASK-029 (reuses its CI setup: toolchain, caches, asset fetch)
+
+### Resolved questions (orchestrator, after PLAN.md)
+- Q1, Windows console window: keep the console in this release pipeline for now, so logs are visible and the local Windows smoke can read them. Hiding it (`windows_subsystem = "windows"` in release plus a log file) is a separate polish item before v0.1.0 final.
+- Q2: keep the paths filter. Release builds run on tags, on dispatch and on pushes that touch release files, not on every push to main.
+- Q3: the orchestrator updates the AGENTS.md CI rule at closure: "the 5 test workflows success on the merge commit; release.yml success on its own triggers".
+- Q4: do not add a LICENSE for the game code. Choosing a licence is the owner's legal choice, not a pipeline decision. The README states "no licence specified yet" next to the third-party attribution.

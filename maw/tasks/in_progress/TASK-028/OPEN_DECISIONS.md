@@ -1,0 +1,1 @@
+- 2026-09-27: planner Q1-Q4 resolved (keep the console in rc; keep the paths filter; the orchestrator updates the AGENTS CI rule; no LICENSE, the owner's choice). The rc tag push is in scope (the owner asked for release CI).
