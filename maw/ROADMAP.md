@@ -1,6 +1,5 @@
 # Roadmap graph (derived from task.md Dependencies — task.md is source of truth)
 
-TASK-028  (all blockers done: TASK-017, TASK-029, TASK-031)
 TASK-036  (all blockers done: TASK-032)
 TASK-037  (all blockers done: TASK-032)
 
