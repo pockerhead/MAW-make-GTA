@@ -174,8 +174,8 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
 
 ## Что проверяет CI
 
-GitHub Actions на Linux (ubuntu-latest, Rust 1.95.0), на каждый push и PR. Пять workflow, у каждого свой бейдж
-наверху. Счётчики по состоянию на TASK-029. MAW-стадии по-прежнему гоняют всё это локально на Windows.
+GitHub Actions на Linux (ubuntu-latest, Rust 1.95.0). Пять тестовых workflow идут на каждый push и PR, у каждого
+свой бейдж наверху; `release` идёт на теги `v*` и на изменения файлов релиза. Счётчики по состоянию на TASK-029. MAW-стадии по-прежнему гоняют всё это локально на Windows.
 
 | Workflow | Что запускает | Тесты |
 |---|---|---|
@@ -184,6 +184,7 @@ GitHub Actions на Linux (ubuntu-latest, Rust 1.95.0), на каждый push �
 | citygen gates | `cargo test -p citygen`: генератор города, golden-хеши раскладки | 32 passed, 3 ignored |
 | client gates | `cargo test -p gta_like --bin gta_like`: гейты презентации на MinimalPlugins + GLB Kenney, звук | 77 passed |
 | repo checks | `tree_check.py` (нет `bevy_render` в gta_sim, пины версий), `font_check.py` (глифы UI в Inter), `test_brp.py` | 3 проверки |
+| release | тег `v*`: zip под Linux и Windows (ubuntu-24.04, windows-2025), проверка zip, boot smoke на обеих ОС, `cargo test -p gta_sim -p citygen`, GitHub Release. Изменения файлов релиза и ручной запуск: только zip артефактами ([ADR-002](docs/decisions/ADR-002-release-ci.md)) | — |
 
 Ассеты CC0 скачиваются `tools/fetch_assets.py` с кэшем и сверяются `--check` до тестов, так что гейты,
 которые без ассетов пропускаются, в CI всегда работают.
@@ -211,7 +212,12 @@ gpt-6-sol — $2 / $10 / $0.20 кэш; gpt-5.6-sol — $4 / $20 / $0.40 кэш. 
 
 ## Запуск
 
-Нужен Rust 1.95 (stable) и Python 3. Из корня репо сначала скачать CC0-ассеты по манифесту
+Готовые сборки лежат на странице [релизов](https://github.com/pockerhead/MAW-make-GTA/releases): по zip на ОС.
+Распаковать и запустить `gta_like.exe` (Windows) или `./gta_like` (Linux); папка `assets/` должна лежать рядом
+с exe. Windows: ставить ничего не надо (CRT слинкован статически), рядом с игрой открывается окно консоли с логами.
+Linux: glibc >= 2.39 (Ubuntu 24.04+), `libasound2`, `libudev1`, драйвер Vulkan, X11 или Wayland.
+
+Из исходников нужен Rust 1.95 (stable) и Python 3. Из корня репо сначала скачать CC0-ассеты по манифесту
 (в git их нет; в релизах они лежат в zip):
 
 ```
@@ -233,6 +239,6 @@ cargo test -p gta_sim         # headless-гейты геймплея
 
 QA запущенного билда: `python tools/qa/scenarios/t1.py --out <dir>`, `t2.py`, `t3.py`, `t4.py`, `t5.py` … `t16.py`, `t16_s1.py` (фича `dev`, BRP на порту 15702); N прогонов подряд — `python tools/qa/repeat.py t9 --runs 20`.
 
-Бинарные ассеты (модели, текстуры, звук) в репо не
-хранятся: они лежат в zip релизов рядом с exe. Для сборки из исходников папку `assets/` берём из
-последнего релиза.
+Бинарные ассеты (модели, текстуры, звук) в репо не хранятся. Для сборки из исходников их качает
+`python tools/fetch_assets.py`; в zip релизов они лежат вместе с файлами лицензий паков и
+`assets/third_party/manifest.ron` (атрибуция). Лицензия на код игры пока не выбрана.
