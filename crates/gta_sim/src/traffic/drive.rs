@@ -278,6 +278,7 @@ pub(super) fn advance_traffic(
             )
             .is_empty()
     };
+    let lease_ticks = (cfg.reservation_timeout / dt).ceil() as u64;
     junction::update(
         &graph,
         &mut junctions,
@@ -286,6 +287,7 @@ pub(super) fn advance_traffic(
         idm,
         half_length,
         tick,
+        (lease_ticks, vcfg.hold_speed),
         &mut rng,
         &lane_start_free,
     );
@@ -347,7 +349,7 @@ pub(super) fn advance_traffic(
             obstacle(gap, other);
         }
         if let (Segment::Lane(l), false) = (car.segment, granted) {
-            obstacle(graph.lane(l).length - (car.s + half_length), 0.0);
+            obstacle(graph.lane(l).stop - (car.s + half_length), 0.0);
         }
         let (_, tangent) = graph.pose(car.segment, car.s);
         let reach = match car.segment {
@@ -416,7 +418,7 @@ pub(super) fn advance_traffic(
         for _ in 0..3 {
             let length = graph.length(seg);
             match seg {
-                Segment::Lane(_) => {
+                Segment::Lane(l) => {
                     if let (true, Some(c)) = (granted, car.next)
                         && s > length
                     {
@@ -425,8 +427,9 @@ pub(super) fn advance_traffic(
                         continue;
                     }
                     // A driver never runs the stop line.
-                    if !granted && s > length - half_length {
-                        s = (length - half_length).max(car.s);
+                    let stop = graph.lane(l).stop - half_length;
+                    if !granted && s > stop {
+                        s = stop.max(car.s);
                         v = 0.0;
                     }
                 }

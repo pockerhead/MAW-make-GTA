@@ -76,6 +76,11 @@
   each other (t9 flake). Buffer a fire press during the cooldown (`fire_buffer_seconds`), clear it on every
   transition that changes what the press would mean (seat, weapon switch, stagger, reload, Wasted/Busted).
 
+- 2026-09-26 (TASK-033) — city traffic gridlocked with nobody playing (found only by the agent playtest): a follower
+  held a junction grant behind an ungranted lane head (circular wait), cars stopped ON crosswalks (walkers and cars
+  waited on each other), grants never expired. Rules: only a lane's first car queues; a grant is a lease that lapses
+  to a conflicting waiter; the stop line is derived per lane from the crossing. IDM acceleration 1.5 (0.73 held a box 8 s).
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

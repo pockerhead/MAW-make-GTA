@@ -20,6 +20,9 @@ pub struct TrafficLane {
     /// Unit direction.
     pub dir: Vec3,
     pub length: f32,
+    /// Where a car without a grant stops its nose, m along the lane (the lane end, or before the
+    /// pedestrian crossing there).
+    pub stop: f32,
     /// Desired speed, m/s.
     pub v0: f32,
     /// Intersection at the lane end.
@@ -201,6 +204,7 @@ impl TrafficGraph {
                 to,
                 dir: (to - from) / length,
                 length,
+                stop: length,
                 v0,
                 end_node,
                 out: Vec::new(),
@@ -313,7 +317,25 @@ impl TrafficGraph {
                 ))
             })
             .collect();
-        Self::new(lanes, &connectors, cfg, half_width)
+        let mut graph = Self::new(lanes, &connectors, cfg, half_width)?;
+        let walks = &layout.sidewalks;
+        for lane in &mut graph.lanes {
+            let (a, r) = (flat(lane.from), flat(lane.to - lane.from));
+            for &(i, j) in &walks.edges {
+                let p = walks.nodes[i as usize];
+                let Some(t) = crossing(a, r, p, walks.nodes[j as usize] - p) else {
+                    continue;
+                };
+                // A waiting car must not stand on the crosswalk: walkers press into its nose and it
+                // waits for them.
+                if t > 0.5 {
+                    lane.stop = lane
+                        .stop
+                        .min((t * lane.length - cfg.crossing_clearance).max(0.0));
+                }
+            }
+        }
+        Ok(graph)
     }
 
     pub fn lanes(&self) -> &[TrafficLane] {
@@ -386,6 +408,17 @@ impl TrafficGraph {
             })
             .min_by(|a, b| a.2.total_cmp(&b.2))
     }
+}
+
+/// Parameter along `r` where the segment `a + r·t` crosses `p + d·u` (both within their ends).
+fn crossing(a: Vec2, r: Vec2, p: Vec2, d: Vec2) -> Option<f32> {
+    let den = r.perp_dot(d);
+    if den.abs() < f32::EPSILON {
+        return None;
+    }
+    let t = (p - a).perp_dot(d) / den;
+    let u = (p - a).perp_dot(r) / den;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some(t)
 }
 
 /// Lane slot from the lateral offset of a lane to its road's centre line: 0 = inner.

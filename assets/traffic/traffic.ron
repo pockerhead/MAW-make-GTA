@@ -3,8 +3,10 @@
 (
     // IDM start values (GDD §5.2, traffic-simulation.de/info/info_IDM.html): time headway T, s;
     // maximum acceleration a and comfortable deceleration b, m/s²; jam distance s0, m.
+    // a retuned 0.73 -> 1.5 (TASK-033): from rest a car held a junction ~8 s, so a busy junction
+    // saturated with nobody playing.
     // max_deceleration: the IDM result is clamped at -this, m/s² (a car never brakes harder).
-    idm: (time_headway: 1.5, acceleration: 0.73, comfortable_deceleration: 1.67, min_gap: 2.0, max_deceleration: 8.0),
+    idm: (time_headway: 1.5, acceleration: 1.5, comfortable_deceleration: 1.67, min_gap: 2.0, max_deceleration: 8.0),
     // Desired speed v0 by road class, m/s (GDD §5.2: street 12, avenue 16).
     desired_speed: (avenue: 16.0, street: 12.0),
     turn_speed: 6.0,                  // v0 on an intersection connector, m/s
@@ -13,6 +15,14 @@
     turn_sense_distance: 6.0,         // forward cast on a connector (a straight cast would see corner sidewalks), m
     connector_samples: 8,             // polyline points per connector curve
     conflict_margin: 0.3,             // m added to the car width when two connector lines count as crossing
+    // A junction grant is a lease: it lapses when its holder has stood (below vehicle hold_speed) this
+    // long before the stop line while a car waits for a conflicting connector; the holder queues
+    // again behind that waiter, s.
+    reservation_timeout: 5.0,
+    // The stop line sits this far before the centre line of the pedestrian crossing at a lane end, so
+    // a waiting car leaves the crosswalk free; more than a walker's reach off that line (navigation
+    // keep_right 0.5 + capsule radius 0.3), m.
+    crossing_clearance: 1.5,
     // Vermeij bands (GTA III/VC/SA, GDD §5.2): in frame spawn at 70 m / despawn at 90 m, off frame
     // 15 / 25 m, despawn only after 2 s off frame; cap 24 cars in the bubble.
     // spawn_spacing: spawn points every this many metres along a lane.

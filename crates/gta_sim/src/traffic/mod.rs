@@ -108,6 +108,8 @@ pub struct Junction {
     pub occupants: Vec<(u32, Entity)>,
     /// (tick joined, car, connector) of the cars waiting at a stop line.
     pub waiters: Vec<(u64, Entity, u32)>,
+    /// Lease of each occupant: the last fixed tick it moved.
+    pub moved: HashMap<Entity, u64>,
 }
 
 /// Intersection reservations by node.
@@ -120,6 +122,7 @@ impl TrafficIntersections {
         for junction in self.0.values_mut() {
             junction.occupants.retain(|o| o.1 != car);
             junction.waiters.retain(|w| w.1 != car);
+            junction.moved.remove(&car);
         }
     }
 

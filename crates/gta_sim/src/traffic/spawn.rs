@@ -153,8 +153,8 @@ pub(super) fn spawn_traffic(
     .min(deficit);
     let half = vehicle.half_extents();
     let half_length = half.z;
-    // Distance from a car centred at `s` to where IDM stops it before the lane end (bumper s0 short).
-    let to_stop_line = |length: f32, s: f32| length - s - half_length - idm.min_gap;
+    // Distance from a car centred at `s` to where IDM stops it before the stop line (bumper s0 short).
+    let to_stop_line = |stop: f32, s: f32| stop - s - half_length - idm.min_gap;
     let mut on_lane: HashMap<u32, Vec<f32>> = HashMap::new();
     for car in cars.iter().filter(|c| c.is_ai()) {
         if let Segment::Lane(l) = car.segment {
@@ -185,7 +185,7 @@ pub(super) fn spawn_traffic(
             }
             // Room before the stop line, and a free stretch around the spot.
             let clear = idm.min_gap + l.v0 * idm.time_headway + 2.0 * half_length;
-            to_stop_line(l.length, s) > 0.0
+            to_stop_line(l.stop, s) > 0.0
                 && on_lane
                     .get(&lane)
                     .is_none_or(|cars| cars.iter().all(|&c| (c - s).abs() > clear))
@@ -217,7 +217,7 @@ pub(super) fn spawn_traffic(
         // A car near the lane end starts slow enough to stop comfortably at the line.
         let l = graph.lane(lane);
         let speed =
-            l.v0.min((2.0 * idm.comfortable_deceleration * to_stop_line(l.length, s)).sqrt());
+            l.v0.min((2.0 * idm.comfortable_deceleration * to_stop_line(l.stop, s)).sqrt());
         spawn_traffic_car(
             &mut commands,
             &graph,

@@ -133,6 +133,11 @@
   measure displacement while armed (`moved_armed`). A "dropped click" flake can be game logic (semi-auto press
   inside the cooldown was discarded) — diagnose before blaming the OS/harness.
 
+- 2026-09-26 (TASK-033) — traffic liveness gates need a STATIONARY player facing a junction with the production
+  population and no input (the bubble keeps in-view cars; moving-player probes missed a total gridlock). Gate
+  gridlock by a stand-duration bound derived from broken vs fixed runs, and gate the lease and the stop-line
+  geometry separately; collect all violations before panicking so each assertion can go RED alone.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

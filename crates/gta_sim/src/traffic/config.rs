@@ -80,6 +80,11 @@ pub struct TrafficConfig {
     pub turn_sense_distance: f32,
     pub connector_samples: u32,
     pub conflict_margin: f32,
+    /// A junction grant lapses after its holder stood this long before the stop line while a car
+    /// waits for a conflicting connector, s.
+    pub reservation_timeout: f32,
+    /// A waiting car's nose stays this far before the centre line of a pedestrian crossing, m.
+    pub crossing_clearance: f32,
     pub bubble: BubbleConfig,
     pub switch: SwitchConfig,
     pub lost: LostConfig,
@@ -112,6 +117,8 @@ impl TrafficConfig {
             ("sense_distance", self.sense_distance),
             ("turn_sense_distance", self.turn_sense_distance),
             ("conflict_margin", self.conflict_margin),
+            ("reservation_timeout", self.reservation_timeout),
+            ("crossing_clearance", self.crossing_clearance),
             ("bubble.in_view.spawn", b.in_view.spawn),
             ("bubble.in_view.despawn", b.in_view.despawn),
             ("bubble.off_view.spawn", b.off_view.spawn),

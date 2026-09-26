@@ -290,3 +290,104 @@ fn abandoned_car_past_the_box_holds_no_car_inside() {
         );
     }
 }
+
+/// Lease: the north head holds its grant while a walker stands before its bumper, short of the stop
+/// line; the east head waits for a crossing connector. The grant lapses exactly `reservation_timeout`
+/// after it was given (one tick of slack), the east car gets it and the north car queues again.
+#[test]
+fn contested_lease_lapses_to_the_waiter() {
+    let (lanes, connectors) = plus();
+    let mut app = traffic_floor(lanes, &connectors, &[]);
+    let graph = graph(&app);
+    let half = app
+        .world()
+        .resource::<gta_sim::vehicle::VehicleConfig>()
+        .half_extents()
+        .z;
+    let step = app
+        .world()
+        .resource::<Time<Fixed>>()
+        .timestep()
+        .as_secs_f32();
+    let timeout = app
+        .world()
+        .resource::<gta_sim::traffic::TrafficConfig>()
+        .reservation_timeout;
+    let lease = (timeout / step).ceil() as u32;
+    let find = |from: u32, to: u32| {
+        (0..graph.connectors().len() as u32)
+            .find(|&c| graph.connector(c).from_lane == from && graph.connector(c).to_lane == to)
+            .expect("GATE BROKEN: missing connector")
+    };
+    let (north, east) = (find(0, 6), find(1, 7));
+    assert!(
+        graph.connector(north).conflicts.contains(&east),
+        "GATE BROKEN: the straight connectors do not cross"
+    );
+    // Nose 3 m before the stop line (inside the request distance at rest), a walker 1.8 m before it.
+    let s = graph.lane(0).stop - half - 3.0;
+    let holder = spawn_traffic_car(&mut app, Segment::Lane(0), s, 0.0);
+    app.world_mut().get_mut::<TrafficCar>(holder).unwrap().next = Some(north);
+    let walker_at = graph.pose(Segment::Lane(0), s + half + 1.8).0 + Vec3::Y * 0.05;
+    let walker = spawn_dummy(&mut app, walker_at);
+    let granted = |app: &App, c: u32, e: Entity| {
+        app.world()
+            .resource::<TrafficIntersections>()
+            .granted(0, c, e)
+    };
+    let waits = |app: &App, e: Entity| {
+        app.world()
+            .resource::<TrafficIntersections>()
+            .0
+            .values()
+            .any(|j| j.waiters.iter().any(|w| w.1 == e))
+    };
+    run_ticks(&mut app, 1);
+    assert!(
+        granted(&app, north, holder),
+        "GATE BROKEN: the north car was not granted on its first tick"
+    );
+    let home = position_of(&app, walker);
+    let waiter = spawn_traffic_car(&mut app, Segment::Lane(1), s, 0.0);
+    app.world_mut().get_mut::<TrafficCar>(waiter).unwrap().next = Some(east);
+    let before = stats(&app).casts;
+    let mut lapsed = None;
+    for tick in 1..=2 * lease {
+        run_ticks(&mut app, 1);
+        let car = traffic_car(&app, holder);
+        assert!(
+            car.segment == Segment::Lane(0)
+                && car.s + half <= graph.lane(0).stop
+                && car.speed < 0.5,
+            "GATE BROKEN: tick {tick}: the north car is not standing before its stop line ({car:?})"
+        );
+        assert!(
+            (position_of(&app, walker) - home).with_y(0.0).length() < 0.5,
+            "GATE BROKEN: tick {tick}: the walker moved"
+        );
+        if tick == 64 {
+            assert_traffic_ran(&app, before, 2, 64);
+            assert!(
+                waits(&app, waiter),
+                "GATE BROKEN: the east car does not wait for its connector"
+            );
+        }
+        if !granted(&app, north, holder) {
+            lapsed = Some(tick);
+            break;
+        }
+    }
+    // Granted on the tick before the loop: the lease runs out on loop tick `lease`.
+    let lapsed =
+        lapsed.unwrap_or_else(|| panic!("the north car kept its grant {} ticks", 2 * lease));
+    eprintln!("lease {lease} ticks, the north car lost its grant on tick {lapsed}");
+    assert!(
+        (lease..=lease + 1).contains(&lapsed),
+        "the grant lapsed on tick {lapsed}, the lease is {lease} ticks"
+    );
+    assert!(
+        granted(&app, east, waiter),
+        "the east car did not get the lapsed grant"
+    );
+    assert!(waits(&app, holder), "the north car did not queue again");
+}

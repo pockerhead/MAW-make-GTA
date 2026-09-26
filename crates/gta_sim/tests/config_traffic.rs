@@ -64,6 +64,16 @@ fn traffic_rules_fire_with_their_keyword() {
         ("turn_speed: 6.0", "turn_speed: NaN", "turn_speed"),
         ("look_ahead: 60.0", "look_ahead: -60.0", "look_ahead"),
         (
+            "reservation_timeout: 5.0",
+            "reservation_timeout: 0.0",
+            "reservation_timeout",
+        ),
+        (
+            "crossing_clearance: 1.5",
+            "crossing_clearance: -1.5",
+            "crossing_clearance",
+        ),
+        (
             "offscreen_seconds: 2.0",
             "offscreen_seconds: 0.0",
             "bubble.offscreen_seconds",
