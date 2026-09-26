@@ -1,0 +1,113 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+    branches: ['**']
+    # Not evaluated for tag pushes: a v* tag always builds and publishes.
+    paths:
+      - .github/workflows/release.yml
+      - .github/actions/**
+      - tools/package_release.py
+      - tools/fetch_assets.py
+      - assets/third_party/manifest.ron
+      - Cargo.toml
+      - Cargo.lock
+      - .cargo/**
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, platform: linux, exe: gta_like, deps: "true", rustflags: "" }
+          - { os: windows-2025, platform: windows, exe: gta_like.exe, deps: "false", rustflags: "-C target-feature=+crt-static" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      # Job level so rust-cache (inside the setup action) hashes it; only the msvc target reads it.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          linux-deps: ${{ matrix.deps }}
+          assets: "true"
+      - name: name
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/v* ]]; then v="$GITHUB_REF_NAME"; else v="sha-${GITHUB_SHA::8}"; fi
+          echo "NAME=gta-like-$v-${{ matrix.platform }}-x86_64" >> "$GITHUB_ENV"
+      - name: build (release, no features)
+        shell: bash
+        run: cargo build --release --locked -p gta_like --bin gta_like
+      - name: package + verify
+        shell: bash
+        run: python tools/package_release.py package --exe "target/release/${{ matrix.exe }}" --name "$NAME" --out dist
+      - name: boot smoke (Linux, unpacked zip, xvfb + lavapipe)
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          WGPU_BACKEND: vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb mesa-vulkan-drivers libvulkan1 libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libx11-xcb1
+          mkdir -p "$RUNNER_TEMP/unpacked" && unzip -q "dist/$NAME.zip" -d "$RUNNER_TEMP/unpacked"
+          xvfb-run -a -s "-screen 0 1280x720x24" python tools/package_release.py smoke "$RUNNER_TEMP/unpacked/$NAME" --seconds 30 --log smoke-menu.log --expect "AdapterInfo {" --expect "main menu ready"
+          xvfb-run -a -s "-screen 0 1280x720x24" python tools/package_release.py smoke "$RUNNER_TEMP/unpacked/$NAME" --seconds 60 --log smoke-seed.log --expect "AdapterInfo {" -- --seed 1
+      - name: boot smoke (Windows, unpacked zip, dx12)
+        if: matrix.platform == 'windows'
+        shell: bash
+        env:
+          WGPU_BACKEND: dx12
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          python -m zipfile -e "dist/$NAME.zip" "$RUNNER_TEMP/unpacked"
+          python tools/package_release.py smoke "$RUNNER_TEMP/unpacked/$NAME" --seconds 30 --log smoke-menu.log --expect "AdapterInfo {" --expect "main menu ready"
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with: { name: "smoke-logs-${{ matrix.platform }}", path: "smoke-*.log", if-no-files-found: ignore }
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/${{ env.NAME }}.zip
+          archive: false
+          if-no-files-found: error
+  release-gates:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with: { assets: "true" }
+      - shell: bash
+        run: cargo test --locked --no-fail-fast -p gta_sim -p citygen
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [release, release-gates]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { pattern: "gta-like-*", path: dist, merge-multiple: true, skip-decompress: true }
+      - shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -lR dist
+          test "$(ls dist/*.zip | wc -l)" -eq 2
+          pre=(); [[ "$GITHUB_REF_NAME" == *-* ]] && pre=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --generate-notes "${pre[@]}"
