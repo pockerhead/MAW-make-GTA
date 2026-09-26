@@ -185,7 +185,10 @@ def cmd_smoke(args):
     exe = next((folder / name for name in EXE_NAMES if (folder / name).is_file()), None)
     if exe is None:
         raise GateBroken(f"no gta_like[.exe] in {folder}")
-    allows = [re.compile(pattern) for pattern in args.allow]
+    try:
+        allows = [re.compile(pattern) for pattern in args.allow]
+    except re.error as error:
+        raise GateBroken(f"invalid --allow regex: {error}") from error
     log = Path(args.log).resolve()
     env = {key: value for key, value in os.environ.items() if key not in ("CARGO_MANIFEST_DIR", "BEVY_ASSET_ROOT")}
     cwd = tempfile.mkdtemp(prefix="gta_like_smoke_")

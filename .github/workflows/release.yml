@@ -64,7 +64,7 @@ jobs:
           sudo apt-get install --no-install-recommends -y xvfb mesa-vulkan-drivers libvulkan1 libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libx11-xcb1
           mkdir -p "$RUNNER_TEMP/unpacked" && unzip -q "dist/$NAME.zip" -d "$RUNNER_TEMP/unpacked"
           xvfb-run -a -s "-screen 0 1280x720x24" python tools/package_release.py smoke "$RUNNER_TEMP/unpacked/$NAME" --seconds 30 --log smoke-menu.log --expect "AdapterInfo {" --expect "main menu ready"
-          xvfb-run -a -s "-screen 0 1280x720x24" python tools/package_release.py smoke "$RUNNER_TEMP/unpacked/$NAME" --seconds 60 --log smoke-seed.log --expect "AdapterInfo {" -- --seed 1
+          xvfb-run -a -s "-screen 0 1280x720x24" python tools/package_release.py smoke "$RUNNER_TEMP/unpacked/$NAME" --seconds 60 --log smoke-seed.log --expect "AdapterInfo {" --expect "city ready" -- --seed 1
       - name: boot smoke (Windows, unpacked zip, dx12)
         if: matrix.platform == 'windows'
         shell: bash
@@ -74,7 +74,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/unpacked"
           python -m zipfile -e "dist/$NAME.zip" "$RUNNER_TEMP/unpacked"
           python tools/package_release.py smoke "$RUNNER_TEMP/unpacked/$NAME" --seconds 30 --log smoke-menu.log --expect "AdapterInfo {" --expect "main menu ready"
-      - if: failure()
+      - if: always()
         uses: actions/upload-artifact@v7
         with: { name: "smoke-logs-${{ matrix.platform }}", path: "smoke-*.log", if-no-files-found: ignore }
       - uses: actions/upload-artifact@v7

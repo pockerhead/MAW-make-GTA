@@ -44,7 +44,9 @@ workflow (TASK-029) уже есть: composite `.github/actions/setup` став�
   `verify` сверяет набор записей со списком (лишний `.dll`/`.pdb` не проедет), sha256 паков с манифестом,
   sha256 отслеживаемых файлов с checkout, наличие лицензии каждого пака.
 - **Smoke на Linux.** Распакованный zip под `xvfb-run` с Mesa lavapipe (`WGPU_BACKEND=vulkan`): меню 30 с (ждём
-  `AdapterInfo {` и `main menu ready`) и `--seed 1` 60 с (ждём `AdapterInfo {`). Ноль строк `ERROR`/`panicked`.
+  `AdapterInfo {` и `main menu ready`) и `--seed 1` 60 с (ждём `AdapterInfo {` и `city ready`: переход
+  `Loading -> Playing`). Ноль строк `ERROR`/`panicked`. Логи smoke выгружаются артефактом `smoke-logs-<ОС>` всегда,
+  не только при падении.
   `smoke` запускает exe из временной cwd без `CARGO_MANIFEST_DIR`/`BEVY_ASSET_ROOT` и с
   `--settings-id gta_like_smoke`, так что ассеты читаются только из zip, а настройки владельца не трогаются.
 - **Smoke на Windows.** На раннере, `WGPU_BACKEND=dx12`, меню 30 с с теми же ожиданиями. Статус по первому
@@ -68,6 +70,11 @@ git push origin vX.Y.Z[-rcN]
 ```
 
 Упавший тег не двигаем и не удаляем, берём следующий номер rc.
+
+Если `publish` упал после создания релиза (часть zip не загрузилась), повторный запуск упадёт на "release already
+exists". Удалить недоделанный релиз (`gh release delete <тег> --yes`, тег остаётся) и сделать "Re-run failed
+jobs". Дозагрузка `gh release upload <тег> <zip> --clobber` годится, только если zip уже на руках: `gh run download`
+распаковывает zip-артефакт (`archive: false`), а не отдаёт его как файл.
 
 ## Альтернативы
 
