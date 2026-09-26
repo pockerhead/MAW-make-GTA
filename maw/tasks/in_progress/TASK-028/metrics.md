@@ -6,3 +6,4 @@
 | 2 | 3 | planner | claude | opus | high | ok | 43 | — | — | 189198 | 12m 38s |
 | 3 | 4 | plan-reviewer-1 | claude | opus | medium | ok | 25 | — | — | 128796 | 6m 9s |
 | 4 | 5 | plan-reviewer-2 | claude | opus | high | ok | 28 | — | — | 156383 | 7m 29s |
+| 5 | 6 | implementer | claude | opus | high | ok (tag pending on TASK-038) | 58 | — | — | 173051 | 39m 37s |
