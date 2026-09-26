@@ -10,7 +10,7 @@ use crate::character::{
     MoveIntent,
 };
 use crate::combat::{
-    AimConfig, DamageDealt, GunSlot, Loadout, MeleeHit, ShotFired, WeaponsConfig, cone_sample,
+    AimConfig, BulletTrace, DamageDealt, DamageScale, GunSlot, Loadout, WeaponsConfig, cone_sample,
     dropped_gun,
 };
 use crate::gang::Faction;
@@ -24,50 +24,49 @@ use crate::tactics::{
     nearby_cars, overreach, select,
 };
 use crate::vehicle::{Driving, Vehicle, VehicleConfig, door_point};
-use crate::wanted::{WantedConfig, WantedLevel, cop_sees, eye, witnesses};
+use crate::wanted::{WantedConfig, WantedLevel, cop_sees, eye};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-/// A player attack witnessed by a live cop, or any player hit on a cop, makes arrest-row cops shoot
-/// for `arrest.hostile_seconds`.
-#[allow(clippy::too_many_arguments)]
+/// Distance from `p` to the segment `a`-`b`.
+fn segment_distance(p: Vec3, a: Vec3, b: Vec3) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_squared().max(f32::EPSILON)).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}
+
+/// A player hit on a cop, or a player bullet passing within `arrest.near_miss_distance` of a live
+/// cop, makes arrest-row cops shoot for `arrest.hostile_seconds`; attacks on anyone else do not.
 pub(super) fn police_alert(
-    configs: (
-        Res<EscalationConfig>,
-        Res<WantedConfig>,
-        Res<LocomotionConfig>,
-    ),
+    esc: Res<EscalationConfig>,
     time: Res<Time<Fixed>>,
-    spatial: SpatialQuery,
     mut alert: ResMut<PoliceAlert>,
-    mut shots: MessageReader<ShotFired>,
-    mut hits: MessageReader<MeleeHit>,
+    mut traces: MessageReader<BulletTrace>,
     mut dealt: MessageReader<DamageDealt>,
-    player: Query<(Entity, &Position), With<Player>>,
+    player: Query<Entity, With<Player>>,
     cops: Query<(&Position, &PoliceUnit)>,
 ) {
-    let (esc, wanted_cfg, loco) = configs;
     alert.hostile_left = (alert.hostile_left - time.delta_secs()).max(0.0);
     let player = player.single().ok();
-    let by_player = |e: Entity| player.is_some_and(|(p, _)| p == e);
+    let by_player = |e: Entity| player == Some(e);
     // Every message is read (a stopped iterator would leave the rest for the next tick).
-    let attacks = shots.read().filter(|s| by_player(s.shooter)).count()
-        + hits.read().filter(|h| by_player(h.attacker)).count();
     let cop_hit = dealt
         .read()
         .filter(|d| by_player(d.shooter) && cops.contains(d.target))
         .count()
         > 0;
-    let Some((_, at)) = player else {
-        return;
-    };
-    let offender = eye(at.0, &loco);
-    let witnessed = attacks > 0
-        && cops.iter().any(|(p, unit)| {
-            unit.state != CopState::Dead
-                && witnesses(&spatial, eye(p.0, &loco), offender, &wanted_cfg)
-        });
-    if cop_hit || witnessed {
+    let near = esc.arrest.near_miss_distance;
+    let shot_at = traces
+        .read()
+        .filter(|t| {
+            by_player(t.shooter)
+                && cops.iter().any(|(p, unit)| {
+                    unit.state != CopState::Dead && segment_distance(p.0, t.from, t.to) <= near
+                })
+        })
+        .count()
+        > 0;
+    if cop_hit || shot_at {
         alert.hostile_left = esc.arrest.hostile_seconds;
     }
 }
@@ -147,6 +146,7 @@ pub(super) fn police_fsm(
         &mut AimIntent,
         &mut ActionIntent,
         Option<&CrewOf>,
+        &mut DamageScale,
     )>,
     player: Query<
         (Entity, &Position, Has<Dead>, Option<&Driving>),
@@ -250,10 +250,16 @@ pub(super) fn police_fsm(
         mut aim,
         mut action,
         crew_of,
+        mut scale,
     ) in &mut units
     {
         if unit.state == CopState::Dead {
             continue;
+        }
+        if let Some(row) = row
+            && scale.0 != row.damage_scale
+        {
+            scale.0 = row.damage_scale;
         }
         let unit = &mut *unit;
         let chest = position.0;

@@ -632,6 +632,16 @@ fn fire_line_margin_is_not_negative() {
 }
 
 #[test]
+fn gang_damage_scale_is_positive() {
+    let error = gang_error(
+        "gang_damage_scale",
+        "damage_scale: 0.2,",
+        "damage_scale: 0.0,",
+    );
+    assert!(error.contains("combat.damage_scale"), "{error}");
+}
+
+#[test]
 fn gang_overshoot_margin_is_positive() {
     for bad in ["overshoot_margin: -1.0,", "overshoot_margin: 0.0,"] {
         let error = gang_error("overshoot", "overshoot_margin: 8.0,", bad);

@@ -138,6 +138,8 @@
   gridlock by a stand-duration bound derived from broken vs fixed runs, and gate the lease and the stop-line
   geometry separately; collect all violations before panicking so each assertion can go RED alone.
 
+- **Car-pedestrian damage sums over contacts; hits floor at 1 hp (TASK-035).** `apply_impacts` charges every `CollisionStart`, and a car rolling on hits a knocked-down body again (16 m/s: contacts at 15.4, 8.5, 5.2 m/s). A "one hit does not kill" gate must run the whole roll-out, not one formula row. `roll_damage` floors a hit at 1 hp, so flipping a TTK ceiling gate needs the fire rate slowed too, not just a tiny `damage_scale`. The approach speed in a car-contact gate is the sample one tick before the `VehicleHit` tick, which already carries the push. Trigger: `damage.ron` `pedestrian`, `DamageScale`, `tests/lethality.rs`.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

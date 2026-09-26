@@ -85,6 +85,26 @@ fn break_free_lies_beyond_the_hold() {
 }
 
 #[test]
+fn cop_damage_scale_is_positive() {
+    let error = police_error(
+        "police_damage_scale",
+        "damage_scale: 0.15, cars: 2",
+        "damage_scale: 0.0, cars: 2",
+    );
+    assert!(error.contains("stars[1].damage_scale"), "{error}");
+}
+
+#[test]
+fn near_miss_distance_is_positive() {
+    let error = police_error(
+        "police_near_miss",
+        "near_miss_distance: 1.5",
+        "near_miss_distance: 0.0",
+    );
+    assert!(error.contains("arrest.near_miss_distance"), "{error}");
+}
+
+#[test]
 fn spawn_ring_stays_inside_the_despawn_distance() {
     let despawn = shipped_despawn_distance();
     let error = sabotaged::<EscalationConfig>(
@@ -102,7 +122,7 @@ fn every_star_has_a_row() {
     let error = sabotaged_load::<EscalationConfig>(
         POLICE_CONFIG,
         "police_rows",
-        "(units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true, cars: 5),",
+        "(units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true, damage_scale: 0.3,  cars: 5),",
         "",
     )
     .unwrap_err()

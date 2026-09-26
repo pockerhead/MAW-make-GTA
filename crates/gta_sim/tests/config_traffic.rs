@@ -150,13 +150,13 @@ fn t15_police_rules_fire_with_their_keyword() {
     };
     let rows = [
         (
-            "surround: false, cars: 1)",
-            "surround: false, cars: 0)",
+            "damage_scale: 0.15, cars: 1)",
+            "damage_scale: 0.15, cars: 0)",
             "stars[0].cars must be >= 1",
         ),
         (
-            "surround: true, cars: 4)",
-            "surround: true, cars: 2)",
+            "damage_scale: 0.25, cars: 4)",
+            "damage_scale: 0.25, cars: 2)",
             "stars[3].cars 2 must be >= stars[2].cars 3",
         ),
         ("crew: 2", "crew: 0", "car.crew"),

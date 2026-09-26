@@ -10,7 +10,8 @@ use crate::character::{
     LocomotionConfig, MoveIntent,
 };
 use crate::combat::{
-    AimConfig, DamageDealt, GunSlot, Loadout, ShotFired, WeaponsConfig, cone_sample, dropped_gun,
+    AimConfig, DamageDealt, DamageScale, GunSlot, Loadout, ShotFired, WeaponsConfig, cone_sample,
+    dropped_gun,
 };
 use crate::navigation::{
     NavigationConfig, Route, RouteLoad, SidewalkGraph, avoid_offset, flat_distance, steer,
@@ -169,6 +170,7 @@ pub(super) fn gang_fsm(
         &mut MoveIntent,
         &mut AimIntent,
         &mut ActionIntent,
+        &mut DamageScale,
     )>,
     player: Query<
         (Entity, &Position, &AimIntent, &Loadout, Has<Dead>),
@@ -266,10 +268,14 @@ pub(super) fn gang_fsm(
         mut intent,
         mut aim,
         mut action,
+        mut scale,
     ) in &mut members
     {
         if member.state == GangState::Dead {
             continue;
+        }
+        if scale.0 != c.damage_scale {
+            scale.0 = c.damage_scale;
         }
         let member = &mut *member;
         let chest = position.0;

@@ -1,13 +1,14 @@
 (
     // Wanted stars 1..5 (GDD §6.4): units alive at most (on foot plus crews aboard police cars), of them
     // SWAT; seconds before a lost unit is replaced; whether cops try to arrest instead of shooting; whether
-    // new units come in from other sides; police cars at most (GDD §6.4 table "Машины").
+    // new units come in from other sides; share of a gun's damage (weapons.ron) a cop's bullets deal to the player (two
+    // patrol cops at 1-2 stars take >= 8 s to kill, TASK-035); police cars at most (GDD §6.4 "Машины").
     stars: (
-        (units: 2,  swat: 0,  reinforce_seconds: 20.0, arrest: true,  surround: false, cars: 1),
-        (units: 4,  swat: 0,  reinforce_seconds: 15.0, arrest: false, surround: false, cars: 2),
-        (units: 6,  swat: 0,  reinforce_seconds: 10.0, arrest: false, surround: true, cars: 3),
-        (units: 8,  swat: 4,  reinforce_seconds: 8.0,  arrest: false, surround: true, cars: 4),
-        (units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true, cars: 5),
+        (units: 2,  swat: 0,  reinforce_seconds: 20.0, arrest: true,  surround: false, damage_scale: 0.15, cars: 1),
+        (units: 4,  swat: 0,  reinforce_seconds: 15.0, arrest: false, surround: false, damage_scale: 0.15, cars: 2),
+        (units: 6,  swat: 0,  reinforce_seconds: 10.0, arrest: false, surround: true, damage_scale: 0.2,  cars: 3),
+        (units: 8,  swat: 4,  reinforce_seconds: 8.0,  arrest: false, surround: true, damage_scale: 0.25, cars: 4),
+        (units: 12, swat: 12, reinforce_seconds: 3.0,  arrest: false, surround: true, damage_scale: 0.3,  cars: 5),
     ),
     // Gear and distance band per unit kind; SWAT keeps a closer band ("штурм").
     patrol: (gun: Pistol, armor: 0.0,  reserve: 120, keep_distance: (8.0, 18.0)),
@@ -34,7 +35,8 @@
         stand_distance: 1.0,      // m: an arresting cop stops here
         seconds: 1.5,             // s the player stays passive within `distance` before BUSTED
         break_free_distance: 3.0, // m from the arresting cop: the player broke free, +1 star
-        hostile_seconds: 5.0,     // s a witnessed attack by the player makes 1-star cops shoot
+        hostile_seconds: 5.0,     // s a player attack on police (a hit, or a bullet within near_miss_distance) makes 1-star cops shoot
+        near_miss_distance: 1.5,  // m from a live cop's body centre: a player bullet passing this close is shooting at police
         pull_out_seconds: 1.0,    // s a cop at the door of a stopped car takes to pull the driver out (T15)
         pull_give_up_seconds: 3.0, // s more with the left door blocked: the driver is pulled out at either clear door, the arrest restarts on foot
         approach_distance: 20.0,  // m: an arrest-row cop this close to a driver's door goes for it unseen, around the cars in the way

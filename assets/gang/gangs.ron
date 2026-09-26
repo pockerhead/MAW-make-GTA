@@ -34,6 +34,7 @@
         melee_distance: (1.5, 2.5),  // m: start / stop punching (fist sweep reaches 1.0 + 0.35 + 0.3 = 1.65 m)
         aim_error_deg: 4.0,          // cone added on top of the weapon spread; police aim better (T11)
         trigger_seconds: (0.5, 1.1), // s between trigger pulls or punches, also the first one after the provocation
+        damage_scale: 0.2,           // share of a gun's damage (weapons.ron) a member's bullets deal to the player: a trio at 10 m takes >= 6 s to kill (TASK-035)
         retreat_health: 0.3,         // share of max health (GDD §6.3)
         retreat_distance: 25.0,      // m: a retreating member stops and holds this far away
         fire_line_margin: 0.2,       // m: kept clear around the line of fire besides body radius + spread cone

@@ -162,9 +162,19 @@ fn damage_rules_fire_with_their_keyword() {
             "pedestrian.knockdown_speed",
         ),
         (
-            "shove_scale: 0.6",
+            "shove_scale: 1.0",
             "shove_scale: -1.0",
             "pedestrian.shove_scale",
+        ),
+        (
+            "player_share: 0.4",
+            "player_share: 0.0",
+            "pedestrian.player_share",
+        ),
+        (
+            "player_share: 0.4",
+            "player_share: 1.5",
+            "pedestrian.player_share",
         ),
     ];
     for (i, (from, to, keyword)) in rows.into_iter().enumerate() {

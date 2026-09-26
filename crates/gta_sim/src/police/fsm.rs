@@ -9,7 +9,7 @@ use bevy::prelude::*;
 #[derive(Clone, Copy, Debug)]
 pub struct CopSenses {
     pub sees: bool,
-    /// A witnessed attack by the player is fresh (`PoliceAlert`).
+    /// A player attack on police is fresh (`PoliceAlert`).
     pub hostile: bool,
     /// The current star row arrests instead of shooting.
     pub arrest_row: bool,

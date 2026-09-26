@@ -5,6 +5,7 @@ use super::weapons::{
 };
 use crate::character::{ActionIntent, AimIntent, Character, Dead, HeadHitbox, Health};
 use crate::layers::GameLayer;
+use crate::player::Player;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand_chacha::{
@@ -109,6 +110,20 @@ pub struct BulletHitVehicle {
     pub vehicle: Entity,
     pub point: Vec3,
     pub damage: f32,
+    /// The shooter's `DamageScale`: applies to the cabin wound of a player driver only.
+    pub player_scale: f32,
+}
+
+/// Share of a gun's damage the bullets of this shooter deal to the player (NPC lethality, from the
+/// role's config); other victims and cars take the full damage.
+#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
+#[reflect(Component)]
+pub struct DamageScale(pub f32);
+
+impl Default for DamageScale {
+    fn default() -> Self {
+        Self(1.0)
+    }
 }
 
 /// Sim-owned RNG of spread and damage rolls; seeded, so a run is reproducible.
@@ -163,13 +178,14 @@ pub(super) fn fire_weapons(
             &mut Loadout,
             &LinearVelocity,
             &HitReaction,
+            Option<&DamageScale>,
         ),
         (With<Character>, Without<Dead>),
     >,
     colliders: Query<(&ColliderOf, Has<HeadHitbox>)>,
     dead: Query<(), With<Dead>>,
     reactions: Query<&HitReaction>,
-    mut targets: Query<&mut Health, Without<Dead>>,
+    mut targets: Query<(&mut Health, Has<Player>), Without<Dead>>,
     layers: Query<&CollisionLayers>,
     mut fired: MessageWriter<ShotFired>,
     mut traces: MessageWriter<BulletTrace>,
@@ -183,7 +199,9 @@ pub(super) fn fire_weapons(
         GameLayer::Hitbox,
         GameLayer::Vehicle,
     ]);
-    for (shooter, position, aim, mut action, mut loadout, velocity, reaction) in &mut shooters {
+    for (shooter, position, aim, mut action, mut loadout, velocity, reaction, scale) in
+        &mut shooters
+    {
         // A request in the last `fire_buffer_seconds` of the cooldown is kept and fires when it
         // ends; any other request during the cooldown or a reload is dropped.
         let requested = std::mem::take(&mut action.fire_requested);
@@ -197,6 +215,7 @@ pub(super) fn fire_weapons(
             continue;
         };
         let stats = cfg.stats(weapon);
+        let player_scale = scale.map_or(1.0, |s| s.0);
         let loadout = &mut *loadout;
         let slot = &mut loadout.guns[weapon.index()];
         if loadout.reload_left > 0.0 {
@@ -311,11 +330,12 @@ pub(super) fn fire_weapons(
                     vehicle: target,
                     point,
                     damage: stats.damage * falloff_factor(stats, hit.distance),
+                    player_scale,
                 });
                 continue;
             }
             // `current > 0` covers a target killed earlier this tick whose `Dead` is still deferred.
-            let Ok(mut health) = targets.get_mut(target) else {
+            let Ok((mut health, is_player)) = targets.get_mut(target) else {
                 continue;
             };
             if health.current <= 0.0 {
@@ -326,7 +346,8 @@ pub(super) fn fire_weapons(
             } else {
                 1.0
             };
-            let base = stats.damage * falloff_factor(stats, hit.distance) * multiplier;
+            let scale = if is_player { player_scale } else { 1.0 };
+            let base = stats.damage * falloff_factor(stats, hit.distance) * multiplier * scale;
             let damage = roll_damage(base, stats.damage_variance, unit_f32(&mut rng.0));
             let killed = health.take(damage as f32);
             dealt.write(DamageDealt {

@@ -5,7 +5,7 @@ mod crimes;
 mod search;
 
 pub use crimes::{Crime, Crimes, Incident};
-pub(crate) use search::{cop_sees, eye, witnesses};
+pub(crate) use search::{cop_sees, eye};
 
 use crate::civilian::PoliceCall;
 use crate::flow::{GameState, NEW_CITY, PlayingSystems};

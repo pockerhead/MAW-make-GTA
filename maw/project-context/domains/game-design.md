@@ -81,6 +81,8 @@
   waited on each other), grants never expired. Rules: only a lane's first car queues; a grant is a lease that lapses
   to a conflicting waiter; the stop line is derived per lane from the crossing. IDM acceleration 1.5 (0.73 held a box 8 s).
 
+- **NPC lethality is `damage_scale` by victim, not aim error (TASK-035).** Aim error widens the hold-fire line cone by the same angle (police overshoot 60 m), so a wider cone makes cops stop firing in crowds while shotgun head pellets still one-shot. Scale only damage whose resolved body is the player (`ColliderOf.body`), including the driver's cabin share; cars and NPC victims take full damage, or car stops and gang wars silently stretch 3-7x. Gate: `tests/lethality.rs` median TTK floor and ceiling over 7 seeds. Trigger: `aim_error_deg` or `damage_scale` edits meant to change TTK.
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

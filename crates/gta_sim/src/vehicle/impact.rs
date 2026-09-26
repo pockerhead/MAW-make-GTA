@@ -6,6 +6,7 @@ use crate::character::{CharacterScheme, Dead, Health};
 use crate::combat::{
     AttackSerial, BulletHitVehicle, DamageDealt, HitReaction, MeleeConfig, knock_back,
 };
+use crate::player::Player;
 use crate::vehicle::PedestrianDamage;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -13,12 +14,18 @@ use bevy_tnua::prelude::*;
 
 /// Health a pedestrian loses when a car moving `car_along_n` m/s along the contact normal
 /// (car → pedestrian) meets a pedestrian moving `other_along_n`; the car must be the striker.
-pub fn pedestrian_damage(car_along_n: f32, other_along_n: f32, cfg: &PedestrianDamage) -> u32 {
+/// `share` is 1 for NPCs and `player_share` for the player.
+pub fn pedestrian_damage(
+    car_along_n: f32,
+    other_along_n: f32,
+    cfg: &PedestrianDamage,
+    share: f32,
+) -> u32 {
     if car_along_n < cfg.threshold_speed {
         return 0;
     }
     let closing = car_along_n - other_along_n;
-    ((closing - cfg.threshold_speed) * cfg.per_mps)
+    ((closing - cfg.threshold_speed) * cfg.per_mps * share)
         .round()
         .max(0.0) as u32
 }
@@ -49,7 +56,7 @@ pub(super) fn apply_impacts(
     mut vehicles: Query<(&Vehicle, &mut VehicleHealth, &Rotation)>,
     pre_step: Query<&PreStepVelocity>,
     positions: Query<&Position>,
-    mut healths: Query<&mut Health, Without<Dead>>,
+    mut healths: Query<(&mut Health, Has<Player>), Without<Dead>>,
     mut reactions: Query<(&mut HitReaction, &mut TnuaController<CharacterScheme>)>,
     mut dealt: MessageWriter<DamageDealt>,
     mut hits: MessageWriter<VehicleHit>,
@@ -86,10 +93,12 @@ pub(super) fn apply_impacts(
 
         // A character is never a crash for the car; only a live one is hurt.
         if reactions.contains(other) {
-            let Ok(mut health) = healths.get_mut(other) else {
+            let Ok((mut health, is_player)) = healths.get_mut(other) else {
                 continue;
             };
-            let damage = pedestrian_damage(car_along, other_along, &dmg.pedestrian);
+            let p = &dmg.pedestrian;
+            let share = if is_player { p.player_share } else { 1.0 };
+            let damage = pedestrian_damage(car_along, other_along, p, share);
             if damage == 0 {
                 continue;
             }
@@ -165,7 +174,7 @@ pub(super) fn apply_bullet_hits(
     dmg: Res<DamageConfig>,
     cfg: Res<VehicleConfig>,
     mut vehicles: Query<(&mut VehicleHealth, &Vehicle, &Position, &Rotation)>,
-    mut drivers: Query<&mut Health, Without<Dead>>,
+    mut drivers: Query<(&mut Health, Has<Player>), Without<Dead>>,
     mut cabin: MessageWriter<CabinHit>,
     mut dealt: MessageWriter<DamageDealt>,
 ) {
@@ -188,10 +197,11 @@ pub(super) fn apply_bullet_hits(
         let Some(driver) = vehicle.driver else {
             continue;
         };
-        let Ok(mut life) = drivers.get_mut(driver) else {
+        let Ok((mut life, is_player)) = drivers.get_mut(driver) else {
             continue;
         };
-        let wound = cabin_wound(hit.damage, dmg.vehicle.cabin_driver_share);
+        let scale = if is_player { hit.player_scale } else { 1.0 };
+        let wound = cabin_wound(hit.damage * scale, dmg.vehicle.cabin_driver_share);
         let killed = life.take(wound);
         dealt.write(DamageDealt {
             shooter: hit.shooter,
@@ -215,18 +225,20 @@ mod tests {
             per_mps: 12.0,
             knockdown_speed: 4.0,
             shove_scale: 0.6,
+            player_share: 0.5,
         }
     }
 
     #[test]
     fn pedestrian_damage_rows() {
         let cfg = pedestrian();
-        assert_eq!(pedestrian_damage(10.0, 0.0, &cfg), 84);
-        assert_eq!(pedestrian_damage(6.0, 0.0, &cfg), 36);
-        assert_eq!(pedestrian_damage(2.5, 0.0, &cfg), 0);
+        assert_eq!(pedestrian_damage(10.0, 0.0, &cfg, 1.0), 84);
+        assert_eq!(pedestrian_damage(6.0, 0.0, &cfg, 1.0), 36);
+        assert_eq!(pedestrian_damage(2.5, 0.0, &cfg, 1.0), 0);
         // A runner into a parked car: the car is not the striker.
-        assert_eq!(pedestrian_damage(0.0, -6.8, &cfg), 0);
-        assert_eq!(pedestrian_damage(10.0, -2.0, &cfg), 108);
+        assert_eq!(pedestrian_damage(0.0, -6.8, &cfg, 1.0), 0);
+        assert_eq!(pedestrian_damage(10.0, -2.0, &cfg, 1.0), 108);
+        assert_eq!(pedestrian_damage(10.0, 0.0, &cfg, cfg.player_share), 42);
     }
 
     #[test]

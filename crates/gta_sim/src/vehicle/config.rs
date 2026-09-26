@@ -370,6 +370,8 @@ pub struct PedestrianDamage {
     pub knockdown_speed: f32,
     /// Knockback velocity per m/s of closing speed.
     pub shove_scale: f32,
+    /// Share of the loss the player takes (NPC victims take all of it).
+    pub player_share: f32,
 }
 
 /// Crash and bullet damage of cars (GDD §5.2).
@@ -395,6 +397,7 @@ impl DamageConfig {
             p.per_mps,
             p.knockdown_speed,
             p.shove_scale,
+            p.player_share,
         ];
         if !values.iter().all(|v| v.is_finite()) {
             return Err("damage values must be finite".into());
@@ -430,6 +433,9 @@ impl DamageConfig {
         }
         if p.shove_scale < 0.0 {
             return Err("pedestrian.shove_scale must be nonnegative".into());
+        }
+        if !(p.player_share > 0.0 && p.player_share <= 1.0) {
+            return Err("pedestrian.player_share must be in (0, 1]".into());
         }
         Ok(())
     }

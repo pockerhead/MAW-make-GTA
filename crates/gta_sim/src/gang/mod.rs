@@ -11,7 +11,7 @@ use crate::character::{
     CharacterSchemeConfig, Gait, Health, HealthConfig, HealthSystems, LocomotionConfig,
     character_components,
 };
-use crate::combat::{Loadout, Weapon, WeaponsConfig, acquire, unit_f32};
+use crate::combat::{DamageScale, Loadout, Weapon, WeaponsConfig, acquire, unit_f32};
 use crate::flow::{GameState, NEW_CITY, NpcSystems};
 use crate::navigation::Route;
 use crate::perception::{AiSystems, Perception};
@@ -112,6 +112,8 @@ pub struct GangCombatConfig {
     pub aim_error_deg: f32,
     /// Seconds between trigger pulls or punches (min, max).
     pub trigger_seconds: (f32, f32),
+    /// Share of a gun's damage a member's bullets deal to the player (`DamageScale`).
+    pub damage_scale: f32,
     /// Share of max health below which a member retreats.
     pub retreat_health: f32,
     /// A retreating member stops this far from its target, m.
@@ -306,6 +308,7 @@ impl GangConfig {
             ));
         }
         positive("combat.retreat_distance", c.retreat_distance)?;
+        positive("combat.damage_scale", c.damage_scale)?;
         if !(c.fire_line_margin.is_finite() && c.fire_line_margin >= 0.0) {
             return Err(format!(
                 "combat.fire_line_margin {} must be finite and >= 0",
@@ -394,7 +397,7 @@ pub enum GangState {
 
 #[derive(Component, Reflect, Clone, Debug)]
 #[reflect(Component)]
-#[require(Character, Perception, Offscreen, Route)]
+#[require(Character, Perception, Offscreen, Route, DamageScale)]
 pub struct GangMember {
     pub gang: u8,
     /// Index into `GangTerritories.gangs[gang].posts` (0 = HQ).

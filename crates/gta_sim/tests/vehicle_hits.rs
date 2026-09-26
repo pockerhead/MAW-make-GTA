@@ -133,6 +133,14 @@ fn run_over_at_6_mps_costs_the_formula() {
     assert!(hit.knocked_down, "not knocked down at 6 m/s");
 }
 
+/// NPC victims keep the full curve (the player's `player_share` does not apply): one hit at 15 m/s
+/// kills a civilian at full health (TASK-035).
+#[test]
+fn run_over_at_15_mps_kills_a_civilian_in_one_hit() {
+    let hit = run_over(15.0);
+    assert!(hit.first >= 100, "first hit {} at 15 m/s", hit.first);
+}
+
 #[test]
 fn push_at_2_5_mps_does_no_harm() {
     let hit = run_over(2.5);
@@ -605,6 +613,51 @@ fn a_cop_sees_the_driver_and_shoots_the_car() {
     );
 }
 
+/// A 2-star patrol cop shooting at the driver dents the car by the pistol's full damage: the police
+/// `DamageScale` is for the player's body, not for the car (TASK-035).
+#[test]
+fn a_patrol_bullet_dents_the_car_by_the_full_pistol_damage() {
+    let mut app = graph_app(10.0, &[]);
+    raise_heat(&mut app, 180);
+    let car = spawn_car(&mut app, Vec2::new(-5.0, 0.0), 0.0);
+    drive_in(&mut app, car);
+    let unit = spawn_unit(
+        &mut app,
+        UnitKind::Patrol,
+        Vec3::new(-5.0, 0.0, -20.0),
+        std::f32::consts::PI,
+    );
+    set_cop_state(&mut app, unit, CopState::Attack);
+    let start = car_health(&app, car);
+    let mut car_hits = CarHits::new(&app);
+    for _ in 0..128 {
+        run_ticks(&mut app, 1);
+        car_hits.read(&app);
+    }
+    let from_cop: Vec<f32> = car_hits
+        .1
+        .iter()
+        .filter(|h| h.vehicle == car)
+        .map(|h| {
+            assert_eq!(h.shooter, unit, "GATE BROKEN: another shooter hit the car");
+            h.damage
+        })
+        .collect();
+    assert!(
+        !from_cop.is_empty(),
+        "GATE BROKEN: no cop bullet reached the car"
+    );
+    let pistol = pistol_damage(&app);
+    let scale = damage_cfg(&app).vehicle.bullet_scale;
+    let lost = start - car_health(&app, car);
+    println!("{} cop hits, car lost {lost}", from_cop.len());
+    assert!(
+        from_cop.iter().all(|&d| d == pistol),
+        "cop bullets on the car: {from_cop:?}, pistol {pistol}"
+    );
+    assert_eq!(lost, from_cop.len() as f32 * pistol * scale);
+}
+
 // ---------------------------------------------------------------- T15 cabin wounds (O2)
 
 /// The player drives the broadside car (facing −X, its left side towards +Z); a dummy with `gun`
@@ -691,6 +744,42 @@ fn cabin_shots_wound_the_driver() {
         let expected = if wounds { share_wound(&app) } else { 0.0 };
         assert_eq!(lost, expected, "{name}: the driver lost {lost}");
     }
+}
+
+/// A pellet from a shooter with the 2-star police `DamageScale` through the side window: the car
+/// loses the full pistol damage, the player driver's wound is scaled (TASK-035).
+#[test]
+fn a_police_cabin_pellet_wounds_the_player_driver_by_the_scale() {
+    let (mut app, car, me, shooter) = cabin_range(Weapon::Pistol);
+    let scale = app
+        .world()
+        .resource::<gta_sim::police::EscalationConfig>()
+        .stars[1]
+        .damage_scale;
+    app.world_mut()
+        .entity_mut(shooter)
+        .insert(gta_sim::combat::DamageScale(scale));
+    let before = app.world().get::<Health>(me).unwrap().current;
+    let car_before = car_health(&app, car);
+    let (_, hits) = fire_at_car(&mut app, shooter, car, Vec3::new(-1.2, 0.5, 0.0), 1);
+    assert_eq!(
+        hits.1.iter().filter(|h| h.vehicle == car).count(),
+        1,
+        "GATE BROKEN: the pellet missed the car"
+    );
+    let pistol = pistol_damage(&app);
+    let dmg = damage_cfg(&app);
+    assert_eq!(
+        car_before - car_health(&app, car),
+        pistol * dmg.vehicle.bullet_scale,
+        "the car took a scaled pellet"
+    );
+    let lost = before - app.world().get::<Health>(me).unwrap().current;
+    assert_eq!(
+        lost,
+        (pistol * scale * dmg.vehicle.cabin_driver_share).round(),
+        "the player driver's wound"
+    );
 }
 
 #[test]

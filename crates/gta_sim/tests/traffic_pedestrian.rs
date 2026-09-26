@@ -13,9 +13,16 @@
 mod common;
 mod traffic_support;
 
-use bevy::prelude::*;
+use avian3d::prelude::LinearVelocity;
+use bevy::{ecs::message::MessageCursor, prelude::*};
 use common::*;
-use gta_sim::traffic::Segment;
+use gta_sim::{
+    character::{Dead, HealthConfig, LocomotionConfig},
+    combat::HitReaction,
+    config::load_config,
+    traffic::{Segment, TRAFFIC_CONFIG, TrafficConfig},
+    vehicle::VehicleHit,
+};
 use traffic_support::*;
 
 const LANE_Z: f32 = 30.0;
@@ -113,4 +120,106 @@ fn a_walker_ahead_of_the_bumper_still_holds_the_car() {
         moved < 0.1,
         "the car moved {moved:.2} m into a walker ahead of its bumper"
     );
+}
+
+/// A traffic car cruising at the fastest lane speed (`traffic.ron` v0) meets the full-health player who
+/// stepped onto its lane 1 m ahead of the bumper: IDM brakes, the car still hits at about the cruise
+/// speed, and the player is hurt and knocked down, not killed (TASK-035).
+#[test]
+fn a_cruising_car_does_not_kill_a_full_health_player() {
+    cruise_hit(false);
+}
+
+/// The same car meets the player running at `run_speed` head-on into it from 4 m ahead of the bumper:
+/// the closing speed is cruise plus run, and the player still lives (TASK-035, review m3).
+#[test]
+fn a_cruising_car_does_not_kill_a_player_running_into_it() {
+    cruise_hit(true);
+}
+
+fn cruise_hit(running: bool) {
+    let at = |x: f32| Vec3::new(x, 0.0, LANE_Z);
+    let v0 = load_config::<TrafficConfig>(&assets_root(), TRAFFIC_CONFIG)
+        .expect("GATE BROKEN: shipped traffic config")
+        .desired_speed;
+    let cruise = v0.avenue.max(v0.street);
+    let mut app = traffic_floor(
+        vec![
+            (at(-30.0), at(10.0), cruise, 0),
+            (at(20.0), at(25.0), cruise, 1),
+        ],
+        &[(0, 1, 0), (1, 0, 1)],
+        &[],
+    );
+    let max = app.world().resource::<HealthConfig>().max_health;
+    assert_eq!(
+        (health(&mut app).current, health(&mut app).armor),
+        (max, 0.0),
+        "GATE BROKEN: the player is not at full health without armour"
+    );
+    let loco = app.world().resource::<LocomotionConfig>().clone();
+    let lead = if running { 4.0 } else { 1.0 };
+    // Car centre at s 2 (x −28) moves 0.25 m in its spawn tick; bumper 2.04 ahead, capsule radius 0.3.
+    place_player(
+        &mut app,
+        Vec3::new(-28.0 + 0.25 + 2.04 + lead + 0.3, loco.float_height, LANE_Z),
+    );
+    if running {
+        // Run gait towards −X, into the oncoming car.
+        set_intent(&mut app, |i| {
+            i.axis = Vec2::Y;
+            i.yaw = std::f32::consts::FRAC_PI_2;
+        });
+    }
+    let run = if running { loco.run_speed } else { 0.0 };
+    let me = player(&mut app);
+    let mut hits: MessageCursor<VehicleHit> = app
+        .world()
+        .resource::<Messages<VehicleHit>>()
+        .get_cursor_current();
+    let car = spawn_traffic_car(&mut app, Segment::Lane(0), 2.0, cruise);
+    let mut log = Vec::new();
+    let mut knocked_down = false;
+    // The player's speed towards the car (−X) before each tick until the first hit; the last sample
+    // is already the contact push, the one before it is the approach.
+    let mut approach = Vec::new();
+    for _ in 0..192 {
+        if log.is_empty() {
+            approach.push(-app.world().get::<LinearVelocity>(me).unwrap().x);
+        }
+        run_ticks(&mut app, 1);
+        log.extend(
+            hits.read(app.world().resource::<Messages<VehicleHit>>())
+                .filter(|h| h.target == me && h.vehicle == car)
+                .map(|h| h.speed),
+        );
+        knocked_down |= app
+            .world()
+            .get::<HitReaction>(me)
+            .is_some_and(|r| r.is_knocked_down());
+    }
+    let health = health(&mut app).current;
+    let toward = approach[approach.len().saturating_sub(2)];
+    println!(
+        "{cruise} m/s lane, player {toward:.2} m/s towards the car: hit speeds {log:.2?}, health {health}"
+    );
+    let first = *log
+        .first()
+        .expect("GATE BROKEN: the car never hit the player");
+    assert!(
+        toward >= 0.9 * run,
+        "GATE BROKEN: the player met the car at {toward:.2} m/s, not running ({run})"
+    );
+    // IDM brakes for a body closing on the bumper: the car itself stays within 2 m/s of cruise.
+    assert!(
+        first - toward >= cruise - 2.0,
+        "GATE BROKEN: the car hit at {:.2} m/s of its own, not at the cruise speed {cruise}",
+        first - toward
+    );
+    assert!(
+        app.world().get::<Dead>(me).is_none() && health > 0.0,
+        "a traffic car at {first:.2} m/s killed a full-health player (hit speeds {log:.2?})"
+    );
+    assert!(health < max, "the hit did not hurt");
+    assert!(knocked_down, "not knocked down at {first:.2} m/s");
 }

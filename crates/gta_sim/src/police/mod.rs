@@ -19,7 +19,7 @@ use crate::character::{
     Character, CharacterSchemeConfig, Gait, Health, HealthConfig, HealthSystems, LocomotionConfig,
     character_components,
 };
-use crate::combat::{Loadout, Weapon, WeaponsConfig, acquire, unit_f32};
+use crate::combat::{DamageScale, Loadout, Weapon, WeaponsConfig, acquire, unit_f32};
 use crate::flow::{GameState, NEW_CITY, NpcSystems, PlayingSystems};
 use crate::gang::Faction;
 use crate::navigation::Route;
@@ -73,6 +73,8 @@ pub struct EscalationRow {
     pub surround: bool,
     /// Police cars at most.
     pub cars: u32,
+    /// Share of a gun's damage a cop's bullets deal to the player (`DamageScale`).
+    pub damage_scale: f32,
 }
 
 /// Police cars (GDD §5.3).
@@ -138,8 +140,10 @@ pub struct ArrestConfig {
     pub seconds: f32,
     /// The player this far from the arresting cop broke free, m.
     pub break_free_distance: f32,
-    /// Seconds a witnessed attack by the player makes arrest-row cops shoot.
+    /// Seconds a player attack on police makes arrest-row cops shoot.
     pub hostile_seconds: f32,
+    /// A player bullet passing this close to a live cop's body centre is an attack on police, m.
+    pub near_miss_distance: f32,
     /// Seconds a cop at the door of a stopped car takes to pull the driver out.
     pub pull_out_seconds: f32,
     /// Seconds more the pull waits for a blocked left door; then the driver is pulled out at any clear
@@ -292,6 +296,7 @@ impl EscalationConfig {
             if row.cars < 1 {
                 return Err(format!("stars[{i}].cars must be >= 1"));
             }
+            positive(&format!("stars[{i}].damage_scale"), row.damage_scale)?;
             let Some(previous) = i.checked_sub(1).map(|p| &self.stars[p]) else {
                 continue;
             };
@@ -331,6 +336,7 @@ impl EscalationConfig {
         positive("arrest.pull_give_up_seconds", a.pull_give_up_seconds)?;
         positive("arrest.approach_distance", a.approach_distance)?;
         not_negative("arrest.hostile_seconds", a.hostile_seconds)?;
+        positive("arrest.near_miss_distance", a.near_miss_distance)?;
         if a.distance <= a.stand_distance {
             return Err(format!(
                 "arrest.distance {} must be > arrest.stand_distance {}",
@@ -440,7 +446,7 @@ pub enum CopState {
 
 #[derive(Component, Reflect, Clone, Debug)]
 #[reflect(Component)]
-#[require(Character, Perception, Offscreen, Route)]
+#[require(Character, Perception, Offscreen, Route, DamageScale)]
 pub struct PoliceUnit {
     pub kind: UnitKind,
     pub state: CopState,
@@ -499,7 +505,7 @@ pub struct PoliceDispatcher {
     pub cars: u32,
 }
 
-/// A witnessed attack by the player: arrest-row cops shoot while `hostile_left > 0`.
+/// A player attack on police: arrest-row cops shoot while `hostile_left > 0`.
 #[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
 #[reflect(Resource)]
 pub struct PoliceAlert {

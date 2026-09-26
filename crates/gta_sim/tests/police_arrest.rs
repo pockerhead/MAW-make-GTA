@@ -225,7 +225,14 @@ fn attacking_player_is_shot_not_arrested() {
         "GATE BROKEN: not arresting"
     );
     let mut probe = Probe::new(&app);
-    shoot_into_the_air(&mut app, &mut probe);
+    // A shot 1 m beside the cop's chest: an attack on police (`arrest.near_miss_distance`) that hits nobody.
+    let (me, at) = (position(&mut app), position_of(&app, unit));
+    let across = (at - me).with_y(0.0).normalize().cross(Vec3::Y);
+    let attack = fire_at(&mut app, &mut probe, at + across);
+    assert!(
+        !probe.shots.dealt_log.iter().any(|d| d.shot == attack),
+        "GATE BROKEN: the near miss hit somebody"
+    );
     assert_eq!(
         wanted(&app).stars,
         1,
