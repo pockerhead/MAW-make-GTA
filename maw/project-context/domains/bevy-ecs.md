@@ -132,6 +132,8 @@
 
 - **Standing timers must reset on teleport (TASK-032).** "Standing time" from velocity alone misses teleports: QA `put` and respawn keep velocity 0. A teleported player counted as standing for minutes, and traffic went around them at once. Reset on displacement > hold_speed x dt (`occupancy::snapshot_road`). Do not reset `TrafficCar.lateral` on a car the kinematic law still moves; drop derived state (claims) at the reader instead. Trigger: any `standing`/`stood` timer read by AI, `lateral = 0.0` outside `abandon()`/hijack.
 
+- **Windows and Linux runs of one seed diverge (TASK-038).** Each platform repeats itself bit for bit, but std `f32` `atan2`/`sin`/`cos` differ by 1-2 ULP between MSVC UCRT and glibc (`sqrt` is identical). Car rotations differ right after city load, and a 150 s traffic scene ends somewhere else. A city gate green on Windows can be red on the Linux runner, for a latent bug the other trajectory reaches. Reproduce CI reds in WSL Ubuntu 22.04 with toolchain 1.95.0 (sources mirrored to the WSL filesystem, `CARGO_TARGET_DIR` there), not by rerunning on Windows. A Linux-only red is a real bug on an untested trajectory, never "flaky". Cross-platform agreement would need libm-backed glam/avian determinism plus replacing every std transcendental in `gta_sim`; that is a project-wide choice, not taken. Trigger: a city/traffic gate red only in CI.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

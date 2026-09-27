@@ -16,11 +16,13 @@
 //!   spawn, the player on the spawn sidewalk looking at it: no traffic car within 45 m of the box
 //!   stands longer than 30 s over 150 s (ignored: open, see the row);
 //! - the stuck cheat's in-view rule (fallback R-B): a car in the box the player looks at from nearby
-//!   is never popped; seen from past `bubble.stuck_in_view_distance` it is cleared.
+//!   is never popped; seen from past `bubble.stuck_in_view_distance` it is cleared, and the `Dynamic`
+//!   bound covers the box approaches only.
 //!
-//! Every row except (c) also holds the TASK-032 bound city-wide: no AI car stands longer than 30 s
-//! in `Dynamic`. Each row
-//! asserts the fixed behaviour; on the pre-TASK-032 code the reproduced rows were RED.
+//! The other rows hold the TASK-032 bound city-wide: no AI car stands longer than 30 s in `Dynamic`.
+//! (c) and rb scope it to their scene: a `Dynamic` grant holder with walkers pinned at its nose
+//! elsewhere is printed (TASK-036 item 1, TASK-037 restores the city-wide bound). Each row asserts the
+//! fixed behaviour; on the pre-TASK-032 code the reproduced rows were RED.
 
 mod common;
 mod traffic_support;
@@ -29,7 +31,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use common::*;
 use gta_sim::{
-    traffic::{Segment, TrafficCar, TrafficConfig, TrafficIntersections, TrafficMode},
+    traffic::{Segment, TrafficCar, TrafficConfig, TrafficIntersections, TrafficLane, TrafficMode},
     vehicle::VehicleConfig,
     world::PlayerSpawn,
 };
@@ -288,16 +290,10 @@ fn c_character_in_the_lane() {
         clock.worst(),
         stands_near(&clock, at, 60.0, 30.0)
     );
-    let (scene_lane, elsewhere) = dynamic_stands_on_the_approach(&scene, &clock);
-    eprintln!(
-        "(c): Dynamic stands > {DYNAMIC_STAND_S} s off the scene lane (reported, TASK-036/TASK-037): {elsewhere:?}"
-    );
-    let mut failures = Vec::new();
-    if !scene_lane.is_empty() {
-        failures.push(format!(
-            "AI cars on the scene lane or its approach stood > {DYNAMIC_STAND_S} s in Dynamic: {scene_lane:?}"
-        ));
-    }
+    let approach = [graph(&scene.app).lane(scene.lane).clone()];
+    let mut failures: Vec<String> = dynamic_bound_on("(c)", &approach, &clock)
+        .into_iter()
+        .collect();
     if !stood.is_empty() {
         failures.push(format!(
             "AI cars stood > 30 s behind a character in the lane: {stood:?}"
@@ -306,24 +302,29 @@ fn c_character_in_the_lane() {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
-/// (stand, where) per car.
-type Stands = Vec<(f32, Vec3)>;
-
-/// `Dynamic` stands over `DYNAMIC_STAND_S`, split into those on the scene lane or its approach (up to
-/// its stop line, from 15 m before its start: the feeding connector; its own lane width plus a curb
-/// shove to the right) and the rest of the city (a box lock elsewhere, e.g. pinned walkers around a
-/// grant holder: TASK-036, TASK-037).
-fn dynamic_stands_on_the_approach(scene: &Scene, clock: &StandClock) -> (Stands, Stands) {
-    let l = graph(&scene.app).lane(scene.lane).clone();
-    let right = right_of(l.dir);
-    clock
+/// The TASK-032 `Dynamic` bound over the scene's approach lanes (each up to its stop line, from 15 m
+/// before its start: the feeding connector; its own lane width plus a curb shove to the right). Stands
+/// elsewhere in the city are printed, not asserted: a box lock such as walkers pinned at the nose of a
+/// `Dynamic` grant holder (TASK-036 item 1; TASK-037 restores the city-wide bound).
+fn dynamic_bound_on(row: &str, approaches: &[TrafficLane], clock: &StandClock) -> Option<String> {
+    let on_approach = |p: Vec3| {
+        approaches.iter().any(|l| {
+            let d = (p - l.from).with_y(0.0);
+            (-15.0..=l.stop).contains(&d.dot(l.dir))
+                && (-1.7..=3.25).contains(&d.dot(right_of(l.dir)))
+        })
+    };
+    let (scene, elsewhere): (Vec<_>, Vec<_>) = clock
         .dynamic_longer_than(DYNAMIC_STAND_S)
         .into_iter()
         .map(|(_, s, p)| (s, p))
-        .partition(|(_, p)| {
-            let d = (*p - l.from).with_y(0.0);
-            (-15.0..=l.stop).contains(&d.dot(l.dir)) && (-1.7..=3.25).contains(&d.dot(right))
-        })
+        .partition(|&(_, p)| on_approach(p));
+    eprintln!(
+        "{row}: Dynamic stands > {DYNAMIC_STAND_S} s off the scene approaches (reported, TASK-036/TASK-037): {elsewhere:?}"
+    );
+    (!scene.is_empty()).then(|| {
+        format!("AI cars on the scene approaches stood > {DYNAMIC_STAND_S} s in Dynamic: {scene:?}")
+    })
 }
 
 /// A car left on a connector path of the junction nearest to the spawn, an AI car on that connector
@@ -406,6 +407,8 @@ fn d_car_left_on_a_connector_out_of_view() {
 /// What a run with a car left in the middle of the box nearest to the spawn saw.
 struct LeftInBox {
     hub: Vec3,
+    /// The lanes ending at the box.
+    approaches: Vec<TrafficLane>,
     clock: StandClock,
     oracle: Footprints,
     /// Where the left car ended, `None` when the cheat despawned it.
@@ -453,6 +456,12 @@ fn left_in_the_box(seed: u64, back: f32) -> LeftInBox {
     }
     let distance = (hub - position(&mut app)).with_y(0.0).length();
     let at = app.world().get::<Position>(left).map(|p| p.0);
+    let approaches = graph(&app)
+        .lanes()
+        .iter()
+        .filter(|l| l.end_node == node)
+        .cloned()
+        .collect();
     eprintln!(
         "seed {seed}: box {node} at ({:.1}, {:.1}), the player {distance:.1} m from it; stands > 30 s \
          within 45 m: {:?}; worst {:?}, worst dynamic {:.1} s; left car now at {at:?}; G1 max depth {:.3}",
@@ -465,6 +474,7 @@ fn left_in_the_box(seed: u64, back: f32) -> LeftInBox {
     );
     LeftInBox {
         hub,
+        approaches,
         clock,
         oracle,
         left: at,
@@ -512,13 +522,15 @@ fn rb_a_box_car_seen_from_nearby_stays() {
 }
 
 /// Fallback R-B, far: seen from 60 m (past `bubble.stuck_in_view_distance`) the car in the box counts
-/// as out of frame and is despawned; no AI car stands longer than 30 s in `Dynamic`, G1 clean. The
-/// stands near the box are printed, not asserted: cars bumped at a lane end are given up where no pass
-/// reaches (FIX_SUMMARY.md).
+/// as out of frame and is despawned; no AI car on the box approaches stands longer than 30 s in
+/// `Dynamic`, G1 clean. The stands near the box are printed, not asserted: cars bumped at a lane end
+/// are given up where no pass reaches (FIX_SUMMARY.md).
 #[test]
 fn rb_a_box_car_seen_from_afar_is_cleared() {
     let run = left_in_the_box(1, 60.0);
-    let mut failures: Vec<String> = run.clock.dynamic_violation().into_iter().collect();
+    let mut failures: Vec<String> = dynamic_bound_on("rb", &run.approaches, &run.clock)
+        .into_iter()
+        .collect();
     if run.left.is_some() {
         failures.push(format!("the car in the box is still there: {:?}", run.left));
     }

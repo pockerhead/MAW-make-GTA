@@ -42,8 +42,8 @@ pub fn traffic_floor(
     test_graph(&mut app, nodes, &edges);
     settle(&mut app);
     let cfg = app.world().resource::<TrafficConfig>().clone();
-    let half = app.world().resource::<VehicleConfig>().half_extents().x;
-    let graph = TrafficGraph::new(lanes, connectors, &cfg, half)
+    let half = app.world().resource::<VehicleConfig>().half_extents();
+    let graph = TrafficGraph::new(lanes, connectors, &cfg, Vec2::new(half.x, half.z))
         .unwrap_or_else(|e| panic!("GATE BROKEN: test traffic graph: {e}"));
     app.world_mut().insert_resource(graph);
     app

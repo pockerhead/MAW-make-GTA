@@ -31,6 +31,22 @@ code. This task moves them onto the shared API, one row per consumer:
    the G1 oracle caught two granted left turns from adjacent approaches interpenetrating by 0.34 m
    (TASK-032 `REDESIGN_NOTE.md`, `scratch/g6/g1_flip_trace.txt`, seed 5). Conflicts from swept car
    rectangles, gated against `traffic_gridlock` throughput.
+   Added by TASK-038 (the swept-rectangle conflicts shipped there, `graph.rs` `body_sweep`):
+   - Cost: connector pairs allowed to hold grants together fell 2340 -> 1323 on seed 1 (-43 %, 52-58 %
+     kept on seeds 1..8), every lost pair involving a right turn; opposite straights unaffected. Root:
+     citygen right-turn connectors are ~2-2.6 m long (radius ~1.7 m), so a 4.08 m body pivots almost in
+     place and its nose and rear sweep the neighbouring lanes. Conflict points (or a wider right-turn
+     radius in citygen) are where that capacity comes back.
+   - `box_rules::connector_rects` (used by `connector_clear`, `junction.rs:109`) still models a body on
+     a connector as centre line +- half width; the unmargined body corners reach 0.87-0.91 m past that
+     band on every seed (right-turn pivot). A body the conflict table does not know (a stuck holder
+     demoted while it stands on its connector, `junction.rs:149-153`, still kinematic; a box passer; a
+     left car) in that overhang does not stop a grant on a conflicting connector: a kinematic car drives
+     through it. Not reproduced in a scene. Add a G1 fixture: a kinematic car demoted on a right-turn
+     connector, a conflicting connector granted. Swapping in `body_sweep` shapes changes repick/stuck
+     behaviour (it reaches 4 m onto the exit lane) and needs its own measurement.
+   - Neither the table nor the `traffic_graph` oracle models a car entering a connector with a residual
+     lateral offset (`lateral.rs` `effective_lateral`, a yield or lane pass ending near the box).
 
 Traffic lights (P1) stay outside the GDD and this task.
 

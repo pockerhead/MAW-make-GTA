@@ -1,6 +1,12 @@
 //! Traffic graph over real cities (GDD §5.2, T15): built from citygen without an App for seeds 1..=8.
 //! Correctness: inner lanes only, every lane leads on, every intersection is connected, and no car
 //! following a connector clips a city block (a kinematic car does not collide with static geometry).
+//! Correctness (TASK-038): two cars on connectors the conflict table lets hold grants together never
+//! touch (kinematic cars pass through each other: the G1 class). The oracle shares with the table the
+//! pose (`graph.pose`, what kinematic cars drive) and the extent (nose at the connector start to rear at
+//! its end); it does not cover a holder waiting with its nose past the stop line, a car entering with a
+//! residual lateral offset (`effective_lateral`), or a touch thinner than its own 0.1 m sampling (the
+//! corners of a right-turn pivot move up to ~0.5 m between its samples).
 
 mod common;
 
@@ -41,7 +47,7 @@ fn city_graphs_are_sound() {
     let curb_lane = params.half_carriageway(RoadClass::Avenue) - params.parking.curb_offset;
     for seed in 1..=8u64 {
         let layout = generate(seed, &params).expect("GATE BROKEN: city generation");
-        let graph = TrafficGraph::from_layout(&layout, &params, &cfg, half.x)
+        let graph = TrafficGraph::from_layout(&layout, &params, &cfg, Vec2::new(half.x, half.z))
             .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         assert!(
             !graph.lanes().is_empty(),
@@ -121,5 +127,73 @@ fn city_graphs_are_sound() {
                 }
             }
         }
+    }
+}
+
+/// Body centre poses (point, tangent) every `step` m along connector `c`, from its nose at the
+/// connector start (centre on the source lane) to its rear at the connector end (on the exit lane).
+fn body_poses(graph: &TrafficGraph, c: u32, half_length: f32, step: f32) -> Vec<(Vec3, Vec3)> {
+    let conn = graph.connector(c);
+    let (from, to) = (conn.from_lane, conn.to_lane);
+    let span = conn.length + 2.0 * half_length;
+    let count = (span / step).ceil() as u32;
+    (0..=count)
+        .map(|k| {
+            let s = -half_length + span * k as f32 / count as f32;
+            if s < 0.0 {
+                graph.pose(Segment::Lane(from), graph.lane(from).length + s)
+            } else if s > conn.length {
+                graph.pose(Segment::Lane(to), s - conn.length)
+            } else {
+                graph.pose(Segment::Connector(c), s)
+            }
+        })
+        .collect()
+}
+
+/// Oracle independent of the conflict code: unmargined car corners every 0.1 m and citygen's SAT.
+#[test]
+fn cars_granted_together_never_touch() {
+    let (params, cfg, vehicle) = configs();
+    let half = vehicle.half_extents();
+    for seed in 1..=8u64 {
+        let layout = generate(seed, &params).expect("GATE BROKEN: city generation");
+        let graph = TrafficGraph::from_layout(&layout, &params, &cfg, Vec2::new(half.x, half.z))
+            .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        let poses: Vec<Vec<(Vec3, Vec3)>> = (0..graph.connectors().len() as u32)
+            .map(|c| body_poses(&graph, c, half.z, 0.1))
+            .collect();
+        let mut checked = 0u32;
+        let mut touching = Vec::new();
+        for (i, a) in graph.connectors().iter().enumerate() {
+            for (j, b) in graph.connectors().iter().enumerate().skip(i + 1) {
+                if a.node != b.node || a.conflicts.contains(&(j as u32)) {
+                    continue;
+                }
+                checked += 1;
+                let depth = poses[i]
+                    .iter()
+                    .flat_map(|pa| poses[j].iter().map(move |pb| (pa, pb)))
+                    .filter(|(pa, pb)| pa.0.distance(pb.0) < 2.0 * half.xz().length())
+                    .map(|(pa, pb)| {
+                        convex_overlap(&footprint(pa.0, pa.1, half), &footprint(pb.0, pb.1, half))
+                    })
+                    .fold(0.0, f32::max);
+                if depth > 0.0 {
+                    touching.push((i, j, a.node, depth));
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "GATE BROKEN: seed {seed}: no non-conflicting pair checked"
+        );
+        eprintln!("seed {seed}: {checked} connector pairs may hold grants together");
+        assert!(
+            touching.is_empty(),
+            "seed {seed}: {} of {checked} pairs granted together touch (connector, connector, node, depth m): {:?}",
+            touching.len(),
+            &touching[..touching.len().min(10)]
+        );
     }
 }

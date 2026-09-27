@@ -169,6 +169,10 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
   объезжают по встречке; застрявшая вне кадра машина исчезает; с сиреной трафик прижимается к бордюру, полиция едет по
   любой полосе и появляется впереди и сбоку. Погоня t15: полиция прижимает в 20 из 24 прогонов. Остаток: машина,
   брошенная посреди перекрёстка на виду, всё ещё может запереть подъезд (TASK-037).
+- TASK-038: готов — хотфикс CI после TASK-032. На Linux-раннере симуляция шла по другой траектории (системные
+  `atan2`/`sin`/`cos` в Windows и Linux расходятся на 1-2 последних бита) и вскрыла настоящий баг: две машины на
+  соседних поворотах могли войти друг в друга. Перекрёсток теперь считает конфликты по кузову в повороте, а не по
+  осевым линиям.
 - Следующие: TASK-028 (CI релизов), TASK-037 (затор в перекрёстке на виду), TASK-036 (пешеходы обходят машины).
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
 
@@ -180,9 +184,9 @@ GitHub Actions на Linux (ubuntu-latest, Rust 1.95.0). Пять тестовы�
 | Workflow | Что запускает | Тесты |
 |---|---|---|
 | clippy | `cargo clippy --workspace --all-targets -- -D warnings` и отдельно `-p gta_sim -p citygen` (свой набор фич Bevy) | — |
-| sim gates | `cargo test -p gta_sim`: геймплей в headless Bevy App, конфиги и манифест ассетов | 378 passed, 2 ignored |
+| sim gates | `cargo test -p gta_sim`: геймплей в headless Bevy App, конфиги и манифест ассетов | 558 passed, 9 ignored |
 | citygen gates | `cargo test -p citygen`: генератор города, golden-хеши раскладки | 32 passed, 3 ignored |
-| client gates | `cargo test -p gta_like --bin gta_like`: гейты презентации на MinimalPlugins + GLB Kenney, звук | 77 passed |
+| client gates | `cargo test -p gta_like --bin gta_like`: гейты презентации на MinimalPlugins + GLB Kenney, звук | 82 passed |
 | repo checks | `tree_check.py` (нет `bevy_render` в gta_sim, пины версий), `font_check.py` (глифы UI в Inter), `test_brp.py` | 3 проверки |
 | release | тег `v*`: zip под Linux и Windows (ubuntu-24.04, windows-2025), проверка zip, boot smoke на обеих ОС, `cargo test -p gta_sim -p citygen`, GitHub Release. Изменения файлов релиза и ручной запуск: только zip артефактами ([ADR-002](docs/decisions/ADR-002-release-ci.md)) | — |
 
@@ -196,14 +200,14 @@ GitHub Actions на Linux (ubuntu-latest, Rust 1.95.0). Пять тестовы�
 Codex — события `turn.completed`) и переведены в цены публичных API. Реально работа идёт по подпискам
 (Claude Max, ChatGPT), так что это оценка "сколько стоило бы через API", а не счёт.
 
-Обновлено: 2026-09-27 01:22. Закрыто задач: 30. Время работы агентов: ~88 ч.
+Обновлено: 2026-09-27 06:37. Закрыто задач: 31. Время работы агентов: ~92 ч.
 
 | Кто | Вход | Выход | ≈ USD |
 |---|---|---|---|
-| Claude Opus 5.5 (оркестратор + сабагенты) | 0.03M без кэша, 3297M чтение кэша, 83.5M запись в кэш | 4.37M | $1164–1414 |
+| Claude Opus 5.5 (оркестратор + сабагенты) | 0.03M без кэша, 3398M чтение кэша, 88.7M запись в кэш | 4.54M | $1214–1480 |
 | Codex `gpt-6-sol` | 175.6M вход (из них 171.2M из кэша) | 0.46M | $48 |
 | Codex `gpt-5.6-sol` | 3.7M вход (из них 3.6M из кэша) | 0.03M | $2 |
-| **Итого** | | | **$1214–1464** |
+| **Итого** | | | **$1264–1530** |
 
 Цены за 1M токенов: Opus 5.5 — $4 вход / $20 выход / $0.20 чтение кэша / $5–8 запись в кэш (TTL 5 мин или 1 ч);
 gpt-6-sol — $2 / $10 / $0.20 кэш; gpt-5.6-sol — $4 / $20 / $0.40 кэш. Вилка — из-за неизвестного TTL записи в кэш.
