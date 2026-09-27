@@ -152,6 +152,8 @@
 
 - **One traffic rule change moves every city trajectory (TASK-037).** A red elsewhere is usually a latent bug the new trajectory reaches (avenue seed 2: a merge-back swinging its corner into the oncoming lane), not the change. Trace the contact before blaming or reverting. Runtime harnesses that snap a car by BRP can teleport it onto a waiting queue head; verify the snap's neighbourhood.
 
+- **Fix-induced seams in traffic (TASK-036).** (1) Ending a lock can expose the contact it was hiding (a yield freed from the box drove out at 3.25 m offset into a co-granted car): run the contact oracle sweep on the FIXED code, not only on HEAD. (2) A truer path predicate can turn a flowing approach into a whole-box queue: before tightening `connector_clear`-like checks, count per approach how many exits stay open next to a standing body and rerun the left-car city rows. (3) A manoeuvre gate starts the manoeuvre through its real start rule (spawn the siren car, let `sirens::update` choose), never by writing `manoeuvre = ...`; otherwise a later start guard makes it vacuous. (4) Seed-city avenue curb lanes hold parked cars: curb-lane fixtures remove them (named mutation) and assert the shift completed. Trigger: liveness fixes in junctions, `connector_clear`/`repick`, gates writing `TrafficCar` state, `curb_lane` rows in `city_app`.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

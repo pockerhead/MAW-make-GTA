@@ -338,7 +338,7 @@ pub(super) fn advance_traffic(
         &lane_start_free,
         &junction::BoxInputs {
             road: &road,
-            half_width: half.x + cfg.conflict_margin / 2.0,
+            body: Vec2::new(half.x, half.z),
             stuck_seconds: cfg.pass.vehicle_seconds,
         },
     );

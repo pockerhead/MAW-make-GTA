@@ -65,3 +65,6 @@ and crossing cars now see a car held on its connector without a grant. They are 
 
 ## Added by TASK-037 QA
 - The "second shape": the player's car left at a box entry, pressed against the approach head, freezes that approach (twice in runtime: 15 cars > 30 s, once with 4 `Dynamic` cars at 149 s). It is the same class D trigger (a `Vehicle` switch at contact with a standing body). Evidence: `maw/tasks/done/TASK-037/QA_REPORT.md`, `scratch/qa/r1/A_*`.
+
+## Added by TASK-036 fixer
+- `traffic_causes::r1_car_left_in_the_box_seed_7` is ignored again, class E: TASK-036's real-body path check (`box_rules::connector_body`) blocks all three exits of box 84's east approach (lane 297; the old band left right turn 713 clear), so the queue stands 50.9 s Windows / 57.8 s Linux (bound 30 s). Un-ignore it here. Evidence: `maw/tasks/in_progress/TASK-036/scratch/stage4/r1_trace_fixed.txt` (and `r1_trace_head.txt`).

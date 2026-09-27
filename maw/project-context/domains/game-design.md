@@ -89,6 +89,8 @@
 
 - **Walk-around steering (TASK-037).** Civilians had no car avoidance: a car standing in a crosswalk pinned walkers at gap 0 for 30-90 s, and the car never recovered while they stayed inside its skin. `tactics::around_cars` (shared by walkers and cops) must use the walker's width, not its centre line, and score corners by the shortest way round the car, not the straight line to the target; otherwise it grazes and sticks, or dithers (1100+ flips in 20 s) for a near target diagonally behind the car.
 
+- **Walker stalls: trace targets before naming a crowd rule (TASK-036).** 11-13 walkers orbiting a parked car for 70-118 s were an unreachable waypoint under the car (`arrive_radius` 0.5 m, node inside the body), not counter-flow (0 counter-flow neighbours in 6361 samples). `civilian::reached` counts a covered waypoint as reached beside the car; corner targets shift `keep_right` away from the car (never towards it). Walkers still have no walker-walker avoidance (two opposing walkers between two standing cars press ~16 s). A manoeuvre handled only on lanes must end or be guarded at the box (`sirens::update` returned early off a lane). Trigger: `arrive_radius`, `lane_target`, `around_cars` callers, `let Segment::Lane(..) = .. else { return }` in manoeuvre code.
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

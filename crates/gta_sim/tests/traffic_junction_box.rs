@@ -4,10 +4,12 @@
 //! that box most used so far. The body stays in frame within `bubble.stuck_in_view_distance` for the
 //! whole run, so the stuck cheat never hides a late lock (`GATE BROKEN` otherwise).
 //!
-//! - Lease (correctness): no grant holder whose connector runs through the body and that has not
-//!   moved keeps its grant against a waiter for a conflicting connector longer than the shipped
-//!   `reservation_timeout` plus 1 s, whether it stands before its stop line, past it or on its
-//!   connector (a holder waiting for walkers keeps its lease: TASK-033).
+//! - Lease (correctness): no grant holder with the body on its path and that has not moved keeps its
+//!   grant against a waiter for a conflicting connector longer than the shipped `reservation_timeout`
+//!   plus 1 s, whether it stands before its stop line, past it or on its connector (a holder waiting
+//!   for walkers keeps its lease: TASK-033). "On its path" is the box rule since TASK-036: the holder's
+//!   body driven on along its connector from where it stands overlaps the body (stricter than the old
+//!   centre-line band, it adds rear-swing holders; exact about holders already past the body).
 //! - G1 oracle clean.
 //! - Liveness, asserted only in the `_liveness` rows. The player watching the box from nearby keeps
 //!   the car there (the stuck cheat's in-view rule). Seed 1 passes since TASK-037 (bumped cars recover
@@ -28,8 +30,8 @@ use bevy::prelude::*;
 use common::*;
 use gta_sim::{
     traffic::{
-        Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections, TrafficMode,
-        in_frame,
+        FlatRect, Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections,
+        TrafficMode, in_frame,
     },
     vehicle::{Vehicle, VehicleConfig},
     world::PlayerSpawn,
@@ -52,6 +54,29 @@ struct Run {
     oracle: Footprints,
     grants_at: u32,
     dynamic: Option<String>,
+}
+
+/// The body lies on connector `k`'s path from `from_s`: a car body driven on along `k` to its end (0.1 m
+/// steps) overlaps it.
+fn on_path(graph: &TrafficGraph, k: u32, from_s: f32, half: Vec2, body: &FlatRect) -> bool {
+    let seg = Segment::Connector(k);
+    let length = graph.length(seg);
+    let mut s = from_s.clamp(0.0, length);
+    loop {
+        let (p, t) = graph.pose(seg, s);
+        let rect = FlatRect {
+            centre: Vec2::new(p.x, p.z),
+            axis: Vec2::new(-t.z, t.x).normalize_or(Vec2::X),
+            half,
+        };
+        if obb_overlap(&rect, body) {
+            return true;
+        }
+        if s >= length {
+            return false;
+        }
+        s = (s + 0.1).min(length);
+    }
 }
 
 /// Grants of each connector of `node` over the first `PLACE_AT` s.
@@ -134,24 +159,9 @@ fn run(seed: u64, extra: bool) -> Run {
             .push((c, car));
         car
     });
-    // Connectors whose path runs through the body (footprint against the connector's car band).
-    let body_rect = footprint(&app, body);
-    let through: Vec<u32> = (0..graph.connectors().len() as u32)
-        .filter(|&k| {
-            graph.connector(k).points.windows(2).any(|w| {
-                let d = (w[1] - w[0]).with_y(0.0);
-                let length = d.length().max(1e-4);
-                let band = gta_sim::traffic::FlatRect {
-                    centre: Vec2::new((w[0].x + w[1].x) / 2.0, (w[0].z + w[1].z) / 2.0),
-                    axis: Vec2::new(-d.z, d.x) / length,
-                    half: Vec2::new(half.x, length / 2.0),
-                };
-                obb_overlap(&band, &body_rect)
-            })
-        })
-        .collect();
+    let body_half = Vec2::new(half.x, half.z);
     assert!(
-        through.contains(&c),
+        on_path(&graph, c, 0.0, body_half, &footprint(&app, body)),
         "GATE BROKEN: the body is not on its own connector's path"
     );
     let mut clock = StandClock::default();
@@ -182,6 +192,7 @@ fn run(seed: u64, extra: bool) -> Run {
             .filter(|(_, c, _)| matches!(c.mode, TrafficMode::Kinematic | TrafficMode::Dynamic))
             .map(|(e, c, v)| (e, (*c, v.0.with_y(0.0).length() < 0.5)))
             .collect();
+        let body_rect = footprint(&app, body);
         let mut live = HashMap::new();
         for (n, j) in &app.world().resource::<TrafficIntersections>().0 {
             for &(k, e) in &j.occupants {
@@ -192,9 +203,14 @@ fn run(seed: u64, extra: bool) -> Run {
                     continue;
                 };
                 let conn = graph.connector(k);
+                let from_s = if car.segment == Segment::Connector(k) {
+                    car.s
+                } else {
+                    0.0
+                };
                 let holding = (car.segment == Segment::Connector(k)
                     || car.segment == Segment::Lane(conn.from_lane))
-                    && through.contains(&k);
+                    && on_path(&graph, k, from_s, body_half, &body_rect);
                 let contested = j.waiters.iter().any(|w| conn.conflicts.contains(&w.2));
                 let held = if stands && holding && contested {
                     stale.get(&(k, e)).copied().unwrap_or(0) + 1

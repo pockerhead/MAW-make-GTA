@@ -17,7 +17,7 @@ use crate::navigation::{
 use crate::occupancy::{Footprint, RoadBody, RoadOccupancy, flat};
 use crate::perception::{AiSystems, Cause, Perception, Threat, ThreatKind};
 use crate::population::{Appearance, NpcRng, Offscreen, corpse_components};
-use crate::tactics::{CarRect, around_cars};
+use crate::tactics::{CarRect, around_cars, car_blocks};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand_chacha::ChaCha8Rng;
@@ -424,7 +424,26 @@ fn next_state(
     }
 }
 
-/// Takes the next edge on arrival at the lane target of `to`; may stop a wanderer there.
+/// Within `arrive_radius` of `target`, or `target` lies under a standing car (grown by `clearance`) and the
+/// walker is within `corner + arrive_radius` of that same car: a waypoint under a car is reached beside it.
+fn reached(
+    position: Vec3,
+    target: Vec3,
+    cars: &[CarRect],
+    clearance: f32,
+    corner: f32,
+    arrive_radius: f32,
+) -> bool {
+    flat_distance(position, target) <= arrive_radius
+        || cars.iter().any(|car| {
+            car_blocks(target, target, car, clearance)
+                && car_blocks(position, position, car, corner + arrive_radius)
+        })
+}
+
+/// Takes the next edge on arrival at the lane target of `to`; may stop a wanderer there. A waypoint
+/// under a standing car is reached beside that car.
+#[allow(clippy::too_many_arguments)]
 fn arrive(
     state: CivilianState,
     walker: &mut GraphWalker,
@@ -432,9 +451,11 @@ fn arrive(
     nav: &NavigationConfig,
     ctx: &Context,
     rng: &mut NpcRng,
+    cars: &[CarRect],
+    (clearance, corner): (f32, f32),
 ) -> CivilianState {
     let target = lane_target(ctx.graph, *walker, nav.keep_right);
-    if flat_distance(position, target) > nav.arrive_radius {
+    if !reached(position, target, cars, clearance, corner, nav.arrive_radius) {
         return state;
     }
     let next = match state {
@@ -473,6 +494,32 @@ fn standing_cars(bodies: &[RoadBody], at: Vec3, reach: f32) -> Vec<CarRect> {
             _ => None,
         })
         .collect()
+}
+
+/// A corner target of `around_cars` moved `keep_right` across the walker's travel to the side away
+/// from the standing cars: lane targets keep right, and a walker heading for a bare corner met one
+/// leaving the car on the same line, head-on (TASK-036).
+fn off_corner(position: Vec3, corner: Vec3, cars: &[CarRect], keep_right: f32) -> Vec3 {
+    let across = flat(corner - position).normalize_or_zero().perp() * keep_right;
+    let at = flat(corner);
+    let gap = |p: Vec2| {
+        cars.iter()
+            .map(|car| car_gap(p, car))
+            .fold(f32::INFINITY, f32::min)
+    };
+    let side = if gap(at + across) >= gap(at - across) {
+        across
+    } else {
+        -across
+    };
+    corner + Vec3::new(side.x, 0.0, side.y)
+}
+
+/// Distance from `p` to the body of `car`, m.
+fn car_gap(p: Vec2, car: &CarRect) -> f32 {
+    let d = p - car.centre;
+    let local = Vec2::new(d.dot(car.axis), d.dot(car.axis.perp())).abs();
+    (local - car.half).max(Vec2::ZERO).length()
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -523,7 +570,17 @@ fn civilian_fsm(
                 about,
             });
         }
-        let state = arrive(state, &mut walker, position.0, &nav, &ctx, &mut rng);
+        let cars = standing_cars(road.bodies(), position.0, nav.avoid_distance);
+        let state = arrive(
+            state,
+            &mut walker,
+            position.0,
+            &nav,
+            &ctx,
+            &mut rng,
+            &cars,
+            (loco.capsule_radius, loco.capsule_radius + nav.arrive_radius),
+        );
         civilian.state = state;
         let gait = match state {
             CivilianState::Wander => cfg.wander_gait,
@@ -536,13 +593,19 @@ fn civilian_fsm(
         intent.axis = Vec2::Y;
         intent.gait = gait;
         // Around a standing car in the way, at the police arrest clearance and corner.
+        let to = lane_target(&graph, *walker, nav.keep_right);
         let target = around_cars(
             position.0,
-            lane_target(&graph, *walker, nav.keep_right),
-            &standing_cars(road.bodies(), position.0, nav.avoid_distance),
+            to,
+            &cars,
             loco.capsule_radius,
             loco.capsule_radius + nav.arrive_radius,
         );
+        let target = if target == to {
+            to
+        } else {
+            off_corner(position.0, target, &cars, nav.keep_right)
+        };
         if let Some(yaw) = steer(position.0, target) {
             intent.yaw = yaw;
         }
@@ -593,5 +656,47 @@ mod tests {
         let kept = standing_cars(&bodies, Vec3::ZERO, 2.0);
         assert_eq!(kept.len(), 1, "{kept:?}");
         assert!((kept[0].centre - Vec2::new(3.0, 0.0)).length() < 1e-6);
+    }
+
+    fn rect_at(x: f32) -> CarRect {
+        CarRect {
+            centre: Vec2::new(x, 0.0),
+            axis: Vec2::X,
+            half: Vec2::new(1.2, 2.04),
+        }
+    }
+
+    /// One row per branch of `reached` (clearance 0.3, corner 0.8, arrive radius 0.5).
+    #[test]
+    fn reached_rows() {
+        let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+        let reach = |p: Vec3, t: Vec3, cars: &[CarRect]| reached(p, t, cars, 0.3, 0.8, 0.5);
+        let one = [rect_at(0.0)];
+        let two = [rect_at(0.0), rect_at(10.0)];
+        // (a), (b): no car, 0.4 m / 0.6 m from the target.
+        assert!(reach(at(0.4, 0.0), at(0.0, 0.0), &[]), "(a)");
+        assert!(!reach(at(0.6, 0.0), at(0.0, 0.0), &[]), "(b)");
+        // (c): the target under the car, the walker 1.0 m off its flank (inside 1.2 + 1.3).
+        assert!(reach(at(2.2, 0.0), at(0.5, 0.0), &one), "(c)");
+        // (d): the same target, the walker 3.0 m off the flank.
+        assert!(!reach(at(4.2, 0.0), at(0.5, 0.0), &one), "(d)");
+        // (e): the target 0.8 m off the flank (outside the car grown by 0.3), the walker 2.01 m from it.
+        assert!(!reach(at(2.2, 2.0), at(2.0, 0.0), &one), "(e)");
+        // (f): the target under car 1, the walker beside car 2 (7.3 m from car 1).
+        assert!(!reach(at(7.8, 0.0), at(0.5, 0.0), &two), "(f)");
+    }
+
+    /// A corner target moves `keep_right` across the travel away from the car, on either side of it.
+    #[test]
+    fn off_corner_rows() {
+        let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+        let one = [rect_at(0.0)];
+        let close = |a: Vec3, b: Vec3| a.abs_diff_eq(b, 1e-5);
+        // Along the +x flank towards +z: the car on the walker's right, the shift to its left.
+        let left = off_corner(at(2.0, -4.0), at(2.0, 2.84), &one, 0.5);
+        assert!(close(left, at(2.5, 2.84)), "car on the right: {left}");
+        // Along the same flank towards -z: the car on the walker's left, the shift to its right.
+        let right = off_corner(at(2.0, 4.0), at(2.0, -2.84), &one, 0.5);
+        assert!(close(right, at(2.5, -2.84)), "car on the left: {right}");
     }
 }

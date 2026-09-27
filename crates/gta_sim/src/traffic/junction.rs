@@ -7,10 +7,10 @@
 //! its connector never locks the node.
 //!
 //! The box (TASK-032): a grant also needs its connector path clear of bodies the conflict table does
-//! not know (`box_rules`); a holder on its connector or past its stop line whose path such a body has
-//! blocked, and that has not moved for the lease while contested, is demoted to a waiter where it
-//! stands; a queue head whose path a standing
-//! body blocks takes another exit (a car at the very start of its connector too).
+//! not know (`box_rules`; the path check drives the requester's body on from where it stands); a
+//! holder on its connector or past its stop line whose path such a body has blocked, and that has not
+//! moved for the lease while contested, is demoted to a waiter where it stands; a queue head whose
+//! path a standing body blocks takes another exit (a car at the very start of its connector too).
 
 use super::box_rules::{connector_clear, repick};
 use super::drive::{Occupancy, Snap};
@@ -42,8 +42,8 @@ pub(super) fn has_grant(
 /// What the box rules read.
 pub(super) struct BoxInputs<'a> {
     pub road: &'a RoadOccupancy,
-    /// Car half width plus half the conflict margin, m.
-    pub half_width: f32,
+    /// Car half extents (across, along), m: the body the path check drives along a connector.
+    pub body: Vec2,
     /// A body standing this long on a chosen path makes the queue head take another exit, s.
     pub stuck_seconds: f32,
 }
@@ -53,6 +53,15 @@ pub(super) struct BoxInputs<'a> {
 /// one); 1 m along they lie at most 0.42 m apart (seeds 1 and 7, every lane end), so the switch moves
 /// the car sideways by no more than the 0.425 m its lane leaves beside it (w/2 − half width).
 const REPICK_WITHIN: f32 = 1.0;
+
+/// Where the car stands along connector `c`: its `s` on it, else 0 (on its source lane).
+fn from_s(snap: &Snap, c: u32) -> f32 {
+    if snap.car.segment == Segment::Connector(c) {
+        snap.car.s
+    } else {
+        0.0
+    }
+}
 
 /// Room left at the start of `lane` behind its last car, m.
 fn room(graph: &TrafficGraph, occupancy: &Occupancy, lane: u32, half_length: f32) -> f32 {
@@ -106,8 +115,17 @@ pub(super) fn update(
     let mut body_blocked: HashSet<(u32, Entity)> = HashSet::new();
     for junction in junctions.0.values() {
         for &(c, e) in &junction.occupants {
+            // Read below only for a holder on its source lane or connector: on the exit lane its
+            // path is behind it.
+            let Some(&k) = index.get(&e) else {
+                continue;
+            };
+            if snaps[k].car.segment == Segment::Lane(graph.connector(c).to_lane) {
+                continue;
+            }
+            let from = from_s(&snaps[k], c);
             let blocker =
-                connector_clear(boxes.road, graph, Some(junction), c, e, boxes.half_width)
+                connector_clear(boxes.road, graph, Some(junction), c, from, e, boxes.body)
                     .and_then(|b| boxes.road.body(b));
             if blocker.is_some_and(|b| b.standing >= boxes.stuck_seconds) {
                 body_blocked.insert((c, e));
@@ -222,7 +240,8 @@ pub(super) fn update(
         let node = graph.connector(c).node;
         if at_start || (!on_connector && heads.contains(&snap.entity)) {
             let here = junctions.0.get(&node);
-            let stuck = connector_clear(boxes.road, graph, here, c, snap.entity, boxes.half_width)
+            let from = from_s(snap, c);
+            let stuck = connector_clear(boxes.road, graph, here, c, from, snap.entity, boxes.body)
                 .and_then(|b| boxes.road.body(b))
                 .is_some_and(|b| b.standing >= boxes.stuck_seconds);
             let other = if stuck {
@@ -232,8 +251,9 @@ pub(super) fn update(
                     here,
                     lane,
                     c,
+                    from,
                     snap.entity,
-                    boxes.half_width,
+                    boxes.body,
                 )
             } else {
                 None
@@ -281,7 +301,8 @@ pub(super) fn update(
     let mut blocked: HashMap<(Entity, u32), Option<f32>> = HashMap::new();
     for junction in junctions.0.values() {
         for &(_, e, c) in &junction.waiters {
-            let body = connector_clear(boxes.road, graph, Some(junction), c, e, boxes.half_width);
+            let from = index.get(&e).map_or(0.0, |&k| from_s(&snaps[k], c));
+            let body = connector_clear(boxes.road, graph, Some(junction), c, from, e, boxes.body);
             let standing = body.map(|b| boxes.road.body(b).map_or(0.0, |b| b.standing));
             blocked.insert((e, c), standing);
         }

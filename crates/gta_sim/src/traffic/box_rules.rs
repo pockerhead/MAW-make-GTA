@@ -2,40 +2,55 @@
 //! table does not know (a car left in the box, a demoted holder, a passer); a queue head whose path is
 //! blocked by a standing body takes another exit, or enters alone and goes around it (the whole box).
 
-use super::lateral::right_of;
+use super::lateral::{CORRIDOR_LATERAL_STEP, CORRIDOR_YAW_STEP_DEG, right_of};
 use super::{FlatRect, Junction, Manoeuvre, Segment, TrafficConfig, TrafficGraph};
 use crate::occupancy::{BodyKind, ClaimFilter, Footprint, RoadOccupancy, flat, world_clear};
 use crate::vehicle::VehicleConfig;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-/// The connector's polyline as rectangles (no end caps), `half_width` either side.
-pub(super) fn connector_rects(graph: &TrafficGraph, c: u32, half_width: f32) -> Vec<FlatRect> {
-    graph
-        .connector(c)
-        .points
-        .windows(2)
-        .filter_map(|w| {
-            let d = (w[1] - w[0]).with_y(0.0);
-            let length = d.length();
-            (length > 1e-4).then(|| FlatRect {
-                centre: flat((w[0] + w[1]) / 2.0),
-                axis: flat(right_of(d / length)).normalize_or(Vec2::X),
-                half: Vec2::new(half_width, length / 2.0),
-            })
-        })
-        .collect()
+/// The requester's body driven on along connector `c` from `from_s` to its end (centre on the connector;
+/// the corridor steps bound the corner chord). `half`: (across, along).
+pub(super) fn connector_body(
+    graph: &TrafficGraph,
+    c: u32,
+    from_s: f32,
+    half: Vec2,
+) -> Vec<FlatRect> {
+    let seg = Segment::Connector(c);
+    let length = graph.length(seg);
+    let pose = |s: f32| {
+        let (point, tangent) = graph.pose(seg, s);
+        let rect = FlatRect {
+            centre: flat(point),
+            axis: flat(right_of(tangent)).normalize_or(Vec2::X),
+            half,
+        };
+        (rect, flat(tangent).normalize_or_zero())
+    };
+    let mut s = from_s.clamp(0.0, length);
+    let mut rects = vec![pose(s).0];
+    while s < length {
+        let step = CORRIDOR_LATERAL_STEP.min(length - s);
+        let turn = pose(s).1.angle_to(pose(s + step).1).abs();
+        let n = (turn / CORRIDOR_YAW_STEP_DEG.to_radians()).ceil().max(1.0) as u32;
+        rects.extend((1..=n).map(|k| pose(s + step * k as f32 / n as f32).0));
+        s += step;
+    }
+    rects
 }
 
-/// The first body or claim on connector `c`'s path, other than `requester`, walkers (the strips
-/// handle them) and AI cars granted at the node (the conflict table covers those).
+/// The first body or claim on connector `c`'s path (the requester's body driven on along the connector
+/// from where it stands, `from_s`), other than `requester`, walkers (the strips handle them) and AI
+/// cars granted at the node (the conflict table covers those).
 pub(super) fn connector_clear(
     road: &RoadOccupancy,
     graph: &TrafficGraph,
     junction: Option<&Junction>,
     c: u32,
+    from_s: f32,
     requester: Entity,
-    half_width: f32,
+    half: Vec2,
 ) -> Option<Entity> {
     let granted = |e: Entity| junction.is_some_and(|j| j.occupants.iter().any(|o| o.1 == e));
     let skip = |b: &crate::occupancy::RoadBody| {
@@ -43,26 +58,29 @@ pub(super) fn connector_clear(
             || b.kind == BodyKind::Character
             || (matches!(b.kind, BodyKind::OnPathTraffic | BodyKind::Traffic) && granted(b.entity))
     };
-    connector_rects(graph, c, half_width)
+    connector_body(graph, c, from_s, half)
         .iter()
         .find_map(|r| road.blocked(r, skip, ClaimFilter::Except(requester)))
 }
 
-/// Another exit of `lane` after `current` (in `out` order) whose path is clear; no random draw.
+/// Another exit of `lane` after `current` (in `out` order) whose path from `from_s` is clear; no
+/// random draw.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn repick(
     road: &RoadOccupancy,
     graph: &TrafficGraph,
     junction: Option<&Junction>,
     lane: u32,
     current: u32,
+    from_s: f32,
     requester: Entity,
-    half_width: f32,
+    half: Vec2,
 ) -> Option<u32> {
     let out = &graph.lane(lane).out;
     let k = out.iter().position(|&c| c == current).unwrap_or(0);
     (1..out.len())
         .map(|i| out[(k + i) % out.len()])
-        .find(|&c| connector_clear(road, graph, junction, c, requester, half_width).is_none())
+        .find(|&c| connector_clear(road, graph, junction, c, from_s, requester, half).is_none())
 }
 
 /// Point and tangent `s` m along connector `c` (before 0: on its source lane, past its end: on its

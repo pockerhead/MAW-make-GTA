@@ -20,7 +20,9 @@ connectors granted together apart (an unmargined oracle every 0.1 m). Right turn
 everything at their node: citygen's right-turn connectors are ~2-2.6 m long (radius ~1.7 m), so a 4.08 m
 body pivots nearly in place and its nose and rear sweep the neighbouring lanes. The swept rule cut the
 connector pairs that may hold grants together from 2340 to 1323 on seed 1 (52-58 % kept on seeds 1..8;
-opposite straights unaffected); TASK-036 item 4 owns getting that capacity back.
+opposite straights unaffected). That is the known cost of swept conflicts; a conflict-point reservation
+that would bring it back is deferred (TASK-036 rescope: nobody has seen a capacity problem, and
+`traffic_gridlock` holds its 40 s bound).
 
 ## Road occupancy (`occupancy/`, TASK-032)
 
@@ -50,10 +52,11 @@ shrink) and `world_clear` (the static road edge stays an avian box query).
 
 Consumers on it: traffic sensing (two strips, below), the lane-start room check of the junction grants,
 the junction box rules (a connector path free of bodies), the traffic spawner (a spawn spot free of
-every body and claim), the siren yield and the police lane choice. Pending in TASK-036: NPC walk
-avoidance (`navigation::avoid_offset`, `perception::wall_blocked`, walls only), the fire line
-(`tactics::nearby_cars` / `car_blocks`), sight (`perception::sight_blocked`), and a conflict-point
-junction reservation instead of the whole connector.
+every body and claim), the siren yield, the police lane choice, and walkers (civilians walk around the
+standing cars in it since TASK-037, `tactics::around_cars`; since TASK-036 a sidewalk node under a
+standing car counts as reached beside that car). The fire line (`tactics::nearby_cars` / `car_blocks`)
+and sight (`perception::sight_blocked`) keep their own car code: moving them was unification with no
+observed bug, dropped in the TASK-036 rescope.
 
 ## Modes
 
@@ -168,12 +171,41 @@ watches from within `bubble.stuck_in_view_distance` is never removed (TASK-032 R
 locks it caused that were not geometry: cars bumped on a connector stood `Dynamic` forever (now they
 recover there), turning cars stood behind a straight-strip false positive (now the swept body), and
 walkers pinned at the nose of a `Dynamic` head held it (now civilians walk around standing cars,
-`civilian_fsm` via `tactics::around_cars`, which scores a corner by the shortest way round the car).
+`civilian_fsm` via `tactics::around_cars`, which scores a corner by the shortest way round the car). A
+walk target under a standing car is unreachable (`around_cars` never returns a point inside a car), so
+walkers bound for a sidewalk node a left car covers orbited its corners and pressed against each other
+there for 70-118 s (TASK-037 QA R1 spot B). `civilian::arrive` counts such a waypoint as reached once the
+walker is within `corner + arrive_radius` of the covering car (`tests/walk_arrival.rs`). The TASK-037 QA
+hypothesis "walker counter-flow in a narrowed corridor" is refuted for those stalls: 0 of 6361 stalled
+samples had a counter-flowing neighbour. On the Linux trajectory of the same scene two walkers leaving that
+node met head-on at a car corner (one heading for an `around_cars` corner, one for its lane target, intents
+exactly opposite) and stood 89 s: lane targets keep right, corners did not. The civilian caller moves a
+corner target `keep_right` across the walker's travel, away from the standing cars (`civilian::off_corner`;
+never towards a car, where 0.8 - 0.5 m would put the capsule against the body); `around_cars` itself and the
+police arrest path are unchanged (`tests/walk_arrival.rs` A3). Two opposing walkers squeezed between two
+standing cars can still press against each other for a while (16 s in the seed-1 spot-B scene, heading 0);
+walkers have no walker-walker avoidance.
 Open (TASK-039): an approach whose every exit crosses the left car and where no box pass fits (the
 oncoming lane holds its own queue head at the stop line) still locks (G4 seed 7); so does the R1
-seed-1 car switched by the left car appearing in its path (113 s in `Dynamic`). Open (TASK-036 item 4):
-`connector_rects` has no corner overhang, so a grant can be given into a path the swept body finds
-blocked. A push-through by the traffic (a braked car cannot be shoved sideways by the
+seed-1 car switched by the left car appearing in its path (113 s in `Dynamic`). The path check
+(`connector_clear`, TASK-036) drives the requester's real body (chassis half extents, no margin) along its
+connector from where it stands, sampled by the corridor law (`connector_body`). The old check, the
+centre line +- half width with no body length, missed a right-turn pivot's rear swinging 0.87-0.91 m past
+it: a car was granted into a kinematic car standing on a conflicting connector (G1 0.53-0.68 m) or
+stopped by its own sensing beside it with the grant while that car waited for it (a mutual wait). The
+sweep starts at the car, not at connector s 0: from s 0 the rear cap reaches the holder's own lane
+follower (the stop line lies within 2.18 m of the lane end on ~240 of ~580 lanes per seed) and would
+demote a holder waiting for walkers (the TASK-033 lease). It has no margin: a body grown by half the
+conflict margin makes other lanes' queue heads at their stop lines bodies on a turner's path with no
+physical contact. The real body also sees cars spilling back onto another exit lane of the node (353-590
+waiter ticks per seed in `traffic_gridlock`, all refused by the room check too; stands, demotions,
+whole-box grants and re-picks unchanged). The check is guaranteed by the G1 oracle gates, not by the step:
+the 0.01 m shrinks of `blocked` plus the corner sagitta between samples can hide ~0.03 m.
+`tests/traffic_box_overhang.rs` B1-B5. In `traffic_causes` R1 seed 7 the sweep finds every exit of the east
+approach blocked by the left car (the old band left the right turn clear), so each car there needs a
+whole-box grant, which waits for an empty box: stands 50.9 s (Linux 57.8 s) against the 30 s bound. That is
+TASK-039 class E; the row is ignored until TASK-039 (reverting the check would bring back the kinematic
+pass-through). A push-through by the traffic (a braked car cannot be shoved sideways by the
 autopilot, and walkers get pinned between the cars) was tried and dropped.
 
 ## Sirens (`traffic/sirens.rs`, `police/siren.rs`, TASK-032)
@@ -185,7 +217,23 @@ free curb lane of an avenue, else the 0.425 m slack of its own lane, at most at 
 is IDM's rest point, and the car crept forever). It does not yield when the siren car cannot get by (no
 free curb lane and no opposite lane) or within a car length and a jam gap of its lane start (the siren
 car would stand in the box behind it, where it cannot change lanes). It drives on once the siren car is
-past or after `sirens.timeout_seconds`, then ignores sirens that long.
+past or after `sirens.timeout_seconds`, then ignores sirens that long. A yield that reached the box ends
+there (`Manoeuvre::None`, TASK-036): the car drives out with its offset decaying to the connector end
+(before, the yield stop held it in the box with its grant for good). A car must not reach the box at the
+avenue curb offset: the conflict table and its oracle assume a car enters its connector on its line, and
+bodies of connector pairs the table grants together touch from a 2.3-2.5 m entry offset with the decay
+law, 2.7-2.9 m stepped (the 0.425 m slack yield touches nothing). Without a guard a curb yield begun 6-12 m
+before the stop line met a co-granted car (G1 up to 0.48 m). So the curb lane is taken only when the nose
+is at least `yield_reach` before the stop line: the shift at the yield's top speed `max(v, pass.speed)`
+plus the stop from `pass.speed` (22.3 m from 6 m/s, 27.0 m from 16), else the slack. The start is the only
+check: ending a curb yield mid-shift near the box would enter it as an offset Rejoin; a car standing at its
+curb offset at the stop line travels at least half a car length before the connector (>= 1.65 s from
+rest) and enters under 1.93 m. `sirens::tests` replays the tick law against the reach (8.5 m margin); `traffic_box_overhang` C1-C3
+start the yield through a real siren car (C2: refused within the reach, the slack yield ends in the box;
+C3: taken outside it, stands before the stop line). The real-start App sweep (seeds 1/7, three curb pairs
+each, nose 6-12 m and 17.3-32.3 m before the stop line, the other car 0-96 ticks later; the curb cells
+rejoin from their stand after the timeout) is clean; with the guard off it finds G1 0.25-0.40 m on the two
+pairs tried.
 
 A police car with sirens on picks a lateral position on its lane (`SirenLane`, `car.sirens.lane_offsets`
 in lane pitches, the opposite lane at -1): leaving its own lane needs `lane_gain` m more clear road
