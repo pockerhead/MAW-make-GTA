@@ -92,7 +92,7 @@ mod tests {
             ],
             &[(0, 1, 0), (1, 0, 1), (2, 3, 2), (3, 2, 3)],
             &cfg(),
-            1.2,
+            Vec2::new(1.2, 2.04),
         )
         .expect("GATE BROKEN: graph");
         let gap = |k: usize| graph.lanes()[k].left_gap;

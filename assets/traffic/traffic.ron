@@ -14,7 +14,7 @@
     sense_distance: 25.0,             // forward cast on a lane, m past the bumper
     turn_sense_distance: 6.0,         // forward cast on a connector (a straight cast would see corner sidewalks), m
     connector_samples: 8,             // polyline points per connector curve
-    conflict_margin: 0.3,             // m added to the car width when two connector lines count as crossing
+    conflict_margin: 0.3,             // m of clearance two connectors' lines and car bodies need not to conflict
     // A junction grant is a lease: it lapses when its holder has stood (below vehicle hold_speed) this
     // long before the stop line while a car waits for a conflicting connector; the holder queues
     // again behind that waiter, s.

@@ -84,3 +84,6 @@ Physical push-through is out (numbers above). Removing the car in view is out (p
 
 ## Added at TASK-032 closure (QA round 2)
 - A second shape of the same lock: a car abandoned within a pass length of a stop line, in view. `pass.rs` refuses a pass whose manoeuvre reaches the junction, so 7 cars stood 64-89 s behind the player's car at the lane 302 stop line (`D:/test-gta-like/maw/tasks/done/TASK-032/scratch/qa2/tourist_s1_pressed/`). The same happens on main.
+
+## Added by TASK-038 (orchestrator)
+- The "Dynamic car at a box, walkers pinned at its nose" lock also shows in `traffic_causes::rb_a_box_car_seen_from_afar_is_cleared` (98.8 s, both platforms). TASK-038 scoped their `Dynamic` bound to the scene approaches, like (c) and the G4 liveness rows. Acceptance item for this task: restore the full-city `Dynamic` 30 s bound in causes (c), rb and the G4 liveness rows.

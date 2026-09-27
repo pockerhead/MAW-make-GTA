@@ -112,6 +112,17 @@ pub fn swept_rect_hits_rect(other: &FlatRect, d: Vec2, rect: &FlatRect) -> bool 
     })
 }
 
+/// Two static rectangles overlap (SAT on their four axes, no allocation).
+pub(super) fn rects_overlap(a: &FlatRect, b: &FlatRect) -> bool {
+    [a.axis, a.axis.perp(), b.axis, b.axis.perp()]
+        .into_iter()
+        .all(|n| {
+            let (a0, a1) = a.span(n);
+            let (b0, b1) = b.span(n);
+            b0 <= a1 && a0 <= b1
+        })
+}
+
 fn flat(v: Vec3) -> Vec2 {
     Vec2::new(v.x, v.z)
 }

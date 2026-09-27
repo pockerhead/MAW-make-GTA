@@ -1,7 +1,9 @@
 //! `TrafficGraph`: the inner (slot 0) lanes of the city with Bézier connectors across the
 //! intersections and a conflict table per intersection.
 
-use super::TrafficConfig;
+use super::contact::rects_overlap;
+use super::lateral::right_of;
+use super::{FlatRect, TrafficConfig};
 use crate::vehicle::VehicleConfig;
 use crate::world::{City, CityLayout, CityParams, CityParamsRes, RoadClass};
 use bevy::prelude::*;
@@ -103,6 +105,60 @@ fn polyline_distance(a: &[Vec3], b: &[Vec3]) -> f32 {
     best
 }
 
+/// Body poses along a connector path at most this far apart, m. On a right-turn pivot the corners move
+/// up to ~1 m between samples, more than the half margin: the no-touch guarantee is the unmargined
+/// oracle over seeds 1..8 (`tests/traffic_graph.rs`), not this step.
+const BODY_SAMPLE_STEP: f32 = 0.2;
+
+/// Footprints (`half` grown) of a car body driven along `conn`: from its nose at the connector start
+/// (centre on the source lane) to its rear at the connector end (centre on the exit lane).
+fn body_sweep(conn: &TrafficConnector, lanes: &[TrafficLane], half: Vec2) -> Vec<FlatRect> {
+    let (from, to) = (
+        &lanes[conn.from_lane as usize],
+        &lanes[conn.to_lane as usize],
+    );
+    let span = conn.length + 2.0 * half.y;
+    let count = (span / BODY_SAMPLE_STEP).ceil().max(1.0) as u32;
+    (0..=count)
+        .map(|k| {
+            let s = -half.y + span * k as f32 / count as f32;
+            let (point, tangent) = if s < 0.0 {
+                (from.to + from.dir * s, from.dir)
+            } else if s > conn.length {
+                (to.from + to.dir * (s - conn.length), to.dir)
+            } else {
+                conn.pose(s)
+            };
+            FlatRect {
+                centre: flat(point),
+                axis: flat(right_of(tangent)).normalize_or(Vec2::X),
+                half,
+            }
+        })
+        .collect()
+}
+
+/// Two body sweeps overlap somewhere (a car on each connector can touch the other).
+fn sweeps_touch(a: &[FlatRect], b: &[FlatRect]) -> bool {
+    let reach = |r: &FlatRect| r.half.length();
+    let bounds = |s: &[FlatRect]| {
+        s.iter()
+            .fold((Vec2::INFINITY, Vec2::NEG_INFINITY), |(lo, hi), r| {
+                (lo.min(r.centre - reach(r)), hi.max(r.centre + reach(r)))
+            })
+    };
+    let (b_lo, b_hi) = bounds(b);
+    a.iter()
+        .filter(|ra| {
+            (ra.centre + reach(ra)).cmpge(b_lo).all() && (ra.centre - reach(ra)).cmple(b_hi).all()
+        })
+        .any(|ra| {
+            b.iter().any(|rb| {
+                ra.centre.distance(rb.centre) <= reach(ra) + reach(rb) && rects_overlap(ra, rb)
+            })
+        })
+}
+
 /// Control point of the turn from `p0` along `d_in` into `p2` along `d_out`: where the two lane lines
 /// meet, or the midpoint when they are parallel or meet behind either end.
 pub fn control_point(p0: Vec3, d_in: Vec3, p2: Vec3, d_out: Vec3) -> Vec3 {
@@ -189,14 +245,15 @@ impl TrafficConnector {
 }
 
 impl TrafficGraph {
-    /// `lanes`: (from, to, v0, end node); `connectors`: (from lane, to lane, node). `half_width`: car
-    /// half width, m.
+    /// `lanes`: (from, to, v0, end node); `connectors`: (from lane, to lane, node). `half`: car half
+    /// width and half length, m.
     pub fn new(
         lanes: Vec<(Vec3, Vec3, f32, u32)>,
         connectors: &[(u32, u32, u32)],
         cfg: &TrafficConfig,
-        half_width: f32,
+        half: Vec2,
     ) -> Result<Self, String> {
+        let half_width = half.x;
         let mut built = Vec::with_capacity(lanes.len());
         for (k, (from, to, v0, end_node)) in lanes.into_iter().enumerate() {
             let length = from.distance(to);
@@ -242,6 +299,10 @@ impl TrafficGraph {
             ));
         }
         let clear = 2.0 * half_width + cfg.conflict_margin;
+        // The corners of a car swinging through a turn reach past its centre line +- half width.
+        let grown = half + Vec2::splat(cfg.conflict_margin / 2.0);
+        let sweeps: Vec<Vec<FlatRect>> =
+            conns.iter().map(|c| body_sweep(c, &built, grown)).collect();
         for i in 0..conns.len() {
             let conflicts = (0..conns.len())
                 .filter(|&j| j != i && conns[j].node == conns[i].node)
@@ -250,6 +311,7 @@ impl TrafficGraph {
                     a.from_lane == b.from_lane
                         || a.to_lane == b.to_lane
                         || polyline_distance(&a.points, &b.points) < clear
+                        || sweeps_touch(&sweeps[i], &sweeps[j])
                 })
                 .map(|j| j as u32)
                 .collect();
@@ -285,7 +347,7 @@ impl TrafficGraph {
         layout: &CityLayout,
         params: &CityParams,
         cfg: &TrafficConfig,
-        half_width: f32,
+        half: Vec2,
     ) -> Result<Self, String> {
         let roads = &layout.roads;
         let width = params.roads.lane_width;
@@ -328,7 +390,7 @@ impl TrafficGraph {
                 ))
             })
             .collect();
-        let mut graph = Self::new(lanes, &connectors, cfg, half_width)?;
+        let mut graph = Self::new(lanes, &connectors, cfg, half)?;
         for k in super::lanes::curb_lanes(layout, width, &index) {
             graph.lanes[k as usize].curb_lane = true;
         }
@@ -454,7 +516,8 @@ pub(super) fn build_traffic_graph(
     vehicle: Res<VehicleConfig>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    match TrafficGraph::from_layout(&city.0, &params.0, &cfg, vehicle.half_extents().x) {
+    let half = vehicle.half_extents();
+    match TrafficGraph::from_layout(&city.0, &params.0, &cfg, Vec2::new(half.x, half.z)) {
         Ok(graph) => commands.insert_resource(graph),
         Err(e) => {
             error!("traffic graph invalid: {e}");
@@ -521,7 +584,7 @@ mod tests {
             ],
             &[(0, 1, 0), (1, 2, 1), (2, 0, 2)],
             &cfg,
-            1.2,
+            Vec2::new(1.2, 2.04),
         )
         .expect("loop graph");
         let seg = Segment::Connector(0);
@@ -563,7 +626,7 @@ mod tests {
         for j in 0..4u32 {
             connectors.push((4 + j, j, 10 + j));
         }
-        TrafficGraph::new(lanes, &connectors, &cfg, 1.2).expect("plus graph")
+        TrafficGraph::new(lanes, &connectors, &cfg, Vec2::new(1.2, 2.04)).expect("plus graph")
     }
 
     fn find(g: &TrafficGraph, from: u32, to: u32) -> u32 {

@@ -11,9 +11,16 @@ only the inner lane of every road edge (slot 0, derived from the lateral offset 
 so the avenue curb lanes stay free for parked cars. Connectors are quadratic Béziers (control point where
 the two lane lines meet) sampled into `connector_samples` points; the pose tangent comes from the
 analytic derivative, so a car's yaw turns smoothly. Two connectors of one intersection conflict when
-they share a source or destination lane or their centre lines pass closer than `2 x half width +
-conflict_margin`. A lane without an out connector is a build error (the game exits). The seeds 1..8
-gate (`tests/traffic_graph.rs`) keeps a car on any connector off every block.
+they share a source or destination lane, their centre lines pass closer than `2 x half width +
+conflict_margin`, or the car bodies driven along them touch (rectangles grown by half the margin every
+0.2 m, from the nose at the connector start to the rear at its end: the corners of a turning car reach
+past its centre line, TASK-038). A lane without an out connector is a build error (the game exits). The
+seeds 1..8 gate (`tests/traffic_graph.rs`) keeps a car on any connector off every block, and two cars on
+connectors granted together apart (an unmargined oracle every 0.1 m). Right turns conflict with almost
+everything at their node: citygen's right-turn connectors are ~2-2.6 m long (radius ~1.7 m), so a 4.08 m
+body pivots nearly in place and its nose and rear sweep the neighbouring lanes. The swept rule cut the
+connector pairs that may hold grants together from 2340 to 1323 on seed 1 (52-58 % kept on seeds 1..8;
+opposite straights unaffected); TASK-036 item 4 owns getting that capacity back.
 
 ## Road occupancy (`occupancy/`, TASK-032)
 

@@ -331,7 +331,7 @@ mod tests {
             lanes,
             &[(0, 2, 0), (0, 1, 0), (1, 0, 1), (2, 0, 2)],
             &cfg,
-            1.0,
+            Vec2::new(1.0, 2.04),
         )
         .expect("GATE BROKEN: test junction")
     }
