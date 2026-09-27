@@ -49,6 +49,13 @@ impl Plugin for MenuPlugin {
             .add_sub_state::<PauseMenu>()
             .register_type_state::<PauseMenu>()
             .add_systems(OnEnter(GameState::Loading), spawn_loading_screen)
+            .add_systems(
+                OnTransition {
+                    exited: GameState::Loading,
+                    entered: GameState::Playing,
+                },
+                log_city_ready,
+            )
             .add_systems(OnEnter(GameState::MainMenu), screens::spawn_main_menu)
             .add_systems(OnEnter(PauseMenu::Main), screens::spawn_pause_menu)
             .add_systems(OnEnter(PauseMenu::Settings), screens::spawn_settings_screen)
@@ -66,6 +73,11 @@ impl Plugin for MenuPlugin {
                 ),
             );
     }
+}
+
+/// Release smoke marker: the city left `Loading`.
+fn log_city_ready() {
+    info!("city ready");
 }
 
 fn spawn_loading_screen(

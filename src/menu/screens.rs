@@ -37,6 +37,7 @@ fn seed_rows(parent: &mut ChildSpawnerCommands, ui: &UiConfig, fonts: &UiFonts) 
 }
 
 pub(super) fn spawn_main_menu(mut commands: Commands, ui: Res<UiConfig>, fonts: Res<UiFonts>) {
+    info!("main menu ready");
     let menu = &ui.menu;
     let title = (menu.title.clone(), menu.title_size, menu.text_color);
     let root = title_screen(
