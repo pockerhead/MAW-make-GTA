@@ -2,7 +2,7 @@
 
 Type: feature
 Mode: full
-Priority: medium
+Priority: high
 Branch: feature/box-uturn
 Domains: bevy-ecs, gates, game-design
 
@@ -82,3 +82,8 @@ Preferred direction to evaluate FIRST, instead of the U-turn:
 2. An in-frame "ignore the blocker after T" pass: a curb or oncoming pass with collision relaxed against the blocker only for the manoeuvre. This is a drama cheat in the same spirit as the police drama system. It accepts a little visual imperfection for guaranteed progress. The orchestrator has the owner's delegation to decide this.
 3. In physics, one body owner with one return rule instead of two modes. This is a larger refactor; evaluate its cost.
 The U-turn stays as a fallback only.
+
+## Added by TASK-040 playtest (orchestrator, binding scope)
+- M1 residue (MAJOR, 2 of 2 on seed 1): the player's car plus a bumped traffic car block both lanes, and the street stands >= 88 s with nobody passing. Evidence: maw/tasks/done/TASK-040/PLAYTEST_REPORT.md and scratch/sessions.
+- N1 (minor, confirmed): a pedestrian (the player) standing in the junction box holds the approach for 74 s in the repro, and in the worst case (s42 tourist) 19 of 24 cars stood 110 s.
+- Both share the root named in "Redesign direction": no progress guarantee. Scope this task around ONE universal progress rule covering vehicles, characters and box blockers, not per-geometry rules. The U-turn is a fallback only. Acceptance adds: the TASK-040 M1-residue repro and the N1 repro become headless rows (no car stands > 30 s behind a stationary body, in frame, with no pass-through against any third body), plus class E and class D.
