@@ -68,3 +68,17 @@ and crossing cars now see a car held on its connector without a grant. They are 
 
 ## Added by TASK-036 fixer
 - `traffic_causes::r1_car_left_in_the_box_seed_7` is ignored again, class E: TASK-036's real-body path check (`box_rules::connector_body`) blocks all three exits of box 84's east approach (lane 297; the old band left right turn 713 clear), so the queue stands 50.9 s Windows / 57.8 s Linux (bound 30 s). Un-ignore it here. Evidence: `maw/tasks/in_progress/TASK-036/scratch/stage4/r1_trace_fixed.txt` (and `r1_trace_head.txt`).
+
+## Redesign direction (orchestrator, 2026-09-27, after a hint relayed from the owner's other session; decide after TASK-040)
+Observation: almost every fix in TASK-032..038 sits on the seam "logic vs physics". A car has two owners (Kinematic and Dynamic), and each lock geometry got its own local rule: the lease (033), the lane pass (032), repick and the box pass (037), and now a U-turn (039). The system has no general progress guarantee and no wait-for cycle detector (TASK-033 found a real cyclic deadlock at node 83). The only universal escape, a cheat, is forbidden in frame, so the residue collects in front of the player. Hypothesis: "zero overlaps and zero in-frame cheats" is incompatible with a two-mode body unless a separate progress rule exists.
+Industry answers:
+- SUMO `--time-to-teleport`: stuck vehicles teleport ahead or are removed, with classified causes. https://sumo.dlr.de/docs/Simulation/Why_Vehicles_are_teleporting.html
+- SUMO `--ignore-junction-blocker`: after T, a vehicle stops treating a car standing in the junction as an obstacle and drives around it. This is exactly class E. https://sumo.dlr.de/docs/Simulation/Intersections.html
+- AIM space-time cell reservation (Dresner & Stone). https://www.cs.utexas.edu/~aim/
+- A wait-for-graph deadlock detector: a cycle is broken deterministically (the lower key yields or passes).
+- Cities: Skylines TM:PE: stuck vehicles despawn.
+Preferred direction to evaluate FIRST, instead of the U-turn:
+1. An explicit wait-for detector that replaces per-case timers.
+2. An in-frame "ignore the blocker after T" pass: a curb or oncoming pass with collision relaxed against the blocker only for the manoeuvre. This is a drama cheat in the same spirit as the police drama system. It accepts a little visual imperfection for guaranteed progress. The orchestrator has the owner's delegation to decide this.
+3. In physics, one body owner with one return rule instead of two modes. This is a larger refactor; evaluate its cost.
+The U-turn stays as a fallback only.
