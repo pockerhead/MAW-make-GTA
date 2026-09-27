@@ -144,6 +144,8 @@
 
 - **Virtual stop obstacles sit at `v^2/2b`, not `+ s0` (TASK-032 siren yield; extends the TASK-016 rest-point lesson).** An IDM obstacle recomputed every tick at `v^2/2b + s0` makes the car creep toward s0 forever and never reach speed 0.
 
+- **Two-body predicates use swept bodies, not centre lines (TASK-038).** Centre lines 3.25 m apart still let two yawed 4.08 m bodies touch: 198 of 2340 "non-conflicting" connector pairs on seed 1 overlapped by up to 0.48 m. Check any "can these two paths be used at once" rule with swept body rectangles, nose-in to rear-out, against an unmargined oracle (`traffic_graph::cars_granted_together_never_touch`). A sampled sweep bounds the centre, not the corners: at a 0.2 m step on a 1.7 m-radius turn the corners move 0.83-0.98 m between samples, so the guarantee is the fine oracle gate, not the step. Trigger: a centre-line distance predicate over two bodies, or a `*_SAMPLE_STEP` sweep that claims a bound.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).
