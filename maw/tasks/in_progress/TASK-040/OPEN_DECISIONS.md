@@ -1,0 +1,7 @@
+- 2026-09-27 (orchestrator, triage):
+  - M2 fixed.
+  - M3 improved (2 deaths in 9 sessions vs 22).
+  - M1 improved: 146 s → 21.7 s on the R1 repro. A MAJOR residue remains: when the player's car and a bumped traffic car block both lanes, the street stands ≥ 88 s (2 of 2).
+  - N1 (minor, confirmed): a pedestrian standing in the junction box holds the approach for 74-110 s.
+  - M1 residue and N1 share one root: there is no progress guarantee, and an obstacle nobody can pass stands forever in frame. Both go to TASK-039, raised to high, with the redesign direction: a universal rule "after T waiting behind a stationary body, pass it with collision relaxed against that body" (SUMO ignore-junction-blocker style) plus a wait-for cycle detector, instead of a U-turn.
+  - P1/P3 unchanged. N2 not reproduced. The siren chase is not covered (bot driving); left for the owner's run.
