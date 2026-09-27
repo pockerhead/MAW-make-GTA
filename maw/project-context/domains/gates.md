@@ -146,6 +146,12 @@
 
 - **Two-body predicates use swept bodies, not centre lines (TASK-038).** Centre lines 3.25 m apart still let two yawed 4.08 m bodies touch: 198 of 2340 "non-conflicting" connector pairs on seed 1 overlapped by up to 0.48 m. Check any "can these two paths be used at once" rule with swept body rectangles, nose-in to rear-out, against an unmargined oracle (`traffic_graph::cars_granted_together_never_touch`). A sampled sweep bounds the centre, not the corners: at a 0.2 m step on a 1.7 m-radius turn the corners move 0.83-0.98 m between samples, so the guarantee is the fine oracle gate, not the step. Trigger: a centre-line distance predicate over two bodies, or a `*_SAMPLE_STEP` sweep that claims a bound.
 
+- **Name a stuck car's segment from a trace, not from its position (TASK-037).** A head at a lane end in the crosswalk read as `Connector(719)` s 0 by position was `Lane(294)` s 77.40 by trace; the rescope built on the misread covered one row of eight. Build a read-only probe (`#[path]` the gate fixtures, recompute predicates from public state) before rescoping a traffic lock.
+
+- **A sign test on near-zero velocities flips on float noise (TASK-037).** "Not closing: (v_b - v)·d <= 0" read +1e-14 on a quarter of ticks for a parked car next to a settled one. Account motion continuously (sweep the body by its velocity over the horizon), not by the sign of a near-zero product.
+
+- **One traffic rule change moves every city trajectory (TASK-037).** A red elsewhere is usually a latent bug the new trajectory reaches (avenue seed 2: a merge-back swinging its corner into the oncoming lane), not the change. Trace the contact before blaming or reverting. Runtime harnesses that snap a car by BRP can teleport it onto a waiting queue head; verify the snap's neighbourhood.
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

@@ -1,5 +1,6 @@
-//! Queries over the road snapshot: the first body along a strip (sensing, lane choice) and the first
-//! body or claim overlapping a rectangle (lane starts, grants, spawns, manoeuvre clearance).
+//! Queries over the road snapshot: the first body along a strip (sensing, lane choice), the first
+//! body sample of a sweep that meets a body (sensing on a connector), and the first body or claim
+//! overlapping a rectangle (lane starts, grants, spawns, manoeuvre clearance).
 
 use super::{BodyKind, Claim, Footprint, RoadBody, RoadOccupancy};
 use crate::layers::GameLayer;
@@ -206,6 +207,76 @@ impl RoadOccupancy {
             })
             .find(|c| overlaps(&Footprint::Rect(c.rect), rect))
             .map(|c| c.owner)
+    }
+
+    /// The first of the body samples `rects` (a sweep, in order; `dirs[k]` the travel direction at
+    /// sample k) that overlaps a body `skip` does not drop, or the claim of a car travelling against
+    /// `dirs[k]` (not one the car is already inside: overlapping `rects[0]`). `Hit.gap` is left 0.
+    pub fn first_in(
+        &self,
+        rects: &[FlatRect],
+        dirs: &[Vec2],
+        skip: impl Fn(&RoadBody) -> bool,
+    ) -> Option<(usize, Hit)> {
+        let origin = rects.first()?.centre;
+        let reach = rects
+            .iter()
+            .map(|r| r.centre.distance(origin) + r.half.length())
+            .fold(0.0, f32::max)
+            + 4.0;
+        let near: Vec<&RoadBody> = self
+            .bodies
+            .iter()
+            .filter(|b| {
+                let centre = match b.shape {
+                    Footprint::Rect(r) => r.centre,
+                    Footprint::Circle { centre, .. } => centre,
+                };
+                centre.distance(origin) <= reach && !skip(b)
+            })
+            .collect();
+        let claims: Vec<&Claim> = self
+            .claims
+            .iter()
+            .filter(|c| !overlaps(&Footprint::Rect(c.rect), &rects[0]))
+            .collect();
+        rects
+            .iter()
+            .zip(dirs)
+            .enumerate()
+            .find_map(|(k, (rect, &dir))| {
+                if let Some(b) = near.iter().find(|b| overlaps(&b.shape, rect)) {
+                    return Some((
+                        k,
+                        Hit {
+                            entity: b.entity,
+                            gap: 0.0,
+                            speed_along: b.velocity.dot(dir),
+                            standing: b.standing,
+                            kind: b.kind,
+                            dynamic: b.dynamic,
+                            claim: false,
+                        },
+                    ));
+                }
+                claims
+                    .iter()
+                    .find(|c| c.dir.dot(dir) < 0.0 && overlaps(&Footprint::Rect(c.rect), rect))
+                    .map(|c| {
+                        (
+                            k,
+                            Hit {
+                                entity: c.owner,
+                                gap: 0.0,
+                                speed_along: 0.0,
+                                standing: f32::MAX,
+                                kind: BodyKind::Traffic,
+                                dynamic: false,
+                                claim: true,
+                            },
+                        )
+                    })
+            })
     }
 
     pub fn body(&self, entity: Entity) -> Option<&RoadBody> {

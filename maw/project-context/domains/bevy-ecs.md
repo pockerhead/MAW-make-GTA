@@ -134,6 +134,8 @@
 
 - **Windows and Linux runs of one seed diverge (TASK-038).** Each platform repeats itself bit for bit, but std `f32` `atan2`/`sin`/`cos` differ by 1-2 ULP between MSVC UCRT and glibc (`sqrt` is identical). Car rotations differ right after city load, and a 150 s traffic scene ends somewhere else. A city gate green on Windows can be red on the Linux runner, for a latent bug the other trajectory reaches. Reproduce CI reds in WSL Ubuntu 22.04 with toolchain 1.95.0 (sources mirrored to the WSL filesystem, `CARGO_TARGET_DIR` there), not by rerunning on Windows. A Linux-only red is a real bug on an untested trajectory, never "flaky". Cross-platform agreement would need libm-backed glam/avian determinism plus replacing every std transcendental in `gta_sim`; that is a project-wide choice, not taken. Trigger: a city/traffic gate red only in CI.
 
+- **A lateral manoeuvre's heading swing is bounded by the lane band (TASK-037).** Aiming `heading_yaw(tangent, max(v,1), rate)` gave 38.7° at rest and swung the rear or nose 0.13-0.2 m into the next lane. `lateral::yaw_cap` bounds it by `|half|·sin(θ + atan2(hx, hz))` against the band. Trigger: any lateral offset law that also steers the heading.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

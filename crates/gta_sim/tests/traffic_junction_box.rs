@@ -9,9 +9,11 @@
 //!   `reservation_timeout` plus 1 s, whether it stands before its stop line, past it or on its
 //!   connector (a holder waiting for walkers keeps its lease: TASK-033).
 //! - G1 oracle clean.
-//! - Liveness, asserted only in the `_liveness` rows, ignored: the in-view box lock is open
-//!   (TASK-037). The player watching the box from nearby keeps the car there (the stuck cheat's
-//!   in-view rule) and nothing moves it, so the cars at the box entries stand in `Dynamic`.
+//! - Liveness, asserted only in the `_liveness` rows. The player watching the box from nearby keeps
+//!   the car there (the stuck cheat's in-view rule). Seed 1 passes since TASK-037 (bumped cars recover
+//!   on connectors, connector sensing follows the path, walkers go around standing cars), and so does
+//!   the extra row (crossing cars see a car held on its connector without a grant); seed 7 stays
+//!   ignored (every exit of an approach crosses the left car and no box pass fits: TASK-039).
 //!   - No AI car on the box's approaches (within 50 m of it) stands longer than `MAX_STOP` (the
 //!     TASK-033 saturation bound); stands elsewhere are printed.
 //!   - No AI car stands longer than 30 s in `Dynamic` (spec G3).
@@ -278,7 +280,7 @@ fn check(seed: u64, extra: bool, liveness: bool) {
     }
     match run.dynamic {
         Some(dynamic) if liveness => failures.push(dynamic),
-        Some(dynamic) => eprintln!("seed {seed} (reported, TASK-037): {dynamic}"),
+        Some(dynamic) => eprintln!("seed {seed} (asserted in the _liveness twin): {dynamic}"),
         None => {}
     }
     assert!(failures.is_empty(), "seed {seed}: {}", failures.join("; "));
@@ -300,19 +302,17 @@ fn seed_1_car_behind_the_body_leaves() {
 }
 
 #[test]
-#[ignore = "TASK-037: the in-view junction box lock (a car left in a box the player watches from within stuck_in_view_distance)"]
 fn seed_1_box_keeps_moving_liveness() {
     check(1, false, true);
 }
 
 #[test]
-#[ignore = "TASK-037: the in-view junction box lock (a car left in a box the player watches from within stuck_in_view_distance)"]
+#[ignore = "TASK-039 class E: every exit of an approach crosses the left car and no box pass fits"]
 fn seed_7_box_keeps_moving_liveness() {
     check(7, false, true);
 }
 
 #[test]
-#[ignore = "TASK-037: the in-view junction box lock (a car left in a box the player watches from within stuck_in_view_distance)"]
 fn seed_1_car_behind_the_body_leaves_liveness() {
     check(1, true, true);
 }

@@ -9,7 +9,15 @@
 //! - (e) shoved out of its lane behind a standing car (a queue), the rejoin corridor blocked by a
 //!   parked car that is clear of the car itself: no recovery, no re-switch, and it waits (never given
 //!   up); with the parked car clear: recovers. Shoved out of its path where it cannot drive on and
-//!   nothing is ahead: given up after `give_up_seconds`.
+//!   nothing is ahead: given up after `give_up_seconds`;
+//! - (g) held in a queue on its line with a parked car at rest 0.25 m beside it (inside `recover.skin`,
+//!   outside the rest skin: `switch.skin` plus the rejoin's own move, nothing on its line): recovers
+//!   and is not switched again; a standing dummy there keeps it `Dynamic` (a walker keeps the full
+//!   skin);
+//! - (f) on a connector without its grant: a car shoved 0.10 m off the line (inside the conflict
+//!   table's body band, `half.x + conflict_margin / 2`) recovers where it stands, slides back onto the
+//!   line without leaving the band, is granted and drives on; shoved 0.25 m (out of the band), or on
+//!   the line 0.3 m behind the connector start, it stays `Dynamic`.
 //!
 //! Floors: the loop lanes (lane 0 +X along z 37) and, for (e), the two-way street (lane 0 +X along
 //! z 30); a car "held" ahead is a kinematic traffic car in a
@@ -413,8 +421,8 @@ fn b_shoved_beyond_lost_is_abandoned_and_passed() {
 }
 
 /// (e) Shoved out of its path where it cannot drive on (on the U connector of the two-way street
-/// without its grant, so it holds) with nothing ahead: it never recovers on a connector and is given up
-/// after `give_up_seconds` of standing, where it stands.
+/// without its grant, so it holds) with nothing ahead: out of the conflict table's band it never
+/// recovers on the connector and is given up after `give_up_seconds` of standing, where it stands.
 #[test]
 fn e_off_path_car_with_nothing_ahead_gives_up() {
     let (lanes, connectors) = two_way_street(70.0);
@@ -442,7 +450,7 @@ fn e_off_path_car_with_nothing_ahead_gives_up() {
         assert_ne!(
             now,
             Some(TrafficMode::Kinematic),
-            "GATE BROKEN: it recovered on the connector"
+            "GATE BROKEN: it recovered out of the table band on a connector"
         );
         if now != Some(TrafficMode::Dynamic) {
             given_up = Some(tick as f32 / HZ as f32);
@@ -464,5 +472,250 @@ fn e_off_path_car_with_nothing_ahead_gives_up() {
         given_up.is_some_and(|t| t >= c.recover.give_up_seconds - 2.0 / HZ as f32),
         "a car out of its path with nothing ahead was not given up after {} s: {given_up:?}",
         c.recover.give_up_seconds
+    );
+}
+
+/// Table-band reach of `car` across the path line of its segment, and the band limit.
+fn band_reach(app: &App, car: Entity) -> (f32, f32) {
+    let (h, c) = (half(app), cfg(app));
+    let seg = traffic_car(app, car).segment;
+    let at = position_of(app, car);
+    let g = graph(app);
+    let (point, tangent) = g.pose(seg, g.project(seg, at));
+    let across = right_of(tangent);
+    let across = Vec2::new(across.x, across.z).normalize();
+    let rect = gta_sim::traffic::FlatRect::of(
+        at,
+        app.world().get::<Rotation>(car).unwrap().0,
+        Vec2::new(h.x, h.z),
+    );
+    let reach = (rect.centre - Vec2::new(point.x, point.z))
+        .dot(across)
+        .abs()
+        + rect.half.x * rect.axis.dot(across).abs()
+        + rect.half.y * rect.axis.perp().dot(across).abs();
+    (reach, h.x + c.conflict_margin / 2.0)
+}
+
+/// (f) A car on the U connector of the two-way street at `s`, switched by hand, its grant released
+/// (it holds), shoved `shove` m (right, along) off its pose at the path yaw.
+fn connector_shove(s: f32, shove: Vec2) -> (App, Entity) {
+    let (lanes, connectors) = two_way_street(70.0);
+    let mut app = traffic_floor(lanes, &connectors, &[]);
+    let car = spawn_traffic_car(&mut app, Segment::Connector(0), s, 0.0);
+    set_car(&mut app, car, |t| t.next = Some(0));
+    switch_by_hand(&mut app, car);
+    app.world_mut()
+        .resource_mut::<TrafficIntersections>()
+        .release(car);
+    let (point, tangent) = graph(&app).pose(Segment::Connector(0), s);
+    let at =
+        point.with_y(position_of(&app, car).y) + right_of(tangent) * shove.x + tangent * shove.y;
+    let yaw = Quat::from_rotation_y(gta_sim::combat::aim_yaw(tangent));
+    teleport(&mut app, car, at);
+    app.world_mut().get_mut::<Rotation>(car).unwrap().0 = yaw;
+    app.world_mut().get_mut::<Transform>(car).unwrap().rotation = yaw;
+    run_ticks(&mut app, 1);
+    (app, car)
+}
+
+/// (f) Inside the table band: kinematic where it stands within `recover.seconds + 1 s`, the rejoin
+/// slides back onto the line in place without the body leaving the band, then it is granted (a waiter
+/// on an empty node) and reaches lane 1.
+#[test]
+fn f_connector_car_recovers_in_the_table_band() {
+    let (mut app, car) = connector_shove(1.0, Vec2::new(0.10, 0.0));
+    let c = cfg(&app);
+    let (reach, limit) = band_reach(&app, car);
+    assert!(
+        reach < limit - 0.02,
+        "GATE BROKEN: the shoved car reaches {reach:.3} m across the line (band {limit:.3})"
+    );
+    let mut oracle = Footprints::new(&app);
+    let mut failures = Vec::new();
+    let (mut recovered, mut rejoined, mut on_lane) = (None, None, None);
+    let mut lateral_at_recovery = 0.0;
+    let mut widest: f32 = 0.0;
+    for tick in 0..12 * HZ {
+        run_ticks(&mut app, 1);
+        oracle.record(&mut app, tick);
+        let t = tick as f32 / HZ as f32;
+        let now = traffic_car(&app, car);
+        if recovered.is_none() && now.mode == TrafficMode::Kinematic {
+            recovered = Some(t);
+            lateral_at_recovery = now.lateral;
+            if now.segment != Segment::Connector(0) || (now.s - 1.0).abs() >= 0.05 {
+                failures.push(format!(
+                    "recovered at {:?} s {:.3}, not where it stood",
+                    now.segment, now.s
+                ));
+            }
+        }
+        if recovered.is_some() && rejoined.is_none() {
+            widest = widest.max(band_reach(&app, car).0);
+            if now.manoeuvre == Manoeuvre::None && now.lateral.abs() < 0.01 {
+                rejoined = Some((t, now.segment));
+            }
+        }
+        if now.segment == Segment::Lane(1) {
+            on_lane = Some(t);
+            break;
+        }
+    }
+    eprintln!(
+        "(f) in band: reach {reach:.3} (band {limit:.3}); kinematic after {recovered:?} s, lateral {lateral_at_recovery:.3}; \
+         rejoined {rejoined:?}, widest reach while rejoining {widest:.3}; on lane 1 after {on_lane:?} s; G1 max depth {:.3}",
+        oracle.max_depth()
+    );
+    oracle.assert_clean("connector recovery");
+    let Some(back) = recovered.filter(|&t| t <= c.recover.seconds + 1.0) else {
+        panic!(
+            "not kinematic within {} s on the connector: {recovered:?}",
+            c.recover.seconds + 1.0
+        );
+    };
+    if widest > limit {
+        failures.push(format!(
+            "the body left the table band while rejoining: {widest:.3} > {limit:.3}"
+        ));
+    }
+    let bound = lateral_at_recovery.abs() / c.lateral.rate_at_rest + 0.1;
+    match rejoined {
+        Some((t, Segment::Connector(0))) if t - back <= bound => {}
+        other => failures.push(format!(
+            "the rejoin did not end on the connector within {bound:.3} s: {other:?} (recovered at {back:.3} s)"
+        )),
+    }
+    if on_lane.is_none_or(|t| t - back > 5.0) {
+        failures.push(format!(
+            "not on lane 1 within 5 s of the recovery: {on_lane:?}"
+        ));
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// (f) Out of the table band: 0.25 m across, or on the line 0.5 m back from s 0.2 (0.3 m behind the
+/// connector start, where it projects onto s 0 and would jump there): never kinematic on the
+/// connector within `recover.seconds + 2 s`.
+#[test]
+fn f_connector_car_out_of_the_table_band_stays_dynamic() {
+    f_out_of_band(1.0, Vec2::new(0.25, 0.0));
+    f_out_of_band(0.2, Vec2::new(0.0, -0.5));
+}
+
+fn f_out_of_band(s: f32, shove: Vec2) {
+    let (mut app, car) = connector_shove(s, shove);
+    let c = cfg(&app);
+    let (reach, limit) = band_reach(&app, car);
+    let g = graph(&app);
+    let at = position_of(&app, car);
+    let (point, tangent) = g.pose(Segment::Connector(0), g.project(Segment::Connector(0), at));
+    let along = (at - point).with_y(0.0).dot(tangent).abs();
+    let margin = c.conflict_margin / 2.0;
+    assert!(
+        reach > limit + 0.05 || (reach < limit - 0.02 && along > margin + 0.05),
+        "GATE BROKEN: the shoved car reaches {reach:.3} m across (band {limit:.3}), {along:.3} m along"
+    );
+    let mut oracle = Footprints::new(&app);
+    let mut kinematic = None;
+    for tick in 0..((c.recover.seconds + 2.0) * HZ as f32) as u32 {
+        run_ticks(&mut app, 1);
+        oracle.record(&mut app, tick);
+        if kinematic.is_none() && mode(&app, car) == Some(TrafficMode::Kinematic) {
+            kinematic = Some(tick as f32 / HZ as f32);
+        }
+    }
+    eprintln!(
+        "(f) out of band: reach {reach:.3} (band {limit:.3}), along {along:.3}, kinematic at {kinematic:?}"
+    );
+    oracle.assert_clean("connector, out of band");
+    assert!(
+        kinematic.is_none() && mode(&app, car) == Some(TrafficMode::Dynamic),
+        "a car out of the table band recovered on the connector at {kinematic:?} s ({:?})",
+        mode(&app, car)
+    );
+}
+
+/// (g) On the two-way street, car T standing behind a held car is switched by hand; `body` (a parked
+/// sleeping car or a standing dummy) stands 0.25 m right of its footprint. Returns (first kinematic
+/// tick, re-switches after it) over `recover.seconds + 3 s`.
+fn beside_at_rest(dummy: bool) -> (Option<f32>, u32) {
+    let (lanes, connectors) = two_way_street(70.0);
+    let mut app = traffic_floor(lanes, &connectors, &[]);
+    let (h, c) = (half(&app), cfg(&app));
+    let _lead = held_car(&mut app, 40.0);
+    let car = spawn_traffic_car(
+        &mut app,
+        Segment::Lane(0),
+        40.0 - 2.0 * h.z - c.idm.min_gap,
+        0.0,
+    );
+    run_ticks(&mut app, 4);
+    switch_by_hand(&mut app, car);
+    let at = position_of(&app, car);
+    // On its line: the rest skin is the switch skin alone.
+    let rest = c.switch.skin;
+    assert!(
+        rest + 0.05 < 0.25 && 0.25 < c.recover.skin - 0.05,
+        "GATE BROKEN: 0.25 m is not strictly between the rest skin {rest} and recover.skin {}",
+        c.recover.skin
+    );
+    if dummy {
+        let radius = app
+            .world()
+            .resource::<gta_sim::character::LocomotionConfig>()
+            .capsule_radius;
+        spawn_dummy(&mut app, Vec3::new(at.x, 0.05, 30.0 + h.x + 0.25 + radius));
+    } else {
+        let parked = park_car(
+            &mut app,
+            Vec3::new(at.x, 0.0, 30.0 + 2.0 * h.x + 0.25),
+            Vec3::X,
+        );
+        app.world_mut().entity_mut(parked).insert(Sleeping);
+    }
+    let mut oracle = Footprints::new(&app);
+    let (mut back, mut re_switches, mut last) = (None, 0, mode(&app, car));
+    for tick in 0..((c.recover.seconds + 3.0) * HZ as f32) as u32 {
+        run_ticks(&mut app, 1);
+        oracle.record(&mut app, tick);
+        let now = mode(&app, car);
+        if back.is_none() && now == Some(TrafficMode::Kinematic) {
+            back = Some(tick as f32 / HZ as f32);
+        }
+        if now == Some(TrafficMode::Dynamic) && last == Some(TrafficMode::Kinematic) {
+            re_switches += 1;
+        }
+        last = now;
+    }
+    eprintln!(
+        "(g) {} 0.25 m beside (rest skin {rest:.2}, recover.skin {}): kinematic after {back:?} s, {re_switches} re-switches, final {:?}",
+        if dummy { "dummy" } else { "parked car" },
+        c.recover.skin,
+        mode(&app, car)
+    );
+    oracle.assert_clean("beside at rest");
+    (back, re_switches)
+}
+
+#[test]
+fn g_car_at_rest_inside_the_skin_lets_it_recover() {
+    let limit = {
+        let app = floor();
+        cfg(&app).recover.seconds + 1.0
+    };
+    let (back, re_switches) = beside_at_rest(false);
+    assert!(
+        back.is_some_and(|t| t <= limit) && re_switches == 0,
+        "not kinematic within {limit} s beside a car at rest, or switched again: {back:?}, {re_switches}"
+    );
+}
+
+#[test]
+fn g_walker_at_rest_inside_the_skin_keeps_it_dynamic() {
+    let (back, _) = beside_at_rest(true);
+    assert!(
+        back.is_none(),
+        "recovered with a walker 0.25 m beside it after {back:?} s"
     );
 }

@@ -67,7 +67,7 @@ pub(super) fn repick(
 
 /// Point and tangent `s` m along connector `c` (before 0: on its source lane, past its end: on its
 /// exit lane).
-fn path_pose(graph: &TrafficGraph, c: u32, s: f32) -> (Vec3, Vec3) {
+pub(super) fn path_pose(graph: &TrafficGraph, c: u32, s: f32) -> (Vec3, Vec3) {
     let conn = graph.connector(c);
     let length = graph.length(Segment::Connector(c));
     if s < 0.0 {

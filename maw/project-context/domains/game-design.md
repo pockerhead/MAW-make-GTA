@@ -87,6 +87,8 @@
 
 - **Traffic cannot shove a parked car (TASK-032).** An unmanned sedan grips sideways at about 16 kN; a sedan drives at about 6.9 kN. A push-through only rams in cycles. A kinematic pusher moves anything but drives through a pinned body (G1 class). Design around re-routing or despawn, not pushing. Trigger: any "push through" or "shove" traffic design.
 
+- **Walk-around steering (TASK-037).** Civilians had no car avoidance: a car standing in a crosswalk pinned walkers at gap 0 for 30-90 s, and the car never recovered while they stayed inside its skin. `tactics::around_cars` (shared by walkers and cops) must use the walker's width, not its centre line, and score corners by the shortest way round the car, not the straight line to the target; otherwise it grazes and sticks, or dithers (1100+ flips in 20 s) for a near target diagonally behind the car.
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

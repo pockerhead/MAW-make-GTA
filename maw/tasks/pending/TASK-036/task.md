@@ -66,3 +66,9 @@ around that grant holder are walk avoidance, item 1 here.
 
 ## Dependencies
 - blocked by TASK-032
+
+## Moved by TASK-037 (orchestrator, 2026-09-27)
+- Item 1 (walkers avoid cars, via `tactics::around_cars` over `RoadOccupancy`) is done inside TASK-037, because it is the dominant cause of the in-view box lock. This task keeps the remaining items.
+
+## Added by TASK-037 QA
+- Walkers still pile up at a car on a crosswalk in counter-flow (runtime R1 spot B: 9 and 6 walkers up to 103/150 s; main 10 and 17 up to 153 s). Headless probe: `maw/tasks/done/TASK-037/scratch/probe/ws/probe/tests/qa_walkers.rs` (11-13 walkers 70-118 s, capsules touching at 0.60 m, 0.1-1.3 m from the car). Likely walker-walker counter-flow in a narrowed corridor.

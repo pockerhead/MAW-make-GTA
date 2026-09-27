@@ -140,7 +140,10 @@ fn car_entry(from: Vec3, to: Vec3, car: &CarRect, clearance: f32) -> Option<f32>
 
 /// Where a walker at `from` heads to reach `to` around parked or queued cars (their bodies are not
 /// in the wall avoidance): `to` while no car lies within `clearance` of the straight line; else the
-/// corner, `corner` m out, of the first car in the way that is in plain view and shortest to go via.
+/// corner, `corner` m out, of the first car in the way that is in plain view and on the shortest way
+/// round that car (in plain view of the walker's body, `clearance` wide, when such a corner exists:
+/// a line that only the centre clears grazes the car). A corner within `corner - clearance` counts as
+/// reached: the walker heads on to the next one.
 pub(crate) fn around_cars(
     from: Vec3,
     to: Vec3,
@@ -156,19 +159,47 @@ pub(crate) fn around_cars(
         return to;
     };
     let half = car.half + Vec2::splat(corner);
-    let via = |p: Vec3| flat_distance(from, p) + flat_distance(p, to);
-    [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)]
-        .into_iter()
-        .map(|(u, v)| {
-            let c = car.centre + car.axis * (u * half.x) + car.axis.perp() * (v * half.y);
-            Vec3::new(c.x, to.y, c.y)
-        })
-        .filter(|&c| {
-            cars.iter()
-                .all(|other| car_entry(from, c, other, 0.0).is_none())
-        })
-        .min_by(|a, b| via(*a).total_cmp(&via(*b)))
-        .unwrap_or(to)
+    let at = |(u, v): (f32, f32)| {
+        let c = car.centre + car.axis * (u * half.x) + car.axis.perp() * (v * half.y);
+        Vec3::new(c.x, to.y, c.y)
+    };
+    let sees = |p: Vec3| car_entry(p, to, car, clearance).is_none();
+    // The way on from a corner: straight to `to` if it sees it, else round the car (either way) to
+    // the first corner that does. Scoring a corner by the straight line counts a line the car blocks,
+    // and a walker just past a reached corner turns back to it.
+    let onwards = |(u, v): (f32, f32)| {
+        let (p, far) = (at((u, v)), at((-u, -v)));
+        if sees(p) {
+            return flat_distance(p, to);
+        }
+        [(-u, v), (u, -v)]
+            .map(|n| {
+                let q = at(n);
+                let rest = if sees(q) {
+                    flat_distance(q, to)
+                } else {
+                    flat_distance(q, far) + flat_distance(far, to)
+                };
+                flat_distance(p, q) + rest
+            })
+            .into_iter()
+            .fold(f32::INFINITY, f32::min)
+    };
+    let signs = [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)];
+    let via = |k: usize| flat_distance(from, at(signs[k])) + onwards(signs[k]);
+    let corners = signs.map(at);
+    let in_view = |gap: f32| {
+        (0..4)
+            .filter(|&k| {
+                flat_distance(from, corners[k]) > corner - clearance
+                    && cars
+                        .iter()
+                        .all(|other| car_entry(from, corners[k], other, gap).is_none())
+            })
+            .min_by(|&a, &b| via(a).total_cmp(&via(b)))
+            .map(|k| corners[k])
+    };
+    in_view(clearance).or_else(|| in_view(0.0)).unwrap_or(to)
 }
 
 /// Cars a shooter of `shooters` could fire through (centre within its reach plus the car's half
@@ -376,11 +407,60 @@ mod tests {
         assert!((via - Vec3::new(-2.0, 0.0, 2.84)).length() < 1e-4, "{via}");
         // From that corner the line along the side is clear.
         assert_eq!(around_cars(via, to, &[car], 0.3, 0.8), to);
+        // At a corner with the target diagonally past the car: on to the next corner, not the same.
+        let at = Vec3::new(-2.0, 0.0, 2.84);
+        let next = around_cars(at, Vec3::new(0.5, 0.0, -4.0), &[car], 0.3, 0.8);
+        assert!(
+            (next - Vec3::new(-2.0, 0.0, -2.84)).length() < 1e-4,
+            "{next}"
+        );
         let clear = Vec3::new(-3.0, 0.0, -8.0);
         assert_eq!(
             around_cars(Vec3::new(-3.0, 0.0, 3.0), clear, &[car], 0.3, 0.8),
             clear
         );
+    }
+
+    /// A point walking at 1.8 m/s (64 Hz) towards `around_cars` each tick: seconds to arrive within
+    /// 0.5 m of `to` (none within 20 s) and how often the heading target changed.
+    fn walk(from: Vec3, to: Vec3, car: &CarRect) -> (Option<f32>, u32) {
+        let (dt, mut p, mut last, mut changes) = (1.0 / 64.0, from, None, 0);
+        for tick in 1..=20 * 64 {
+            let target = around_cars(p, to, &[*car], 0.3, 0.8);
+            changes += u32::from(last.is_some_and(|l| l != target));
+            last = Some(target);
+            p += (target - p).clamp_length_max(1.8 * dt);
+            if flat_distance(p, to) < 0.5 {
+                return (Some(tick as f32 * dt), changes);
+            }
+        }
+        (None, changes)
+    }
+
+    /// Near targets diagonally past the car (the civilian's `lane_target` just past a car across its
+    /// crossing; the cop at the driver's door from the passenger side, both callers' values 0.3 / 0.8):
+    /// the way round is the shortest, so the walker keeps its corner and arrives. Scoring a corner by
+    /// the straight line to the target turned it back 0.5 m past a reached corner, every tick.
+    #[test]
+    fn around_cars_near_diagonal_target_arrives() {
+        let car = CarRect::of(Vec3::ZERO, Quat::IDENTITY, Vec2::new(1.2, 2.04));
+        let (a, b) = (Vec3::new(-2.0, 0.0, 2.84), Vec3::new(-2.0, 0.0, -2.84));
+        let target = Vec3::new(0.5, 0.0, -4.0);
+        let past_a = a + (b - a).normalize() * 0.6;
+        assert_eq!(around_cars(past_a, target, &[car], 0.3, 0.8), b);
+        let door = Vec3::new(-1.7, 0.0, -0.3);
+        let past = Vec3::new(1.4, 0.0, -2.84);
+        assert_eq!(around_cars(past, door, &[car], 0.3, 0.8), b);
+        for (name, from, to) in [
+            ("walker", Vec3::new(-4.0, 0.0, 6.0), target),
+            ("cop", Vec3::new(5.0, 0.0, 0.0), door),
+        ] {
+            let (arrived, changes) = walk(from, to, &car);
+            assert!(
+                arrived.is_some_and(|t| t < 8.0) && changes <= 3,
+                "{name}: arrived {arrived:?}, target changed {changes} times"
+            );
+        }
     }
 
     /// Range 45, overreach 0.865, cone 11 deg, clearance 0.5; target 11 m ahead unless stated. The

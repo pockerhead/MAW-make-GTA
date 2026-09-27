@@ -7,9 +7,10 @@ use super::hijack::spawn_driver;
 use super::idm::{ballistic_step, idm_acceleration};
 use super::junction::{self, has_grant};
 use super::lateral::{
-    effective_lateral, heading_yaw, offset_pose, step_lateral, target_lateral, turn_towards,
+    effective_lateral, heading_yaw, manoeuvre_band, offset_pose, step_lateral, target_lateral,
+    turn_towards, yaw_cap,
 };
-use super::manoeuvre::{passing, plan, sense};
+use super::manoeuvre::{holds_offset, passing, plan, sense};
 use super::pass::pass_done;
 use super::recover::{Recovery, recover_dynamic};
 use super::sirens::yield_gap;
@@ -29,7 +30,7 @@ use crate::vehicle::{
 };
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A traffic AI car as this tick sees it.
 pub(super) struct Snap {
@@ -131,6 +132,20 @@ fn leader(
 fn wrap(angle: f32) -> f32 {
     let a = (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU);
     a - std::f32::consts::PI
+}
+
+/// A car on a connector without its grant or the whole box (demoted, recovered there, or switched to
+/// another exit): it holds.
+fn held_in_box(graph: &TrafficGraph, junctions: &TrafficIntersections, snap: &Snap) -> bool {
+    let Segment::Connector(c) = snap.car.segment else {
+        return false;
+    };
+    let node = graph.connector(c).node;
+    !junctions.granted(node, c, snap.entity)
+        && junctions
+            .0
+            .get(&node)
+            .is_none_or(|j| j.whole.map(|w| w.0) != Some(snap.entity))
 }
 
 /// Re-projects a dynamic car onto its own path; `true` when it is lost.
@@ -330,6 +345,11 @@ pub(super) fn advance_traffic(
 
     // 5. Obstacles and 6. acceleration.
     let mut accelerations = vec![0.0; snaps.len()];
+    let held_cars: HashSet<Entity> = snaps
+        .iter()
+        .filter(|s| !s.abandon && held_in_box(&graph, &junctions, s))
+        .map(|s| s.entity)
+        .collect();
     for k in 0..snaps.len() {
         let snap = &snaps[k];
         if snap.abandon {
@@ -387,7 +407,7 @@ pub(super) fn advance_traffic(
         }
         stats.casts = stats.casts.wrapping_add(1);
         counts.casts = stats.casts;
-        let (ahead, beside) = sense(&graph, &road, &cfg, snap, half);
+        let (ahead, beside) = sense(&graph, &road, &cfg, snap, half, &held_cars);
         for hit in ahead.iter().chain(beside.iter()) {
             obstacle(hit.gap, hit.speed_along);
         }
@@ -433,18 +453,7 @@ pub(super) fn advance_traffic(
         }
         let a = accelerations[k];
         let granted = has_grant(&graph, &junctions, snap);
-        // A car on a connector without its grant (demoted, or switched to another exit) holds.
-        let held = match snap.car.segment {
-            Segment::Connector(c) => {
-                let node = graph.connector(c).node;
-                !junctions.granted(node, c, snap.entity)
-                    && junctions
-                        .0
-                        .get(&node)
-                        .is_none_or(|j| j.whole.map(|w| w.0) != Some(snap.entity))
-            }
-            Segment::Lane(_) => false,
-        };
+        let held = held_in_box(&graph, &junctions, snap);
         let Ok((_, _, _, _, mut velocity, mut angular, mut vehicle, _, _, pilot)) =
             cars.get_mut(snap.entity)
         else {
@@ -474,7 +483,7 @@ pub(super) fn advance_traffic(
         }
         let car = &mut snap.car;
         car.deaf = (car.deaf - dt).max(0.0);
-        let before = effective_lateral(&graph, car.segment, car.s, car.lateral, passing(car));
+        let before = effective_lateral(&graph, car.segment, car.s, car.lateral, holds_offset(car));
         let (travel, mut v) = if held {
             (0.0, 0.0)
         } else {
@@ -507,10 +516,10 @@ pub(super) fn advance_traffic(
                     car.next = None;
                     car.waiting = None;
                     // A pass in the box goes on along the exit lane (its marks move with the
-                    // origin); any other offset has decayed to 0 along the connector.
+                    // origin), so does a rejoin still offset; any other offset has decayed to 0.
                     if passing(car) {
                         shift_pass(&mut car.manoeuvre, -length);
-                    } else {
+                    } else if car.manoeuvre != Manoeuvre::Rejoin {
                         car.lateral = 0.0;
                     }
                     continue;
@@ -531,20 +540,35 @@ pub(super) fn advance_traffic(
         car.s = s;
         car.speed = v;
         let manoeuvring = car.lateral != 0.0 || car.manoeuvre != Manoeuvre::None;
-        if manoeuvring && (matches!(seg, Segment::Lane(_)) || passing(car)) {
+        if manoeuvring && (matches!(seg, Segment::Lane(_)) || holds_offset(car)) {
             let target = target_lateral(car, s - half_length);
             car.lateral = step_lateral(car.lateral, target, v, dt, &cfg.lateral);
         }
-        let lateral = effective_lateral(&graph, seg, s, car.lateral, passing(car));
+        let lateral = effective_lateral(&graph, seg, s, car.lateral, holds_offset(car));
         let (point, tangent) = offset_pose(&graph, seg, s, lateral);
         let target = Vec3::new(point.x, rest, point.z);
         velocity.0 = (target - snap.position) / dt;
         let yaw = aim_yaw(snap.rotation * Vec3::NEG_Z);
         let path_error = wrap(aim_yaw(tangent) - yaw);
         // Off the path line the heading follows the sideways move at a limited turn rate; on it the
-        // yaw snaps to the path in one tick.
+        // yaw snaps to the path in one tick. A rejoin in the box slides: a yaw swing takes the body
+        // out of the conflict table's band.
+        let slide = matches!(seg, Segment::Connector(_)) && car.manoeuvre == Manoeuvre::Rejoin;
         angular.0 = if manoeuvring {
-            let heading = heading_yaw(tangent, v, (lateral - before) / dt);
+            let rate = if slide { 0.0 } else { (lateral - before) / dt };
+            let mut heading = heading_yaw(tangent, v, rate);
+            // On a lane the swing is capped to the manoeuvre's band, at the offset now and where it
+            // will be by the time the yaw can turn back (the turn rate lags the cap).
+            if let Segment::Lane(l) = seg {
+                let pitch = graph.lane(l).left_gap.unwrap_or(2.0 * half.x);
+                let band = manoeuvre_band(car.manoeuvre, pitch, half.x, cfg.pass.clearance);
+                let turn_back = path_error.abs() / cfg.lateral.yaw_rate_deg.to_radians();
+                let target = target_lateral(car, s - half_length);
+                let ahead = step_lateral(lateral, target, v, turn_back, &cfg.lateral);
+                let cap = yaw_cap(band, (lateral, ahead), Vec2::new(half.x, half.z));
+                let aim = aim_yaw(tangent);
+                heading = aim + wrap(heading - aim).clamp(-cap, cap);
+            }
             turn_towards(snap.rotation, heading, dt, &cfg.lateral)
         } else {
             Vec3::new(0.0, path_error / dt, 0.0)

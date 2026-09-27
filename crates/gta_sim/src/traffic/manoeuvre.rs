@@ -1,18 +1,22 @@
 //! Per-car manoeuvre decisions of `advance_traffic`: what the car senses ahead (the strips), and
 //! when it starts, lets go of or drops a pass around a standing body (on its lane or in the box).
 
-use super::box_rules::{plan_box_pass, shift_pass};
+use super::box_rules::{path_pose, plan_box_pass, shift_pass};
 use super::drive::Snap;
-use super::lateral::{effective_lateral, right_of, target_lateral};
+use super::lateral::{
+    CORRIDOR_LATERAL_STEP, CORRIDOR_YAW_STEP_DEG, effective_lateral, right_of, target_lateral,
+};
 use super::pass::{may_go, passable, plan_pass};
 use super::sirens;
 use super::{
-    Manoeuvre, Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections, TrafficMode,
+    FlatRect, Manoeuvre, Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections,
+    TrafficMode,
 };
-use crate::occupancy::{BodyKind, Claim, Hit, RoadOccupancy, Strip, flat};
+use crate::occupancy::{BodyKind, Claim, Footprint, Hit, RoadBody, RoadOccupancy, Strip, flat};
 use crate::vehicle::VehicleConfig;
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use std::collections::HashSet;
 
 /// `me` holds the whole box of connector `c`'s node.
 fn holds_box(junctions: &TrafficIntersections, graph: &TrafficGraph, c: u32, me: Entity) -> bool {
@@ -39,16 +43,91 @@ pub(super) fn passing(car: &TrafficCar) -> bool {
     matches!(car.manoeuvre, Manoeuvre::Pass { .. })
 }
 
-/// Bodies ahead on strips from the nose: at the target offset over the
-/// sensing reach, and at the current offset over the rest of the lateral move plus twice the jam gap
-/// while the two differ. A car on its path line with no manoeuvre skips AI cars on their path lines
-/// (the path occupancy holds those; a straight strip into a box must not brake for crossing cars).
+/// An offset the lateral law steps on a connector instead of decaying it (a pass, a rejoin).
+pub(super) fn holds_offset(car: &TrafficCar) -> bool {
+    passing(car) || car.manoeuvre == Manoeuvre::Rejoin
+}
+
+/// The first body or oncoming claim the car's body meets driving `reach` m on along connector `c`
+/// from `s`, `lateral` m off the line (onto the exit lane past the end). Only a body with a part ahead
+/// of the nose counts: one at the flank or swept by the rear on a curve never holds the car. The gap
+/// is the free travel to first contact, bisected to 0.01 m.
+fn sweep_ahead(
+    graph: &TrafficGraph,
+    road: &RoadOccupancy,
+    (c, s): (u32, f32),
+    lateral: f32,
+    reach: f32,
+    half: Vec3,
+    skip: impl Fn(&RoadBody) -> bool,
+) -> Option<Hit> {
+    let pose = |d: f32| {
+        let (point, tangent) = path_pose(graph, c, s + d);
+        let right = right_of(tangent);
+        let body = FlatRect {
+            centre: flat(point + right * lateral),
+            axis: flat(right).normalize_or(Vec2::X),
+            half: Vec2::new(half.x, half.z),
+        };
+        (body, flat(tangent).normalize_or_zero())
+    };
+    let (body, fwd) = pose(0.0);
+    let nose = body.centre + fwd * half.z;
+    let behind_nose = |b: &RoadBody| match b.shape {
+        Footprint::Circle { centre, radius } => (centre - nose).dot(fwd) + radius <= 0.0,
+        Footprint::Rect(r) => {
+            (r.centre - nose).dot(fwd)
+                + r.half.x * r.axis.dot(fwd).abs()
+                + r.half.y * r.axis.perp().dot(fwd).abs()
+                <= 0.0
+        }
+    };
+    let skip = |b: &RoadBody| skip(b) || behind_nose(b);
+    // The recovery corridor's step law bounds rotation and travel between samples; a body slipping
+    // between two samples is met on a later tick (the no-touch guarantee is the unmargined oracle's).
+    let mut travels = vec![0.0];
+    let mut d = 0.0;
+    while d < reach {
+        let step = CORRIDOR_LATERAL_STEP.min(reach - d);
+        let turn = pose(d).1.angle_to(pose(d + step).1).abs();
+        let n = (turn / CORRIDOR_YAW_STEP_DEG.to_radians()).ceil().max(1.0);
+        travels.extend((1..=n as u32).map(|k| d + step * k as f32 / n));
+        d += step;
+    }
+    let (rects, dirs): (Vec<FlatRect>, Vec<Vec2>) = travels.iter().map(|&d| pose(d)).unzip();
+    let (k, mut hit) = road.first_in(&rects, &dirs, skip)?;
+    if k == 0 {
+        return Some(hit);
+    }
+    let (mut free, mut met) = (travels[k - 1], travels[k]);
+    while met - free > 0.01 {
+        let mid = (free + met) / 2.0;
+        let (rect, dir) = pose(mid);
+        match road.first_in(&[rects[0], rect], &[dirs[0], dir], skip) {
+            Some((_, h)) => {
+                met = mid;
+                hit = h;
+            }
+            None => free = mid,
+        }
+    }
+    hit.gap = free;
+    Some(hit)
+}
+
+/// Bodies ahead from the nose: at the target offset over the sensing reach (on a lane a strip, on a
+/// connector the body swept along the path), and on a strip at the current offset over the rest of
+/// the lateral move plus twice the jam gap while the two differ. A car on its path line with no
+/// manoeuvre skips AI cars on their path lines (the path occupancy holds those; a strip into a box
+/// must not brake for crossing cars), except one `held` on a connector without a grant: no grant
+/// keeps crossing cars off it.
 pub(super) fn sense(
     graph: &TrafficGraph,
     road: &RoadOccupancy,
     cfg: &TrafficConfig,
     snap: &Snap,
     half: Vec3,
+    held: &HashSet<Entity>,
 ) -> (Option<Hit>, Option<Hit>) {
     let car = &snap.car;
     let (point, tangent) = graph.pose(car.segment, car.s);
@@ -56,19 +135,19 @@ pub(super) fn sense(
     let current = if snap.dynamic {
         (snap.position - point).with_y(0.0).dot(right)
     } else {
-        effective_lateral(graph, car.segment, car.s, car.lateral, passing(car))
+        effective_lateral(graph, car.segment, car.s, car.lateral, holds_offset(car))
     };
     let (target, reach) = match car.segment {
         Segment::Lane(_) => (target_lateral(car, car.s - half.z), cfg.sense_distance),
-        Segment::Connector(_) if passing(car) => {
+        Segment::Connector(_) if holds_offset(car) => {
             (target_lateral(car, car.s - half.z), cfg.turn_sense_distance)
         }
         Segment::Connector(_) => (current, cfg.turn_sense_distance),
     };
     let plain = car.lateral == 0.0 && target == 0.0 && car.manoeuvre == Manoeuvre::None;
     let me = snap.entity;
-    let skip = |b: &crate::occupancy::RoadBody| {
-        b.entity == me || (plain && b.kind == BodyKind::OnPathTraffic)
+    let skip = |b: &RoadBody| {
+        b.entity == me || (plain && b.kind == BodyKind::OnPathTraffic && !held.contains(&b.entity))
     };
     let strip = |lateral: f32, length: f32| Strip {
         origin: flat(point + right * lateral + tangent * half.z),
@@ -76,7 +155,10 @@ pub(super) fn sense(
         length,
         half_width: half.x,
     };
-    let ahead = road.first_along(&strip(target, reach), skip);
+    let ahead = match car.segment {
+        Segment::Connector(c) => sweep_ahead(graph, road, (c, car.s), target, reach, half, skip),
+        Segment::Lane(_) => road.first_along(&strip(target, reach), skip),
+    };
     if (target - current).abs() <= 1e-4 {
         return (ahead, None);
     }

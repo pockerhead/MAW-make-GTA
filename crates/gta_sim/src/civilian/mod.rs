@@ -14,8 +14,10 @@ use crate::navigation::{
     GraphWalker, NavigationConfig, SidewalkGraph, flat_distance, flee_next, flee_start,
     lane_target, steer, wander_next,
 };
+use crate::occupancy::{Footprint, RoadBody, RoadOccupancy, flat};
 use crate::perception::{AiSystems, Cause, Perception, Threat, ThreatKind};
 use crate::population::{Appearance, NpcRng, Offscreen, corpse_components};
+use crate::tactics::{CarRect, around_cars};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand_chacha::ChaCha8Rng;
@@ -452,12 +454,35 @@ fn arrive(
     state
 }
 
+/// Standing vehicle bodies whose centre lies within `reach` of `at` plus their half diagonal: the cars a
+/// walker steers around (a moving car is not walked around; the lock is walkers pressed against
+/// standing ones).
+fn standing_cars(bodies: &[RoadBody], at: Vec3, reach: f32) -> Vec<CarRect> {
+    let at = flat(at);
+    bodies
+        .iter()
+        .filter(|b| b.standing > 0.0)
+        .filter_map(|b| match b.shape {
+            Footprint::Rect(r) if r.centre.distance(at) <= reach + r.half.length() => {
+                Some(CarRect {
+                    centre: r.centre,
+                    axis: r.axis,
+                    half: r.half,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn civilian_fsm(
     cfg: Res<CivilianConfig>,
     nav: Res<NavigationConfig>,
     graph: Res<SidewalkGraph>,
     time: Res<Time<Fixed>>,
+    road: Res<RoadOccupancy>,
+    loco: Res<LocomotionConfig>,
     mut rng: ResMut<NpcRng>,
     mut calls: MessageWriter<PoliceCall>,
     mut civilians: Query<(
@@ -510,8 +535,63 @@ fn civilian_fsm(
         };
         intent.axis = Vec2::Y;
         intent.gait = gait;
-        if let Some(yaw) = steer(position.0, lane_target(&graph, *walker, nav.keep_right)) {
+        // Around a standing car in the way, at the police arrest clearance and corner.
+        let target = around_cars(
+            position.0,
+            lane_target(&graph, *walker, nav.keep_right),
+            &standing_cars(road.bodies(), position.0, nav.avoid_distance),
+            loco.capsule_radius,
+            loco.capsule_radius + nav.arrive_radius,
+        );
+        if let Some(yaw) = steer(position.0, target) {
             intent.yaw = yaw;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::occupancy::BodyKind;
+    use crate::traffic::FlatRect;
+
+    fn body(shape: Footprint, standing: f32) -> RoadBody {
+        RoadBody {
+            entity: Entity::PLACEHOLDER,
+            kind: BodyKind::Vehicle,
+            shape,
+            velocity: Vec2::ZERO,
+            dynamic: true,
+            standing,
+            siren: false,
+        }
+    }
+
+    fn car(x: f32) -> Footprint {
+        Footprint::Rect(FlatRect::of(
+            Vec3::new(x, 0.0, 0.0),
+            Quat::IDENTITY,
+            Vec2::new(1.2, 2.04),
+        ))
+    }
+
+    /// Only standing vehicle bodies within reach (+ half diagonal 2.37 m) are walked around.
+    #[test]
+    fn standing_cars_rows() {
+        let bodies = [
+            body(car(3.0), 2.0),
+            body(car(3.0), 0.0),
+            body(
+                Footprint::Circle {
+                    centre: Vec2::new(1.0, 0.0),
+                    radius: 0.3,
+                },
+                5.0,
+            ),
+            body(car(4.5), 2.0),
+        ];
+        let kept = standing_cars(&bodies, Vec3::ZERO, 2.0);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert!((kept[0].centre - Vec2::new(3.0, 0.0)).length() < 1e-6);
     }
 }

@@ -67,8 +67,17 @@ The switch has a way back (`recover.rs`): a `Dynamic` car becomes `Kinematic` ag
 `recover.seconds` it has been upright (tilt under `max_tilt_deg`), within the `lost` thresholds, at rest,
 with no dynamic body whose relative sweep over `recover.horizon_seconds` reaches its footprint grown by
 `recover.skin` (four and five times the switch's skin and horizon: a body that would switch it again
-within a tick never lets it recover), and with its rejoin corridor to the lane line clear (sampled
-rectangles 7.5 deg / 0.3 m apart). It then rejoins its line at the lateral rate (`Manoeuvre::Rejoin`).
+within a tick never lets it recover), and with its rejoin corridor to the path line clear (sampled
+rectangles 7.5 deg / 0.3 m apart). Against a vehicle at rest the skin shrinks to `switch.skin` plus the
+farthest the car's own rejoin moves any part of it (offset, corner arc of its turn and, off a
+connector, of the heading swing at rest), at most `recover.skin`; the corridor meets that vehicle
+where its own velocity takes it over `recover.horizon_seconds` (`standing` also counts a body creeping
+at up to `hold_speed`). TASK-037: a car held inside the full skin of a given-up car stood 88 s; walkers
+keep the full skin. On a connector it recovers only while its footprint stays inside the conflict
+table's body band (`half.x + conflict_margin / 2` across the path line, and its centre within
+`conflict_margin / 2` along it: the table keeps co-granted bodies apart by that model only, TASK-037);
+a car between that band and half the lane pitch neither recovers nor gives up (the residual band). It
+then rejoins its line at the lateral rate (`Manoeuvre::Rejoin`).
 A car that stood `give_up_seconds` in `Dynamic` without recovering, out of its lane band (half the lane
 pitch from the path line) and with nothing on its lane line within twice the jam gap ahead, bails out, or
 is abandoned at once when no door is free (a bailing car with no exit would stand forever). A car in a
@@ -78,8 +87,15 @@ claims no road (the snapshot derives claims for `Kinematic`/`Dynamic` cars only)
 
 `TrafficCar.lateral` and `manoeuvre` (`None`, `Rejoin`, `Pass`, `Yield`) move a kinematic car off its line
 under one law (`lateral.rs`): rate `rate_at_rest + slope x speed`, the heading turned into the move at
-most `yaw_rate_deg` per second; on a connector the offset decays linearly to its end. A car on its line
-keeps the one-tick yaw snap.
+most `yaw_rate_deg` per second; on a connector the offset decays linearly to its end, except for a pass
+and a rejoin, which step it there too. A rejoin on a connector slides (the heading keeps the path
+tangent): a yaw swing from rest would take the body out of the conflict table's band. On a lane the
+swing is capped so the body stays in the band the manoeuvre may use: half the lane pitch either side of
+the line, widened on a pass's side to its claim and on a yield's side to the car at its offset (the body
+reaches `|half| sin(yaw error + atan2(half.x, half.z))` across, both ways; the room is taken at the
+current offset and where the offset will be when the yaw can turn back). Without it a pass swung 31-39
+deg from rest and put a corner into the next lane (TASK-037, avenue seed 2). A car on its line keeps the
+one-tick yaw snap.
 
 ## One tick (`advance_traffic`, entity order)
 
@@ -101,11 +117,16 @@ Order in `FixedUpdate` (`NpcSystems`): `TrafficSystems::Hijack` and `Bail`, then
    the line before asking.)
 5. IDM (`idm.rs`, ballistic update with stops) on the nearest of: the leader along the path within
    `look_ahead`, the stop line when not granted, and the road occupancy on two strips from the nose
-   (`manoeuvre::sense`): one at the target lateral over `sense_distance` on lanes / `turn_sense_distance`
-   on connectors, one at the current lateral over the rest of the sideways move plus twice the jam gap
-   (a strip as long as IDM's rest gap would drop the body the car stands behind). A car on its line with
+   (`manoeuvre::sense`): one at the target lateral over `sense_distance` on lanes, one at the current
+   lateral over the rest of the sideways move plus twice the jam gap (a strip as long as IDM's rest gap
+   would drop the body the car stands behind). On a connector the first one is the car body swept along
+   the path over `turn_sense_distance` (onto the exit lane past the end; samples 0.3 m or 7.5 deg of
+   path yaw apart, `RoadOccupancy::first_in`), with the gap bisected to 0.01 m of travel; only bodies
+   with a part ahead of the nose line count (TASK-037: the straight strip stopped turning cars 2 m
+   behind a car their body passes, and missed bodies on the curve). A car on its line with
    no manoeuvre skips `OnPathTraffic` (the path occupancy holds those; a straight strip into a box must
-   not brake for crossing cars); every other body, and every oncoming claim, is seen. The strips start at
+   not brake for crossing cars), except a car held on a connector without a grant (demoted, recovered
+   there): no grant keeps crossing cars off it. Every other body, and every oncoming claim, is seen. The strips start at
    the nose: a walker pressed against the flank is not in the way (a car and a walker used to wait on
    each other inside intersections for 3-13 s). A chosen turn caps the lane speed so the connector is
    reached at `turn_speed`. Then the manoeuvre step (`manoeuvre::plan`): the siren yield, a published
@@ -142,10 +163,18 @@ A holder whose path a standing non-walker body has blocked for the lease is demo
 it stands. A queue head (or a car at the very start of its connector) whose path a body standing
 `pass.vehicle_seconds` blocks takes another exit (no RNG draw). When a body stands on every way out, the
 head enters alone with a whole-box grant and goes around it (`plan_box_pass`). A lock that no pass
-fits around (two bodies in the box) is left to the stuck cheat (Bubble). Open (TASK-032 R1): a car
-left in a box the player watches from within `bubble.stuck_in_view_distance` is neither passed nor
-removed and can lock the box; a push-through by the traffic (a braked car cannot be shoved sideways
-by the autopilot, and walkers get pinned between the cars) was tried and dropped.
+fits around (two bodies in the box) is left to the stuck cheat (Bubble). A car left in a box the player
+watches from within `bubble.stuck_in_view_distance` is never removed (TASK-032 R1). TASK-037 resolved the
+locks it caused that were not geometry: cars bumped on a connector stood `Dynamic` forever (now they
+recover there), turning cars stood behind a straight-strip false positive (now the swept body), and
+walkers pinned at the nose of a `Dynamic` head held it (now civilians walk around standing cars,
+`civilian_fsm` via `tactics::around_cars`, which scores a corner by the shortest way round the car).
+Open (TASK-039): an approach whose every exit crosses the left car and where no box pass fits (the
+oncoming lane holds its own queue head at the stop line) still locks (G4 seed 7); so does the R1
+seed-1 car switched by the left car appearing in its path (113 s in `Dynamic`). Open (TASK-036 item 4):
+`connector_rects` has no corner overhang, so a grant can be given into a path the swept body finds
+blocked. A push-through by the traffic (a braked car cannot be shoved sideways by the
+autopilot, and walkers get pinned between the cars) was tried and dropped.
 
 ## Sirens (`traffic/sirens.rs`, `police/siren.rs`, TASK-032)
 

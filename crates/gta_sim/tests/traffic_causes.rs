@@ -7,22 +7,19 @@
 //!   bumper, yawed 45 deg): after 60 s it is not `Dynamic` and standing; with the dummy pressed at its
 //!   bumper (a standing body on its path) it waits, never given up, and drives on once the dummy goes;
 //! - (c) a character standing in a street lane: the car behind it does not stand longer than 30 s;
-//!   the `Dynamic` bound covers the scene lane and its approach only (a box lock elsewhere in the
-//!   city is printed: TASK-036, TASK-037);
 //! - (d) a car left on a connector path with an AI car on that connector behind it, out of view: no
 //!   stand over `bubble.stuck_despawn_seconds` + 1 s, and the left car is gone (the stuck cheat) or
 //!   out of the box (pushed);
 //! - R1 (headless, the TASK-031 repro): a car left in the middle of the junction box next to the
 //!   spawn, the player on the spawn sidewalk looking at it: no traffic car within 45 m of the box
-//!   stands longer than 30 s over 150 s (ignored: open, see the row);
+//!   stands longer than 30 s over 150 s (seed 1 ignored: open in TASK-039, see the row);
 //! - the stuck cheat's in-view rule (fallback R-B): a car in the box the player looks at from nearby
-//!   is never popped; seen from past `bubble.stuck_in_view_distance` it is cleared, and the `Dynamic`
-//!   bound covers the box approaches only.
+//!   is never popped; seen from past `bubble.stuck_in_view_distance` it is cleared.
 //!
-//! The other rows hold the TASK-032 bound city-wide: no AI car stands longer than 30 s in `Dynamic`.
-//! (c) and rb scope it to their scene: a `Dynamic` grant holder with walkers pinned at its nose
-//! elsewhere is printed (TASK-036 item 1, TASK-037 restores the city-wide bound). Each row asserts the
-//! fixed behaviour; on the pre-TASK-032 code the reproduced rows were RED.
+//! Every row holds the TASK-032 bound city-wide: no AI car stands longer than 30 s in `Dynamic` (walkers
+//! pinned at the nose of a `Dynamic` grant holder broke it in (c) and rb until TASK-037: civilians now
+//! go around standing cars). Each row asserts the fixed behaviour; on the pre-TASK-032 code the
+//! reproduced rows were RED.
 
 mod common;
 mod traffic_support;
@@ -31,7 +28,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use common::*;
 use gta_sim::{
-    traffic::{Segment, TrafficCar, TrafficConfig, TrafficIntersections, TrafficLane, TrafficMode},
+    traffic::{Segment, TrafficCar, TrafficConfig, TrafficIntersections, TrafficMode},
     vehicle::VehicleConfig,
     world::PlayerSpawn,
 };
@@ -290,41 +287,13 @@ fn c_character_in_the_lane() {
         clock.worst(),
         stands_near(&clock, at, 60.0, 30.0)
     );
-    let approach = [graph(&scene.app).lane(scene.lane).clone()];
-    let mut failures: Vec<String> = dynamic_bound_on("(c)", &approach, &clock)
-        .into_iter()
-        .collect();
+    let mut failures: Vec<String> = clock.dynamic_violation().into_iter().collect();
     if !stood.is_empty() {
         failures.push(format!(
             "AI cars stood > 30 s behind a character in the lane: {stood:?}"
         ));
     }
     assert!(failures.is_empty(), "{failures:?}");
-}
-
-/// The TASK-032 `Dynamic` bound over the scene's approach lanes (each up to its stop line, from 15 m
-/// before its start: the feeding connector; its own lane width plus a curb shove to the right). Stands
-/// elsewhere in the city are printed, not asserted: a box lock such as walkers pinned at the nose of a
-/// `Dynamic` grant holder (TASK-036 item 1; TASK-037 restores the city-wide bound).
-fn dynamic_bound_on(row: &str, approaches: &[TrafficLane], clock: &StandClock) -> Option<String> {
-    let on_approach = |p: Vec3| {
-        approaches.iter().any(|l| {
-            let d = (p - l.from).with_y(0.0);
-            (-15.0..=l.stop).contains(&d.dot(l.dir))
-                && (-1.7..=3.25).contains(&d.dot(right_of(l.dir)))
-        })
-    };
-    let (scene, elsewhere): (Vec<_>, Vec<_>) = clock
-        .dynamic_longer_than(DYNAMIC_STAND_S)
-        .into_iter()
-        .map(|(_, s, p)| (s, p))
-        .partition(|&(_, p)| on_approach(p));
-    eprintln!(
-        "{row}: Dynamic stands > {DYNAMIC_STAND_S} s off the scene approaches (reported, TASK-036/TASK-037): {elsewhere:?}"
-    );
-    (!scene.is_empty()).then(|| {
-        format!("AI cars on the scene approaches stood > {DYNAMIC_STAND_S} s in Dynamic: {scene:?}")
-    })
 }
 
 /// A car left on a connector path of the junction nearest to the spawn, an AI car on that connector
@@ -407,8 +376,6 @@ fn d_car_left_on_a_connector_out_of_view() {
 /// What a run with a car left in the middle of the box nearest to the spawn saw.
 struct LeftInBox {
     hub: Vec3,
-    /// The lanes ending at the box.
-    approaches: Vec<TrafficLane>,
     clock: StandClock,
     oracle: Footprints,
     /// Where the left car ended, `None` when the cheat despawned it.
@@ -456,12 +423,6 @@ fn left_in_the_box(seed: u64, back: f32) -> LeftInBox {
     }
     let distance = (hub - position(&mut app)).with_y(0.0).length();
     let at = app.world().get::<Position>(left).map(|p| p.0);
-    let approaches = graph(&app)
-        .lanes()
-        .iter()
-        .filter(|l| l.end_node == node)
-        .cloned()
-        .collect();
     eprintln!(
         "seed {seed}: box {node} at ({:.1}, {:.1}), the player {distance:.1} m from it; stands > 30 s \
          within 45 m: {:?}; worst {:?}, worst dynamic {:.1} s; left car now at {at:?}; G1 max depth {:.3}",
@@ -474,7 +435,6 @@ fn left_in_the_box(seed: u64, back: f32) -> LeftInBox {
     );
     LeftInBox {
         hub,
-        approaches,
         clock,
         oracle,
         left: at,
@@ -499,13 +459,12 @@ fn r1(seed: u64) {
 }
 
 #[test]
-#[ignore = "TASK-037: the in-view junction box lock (R1: a car left in the box the player watches from within stuck_in_view_distance)"]
+#[ignore = "TASK-039 class D: a car switched by the left car placed in its path at 2.8 m/s stays Dynamic 113 s"]
 fn r1_car_left_in_the_box_seed_1() {
     r1(1);
 }
 
 #[test]
-#[ignore = "TASK-037: the in-view junction box lock (R1: a car left in the box the player watches from within stuck_in_view_distance)"]
 fn r1_car_left_in_the_box_seed_7() {
     r1(7);
 }
@@ -522,15 +481,13 @@ fn rb_a_box_car_seen_from_nearby_stays() {
 }
 
 /// Fallback R-B, far: seen from 60 m (past `bubble.stuck_in_view_distance`) the car in the box counts
-/// as out of frame and is despawned; no AI car on the box approaches stands longer than 30 s in
-/// `Dynamic`, G1 clean. The stands near the box are printed, not asserted: cars bumped at a lane end
-/// are given up where no pass reaches (FIX_SUMMARY.md).
+/// as out of frame and is despawned; no AI car stands longer than 30 s in `Dynamic`, G1 clean. The
+/// stands near the box are printed, not asserted: cars bumped at a lane end are given up where no pass
+/// reaches (FIX_SUMMARY.md).
 #[test]
 fn rb_a_box_car_seen_from_afar_is_cleared() {
     let run = left_in_the_box(1, 60.0);
-    let mut failures: Vec<String> = dynamic_bound_on("rb", &run.approaches, &run.clock)
-        .into_iter()
-        .collect();
+    let mut failures: Vec<String> = run.clock.dynamic_violation().into_iter().collect();
     if run.left.is_some() {
         failures.push(format!("the car in the box is still there: {:?}", run.left));
     }
@@ -544,7 +501,8 @@ fn rb_a_box_car_seen_from_afar_is_cleared() {
 /// the south approach queue given up car by car, each switched by a walker pressed against it (13
 /// switches by characters) and unable to recover, each given-up car the next obstacle. Here the
 /// queue on the approach lane through (-4.5, -92) is filled up to 8 standing cars at the jam gap
-/// behind its tail (the lane start is past the bubble's reach, a feeder there is despawned); from
+/// behind the last AI car on the lane (the lane start is past the bubble's reach, a feeder there is
+/// despawned); from
 /// then on every queued car gets a dummy pressed at its right side for `PRESSED_S`: none of the cars
 /// that stood in that queue is given up.
 #[test]
@@ -614,9 +572,11 @@ fn spot_c_queue_behind_a_box_car_is_never_given_up() {
             .collect();
         longest = longest.max(queue.len());
         if tick == FILL_AT_S * HZ {
-            let tail = queue
+            // Behind the last AI car on the lane, moving or standing: a car still rolling up to the
+            // queue holds its spot too.
+            let tail = cars
                 .iter()
-                .filter(|c| c.1.segment == Segment::Lane(lane))
+                .filter(|c| c.1.is_ai() && c.1.segment == Segment::Lane(lane))
                 .map(|c| c.1.s)
                 .fold(f32::INFINITY, f32::min);
             for k in 1..=8usize.saturating_sub(queue.len()) {

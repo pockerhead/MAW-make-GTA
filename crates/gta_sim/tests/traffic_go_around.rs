@@ -8,6 +8,8 @@
 //!   front) within `PASS_S` of joining the queue.
 //! - No AI car in the bubble stands longer than `STAND_S`; no `Dynamic` one either (the M1 class).
 //! - No `CollisionStart` between a passing car and any vehicle; the G1 oracle stays clean.
+//!
+//! Floor row: a passing car's body stays in the band its pass may use (the heading swing is capped).
 
 mod common;
 mod traffic_support;
@@ -193,6 +195,86 @@ fn report(label: &str, w: &Watch) {
         failures.push(format!("G1: {:?}", w.oracle.summary()));
     }
     assert!(failures.is_empty(), "{label}: {}", failures.join("; "));
+}
+
+/// Floor row (TASK-037): a car passes a parked car on lane 0 of the two-way street, into the opposite
+/// lane and (lane 0 marked a curb lane) onto the curb lane. Every tick of the pass the body stays
+/// within half the lane pitch of the lane line on the side away from the pass, and within the claim
+/// band on the pass side: the heading swing is capped (at rest a free swing of 38.7 deg puts the rear,
+/// and on the merge the nose, into the next lane).
+#[test]
+fn a_pass_keeps_the_body_in_its_band() {
+    for curb in [false, true] {
+        let (lanes, connectors) = two_way_street(70.0);
+        let mut app = traffic_floor(lanes, &connectors, &[]);
+        app.world_mut()
+            .resource_mut::<gta_sim::traffic::TrafficGraph>()
+            .set_curb_lane(0, curb);
+        let lane = graph(&app).lane(0).clone();
+        let cfg = app.world().resource::<TrafficConfig>().clone();
+        let half = app.world().resource::<VehicleConfig>().half_extents();
+        let pitch = lane
+            .left_gap
+            .expect("GATE BROKEN: lane 0 has no opposite lane");
+        let right = Vec2::new(right_of(lane.dir).x, right_of(lane.dir).z);
+        let parked = park_car(&mut app, lane.from + lane.dir * 35.0, lane.dir);
+        app.world_mut().entity_mut(parked).insert(Sleeping);
+        let front = 35.0 + half.z;
+        let car = spawn_traffic_car(&mut app, Segment::Lane(0), 10.0, 6.0);
+        let mut oracle = Footprints::new(&app);
+        let (mut offset, mut away, mut out, mut passed) = (0.0_f32, 0.0_f32, 0.0_f32, None);
+        for tick in 0..30 * HZ {
+            run_ticks(&mut app, 1);
+            oracle.record(&mut app, tick);
+            let t = app.world().get::<TrafficCar>(car).copied();
+            let Some(t) = t else {
+                panic!("GATE BROKEN: curb {curb}: the passing car is gone");
+            };
+            let r = footprint(&app, car);
+            let across = (r.centre - Vec2::new(lane.from.x, lane.from.z)).dot(right);
+            let extent =
+                r.half.x * r.axis.dot(right).abs() + r.half.y * r.axis.perp().dot(right).abs();
+            if let Manoeuvre::Pass {
+                offset: o,
+                go: true,
+                ..
+            } = t.manoeuvre
+            {
+                offset = o;
+                let (pass_side, away_side) = if o > 0.0 {
+                    (across + extent, extent - across)
+                } else {
+                    (extent - across, across + extent)
+                };
+                away = away.max(away_side);
+                out = out.max(pass_side);
+            }
+            let along = (position_of(&app, car) - lane.from).dot(lane.dir);
+            if passed.is_none() && along - half.z > front {
+                passed = Some(tick);
+            }
+            if passed.is_some() && t.manoeuvre == Manoeuvre::None {
+                break;
+            }
+        }
+        let claim = offset.abs() + half.x + cfg.pass.clearance;
+        eprintln!(
+            "curb {curb}: pass offset {offset:.2}, widest away side {away:.3} m (half pitch {:.3}), pass side {out:.3} m (claim {claim:.3}), passed on tick {passed:?}",
+            pitch / 2.0
+        );
+        assert!(offset != 0.0, "GATE BROKEN: curb {curb}: no pass started");
+        assert!(passed.is_some(), "curb {curb}: the car never got past");
+        oracle.assert_clean("pass band");
+        assert!(
+            away <= pitch / 2.0 + 0.01,
+            "curb {curb}: the body reached {away:.3} m into the side away from the pass (half pitch {:.3})",
+            pitch / 2.0
+        );
+        assert!(
+            out <= claim + 0.01,
+            "curb {curb}: the body reached {out:.3} m on the pass side (claim {claim:.3})"
+        );
+    }
 }
 
 #[test]
