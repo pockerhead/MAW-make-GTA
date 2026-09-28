@@ -11,7 +11,7 @@
         Boot the unpacked DIR/gta_like[.exe] from a temp cwd without CARGO_MANIFEST_DIR/BEVY_ASSET_ROOT, keep it
         alive N seconds, copy the game's own log DIR/gta_like.log to FILE (console output goes to the
         FILE-stem.console.log sibling), then require every --expect text and zero ERROR/panic lines not matched
-        by an --allow in that log.
+        by an --allow in that log, and zero unallowed panic lines in the console output.
 
 A product failure prints "<subcommand>: <check>: ..." and exits 1; a missing input prints
 "<subcommand>: GATE BROKEN: ..." and exits 2.
@@ -41,6 +41,7 @@ GAME_LOG = "gta_like.log"
 PE_GUI_SUBSYSTEM = 2
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 BAD_LINE = re.compile(r"\bERROR\b|panicked")
+PANIC_LINE = re.compile(r"panicked")
 POLL_SECONDS = 0.5
 TAIL_LINES = 40
 
@@ -201,11 +202,24 @@ def verify(path, doc, sub):
     print(f"{sub}: OK {path.name}: {len(infos)} entries (exe + {len(assets)} assets), "
           f"{path.stat().st_size / 1e6:.1f} MB")
     print(f"{sub}: correctness: allowlist exact, sha256 match (manifest for packs, checkout for tracked), "
-          f"licences for {len(doc['packs'])} packs, no dynamic imports, GUI subsystem on Windows")
+          f"licences for {len(doc['packs'])} packs, no dynamic imports"
+          f"{', GUI subsystem' if any(name.endswith('.exe') for name in exes) else ''}")
 
 
 def cmd_verify(args):
     verify(Path(args.zip), manifest(), "verify")
+
+
+def log_problems(lines, console_lines, allows, expects, log):
+    """ERROR/panic lines of the game log, panics of the console stream (a panic is not a tracing event and the
+    console is the only channel of output from before the log exists), and --expect texts on no log line."""
+    def bad(line, rule):
+        return rule.search(line) and not any(allow.search(line) for allow in allows)
+    problems = [f"error line: {line}" for line in lines if bad(line, BAD_LINE)]
+    problems += [f"console panic: {line}" for line in console_lines if bad(line, PANIC_LINE)]
+    found = {text: next((line for line in lines if text in line), None) for text in expects}
+    problems += [f"expect: {text!r} on no line of {log}" for text, line in found.items() if line is None]
+    return problems, found
 
 
 def cmd_smoke(args):
@@ -253,10 +267,9 @@ def cmd_smoke(args):
                           f"last lines of {game_log}:\n{tail}\nlast lines of {console}:\n{console_tail}"])
     if not written:
         exit_on("smoke", [f"log file: the game wrote no {game_log} (console output in {console})"])
-    problems = [f"error line: {line}" for line in lines
-                if BAD_LINE.search(line) and not any(allow.search(line) for allow in allows)]
-    found = {text: next((line for line in lines if text in line), None) for text in args.expect}
-    problems += [f"expect: {text!r} on no line of {log}" for text, line in found.items() if line is None]
+    console_lines = [ANSI.sub("", line) for line in
+                     console.read_text(encoding="utf-8", errors="replace").splitlines()]
+    problems, found = log_problems(lines, console_lines, allows, args.expect, log)
     exit_on("smoke", problems)
     for line in found.values():
         print(f"smoke: expect matched: {line.strip()}")
@@ -264,7 +277,8 @@ def cmd_smoke(args):
     warns = sum(1 for line in lines if re.search(r"\bWARN\b", line))
     print(f"smoke: adapter: {adapter}")
     print(f"smoke: OK {exe.name} alive {args.seconds} s; liveness: alive at deadline; log: {GAME_LOG} next to the "
-          f"exe, copied to {log}; state: {len(found)} expect(s) matched; correctness: 0 ERROR/panic lines "
+          f"exe, copied to {log}; state: {len(found)} expect(s) matched; correctness: 0 ERROR/panic lines, "
+          f"0 console panic lines "
           f"({len(allows)} allow pattern(s)), {warns} WARN lines")
 
 

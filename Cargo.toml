@@ -43,6 +43,10 @@ ron = { workspace = true }
 bevy_brp_extras = { version = "=0.22.6", optional = true }
 bevy-inspector-egui = { version = "=0.37.0", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+# The version winit already locks: the release start-up error dialog (MessageBoxW) adds no crate.
+windows-sys = { version = "=0.52.0", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 # No features: the default set enables symphonia-vorbis and would switch tests off production's lewton decoder.
 rodio = { version = "=0.22.2", default-features = false }

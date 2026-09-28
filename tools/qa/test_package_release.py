@@ -1,9 +1,10 @@
-"""Offline gate for `package_release` exe checks: MSVC CRT import names and the PE subsystem (no console).
+"""Offline gate for `package_release`: MSVC CRT import names, the PE subsystem (no console) and the smoke log scan.
 
 Run: python -m unittest tools/qa/test_package_release.py
 """
 
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -20,7 +21,10 @@ NOT_CRT = ("api-ms-win-core-synch-l1-2-0.dll", "kernel32.dll", "ntdll.dll", "vcr
 
 
 def pe(subsystem):
-    """Minimal MZ/PE header bytes with IMAGE_OPTIONAL_HEADER.Subsystem = `subsystem`."""
+    """Minimal MZ/PE header bytes with IMAGE_OPTIONAL_HEADER.Subsystem = `subsystem`.
+
+    Written at the offset the parser reads, so these rows prove the rule, not the offset; the offset is proven by
+    reading real exes (console build 3, GUI build 2) and by CI `package` on the release exe."""
     e_lfanew = 0x80
     data = bytearray(e_lfanew + 24 + 240)
     data[:2] = b"MZ"
@@ -61,6 +65,29 @@ class Subsystem(unittest.TestCase):
 
     def test_linux_exe_has_no_subsystem_rule(self):
         self.assertEqual(package_release.exe_problems(b"\x7fELF" + bytes(300), windows=False), [])
+
+
+class SmokeScan(unittest.TestCase):
+    LOG = ["2026-09-28T10:59:16Z  INFO gta_like::menu::screens: main menu ready"]
+    PANIC = "thread 'Async Compute Task Pool (0)' panicked at crates/citygen/src/lib.rs:1:1:"
+
+    def scan(self, lines, console, allows=()):
+        problems, _ = package_release.log_problems(lines, console, list(allows), ["main menu ready"], "game.log")
+        return problems
+
+    def test_clean_run_passes(self):
+        self.assertEqual(self.scan(self.LOG, self.LOG), [])
+
+    def test_console_only_panic_is_refused(self):
+        problems = self.scan(self.LOG, self.LOG + [self.PANIC])
+        self.assertEqual(problems, [f"console panic: {self.PANIC}"])
+
+    def test_allow_exempts_a_console_panic(self):
+        self.assertEqual(self.scan(self.LOG, [self.PANIC], [re.compile("Async Compute")]), [])
+
+    def test_log_error_and_missing_expect_are_refused(self):
+        problems = self.scan(["x ERROR y"], [])
+        self.assertEqual(problems, ["error line: x ERROR y", "expect: 'main menu ready' on no line of game.log"])
 
 
 if __name__ == "__main__":

@@ -55,12 +55,15 @@ workflow (TASK-029) уже есть: composite `.github/actions/setup` став�
   citygen` только на push тега; на ветках их и так гоняют sim/citygen gates.
 - **Публикация.** Job `publish` только при `push` тега `v*`, после `release` и `release-gates`. Права
   `contents: write` только у него; весь workflow — `contents: read`. `gh release create --verify-tag
-  --generate-notes` с обоими zip, `--prerelease` для тегов с `-`. Только `GITHUB_TOKEN`; ref попадают в shell
+  --notes-file docs/releases/<тег>.md` с обоими zip (нет файла на теговом коммите — job красный), `--prerelease`
+  для тегов с `-`. Только `GITHUB_TOKEN`; ref попадают в shell
   только через env (`$GITHUB_REF_NAME`, `$GITHUB_SHA`), не через `${{ github.* }}` внутри `run:`.
 - **Окно консоли.** Release-сборка на Windows без консоли (`windows_subsystem = "windows"` при
-  `not(debug_assertions)`, TASK-041); dev и debug с консолью. Release пишет лог в stderr и в `gta_like.log` рядом
-  с exe (`LogPlugin::fmt_layer`), `smoke` читает этот файл, а вывод консоли кладёт в `<log>.console.log`.
-  `package`/`verify` требуют у Windows-exe подсистему GUI в PE-заголовке.
+  `not(debug_assertions)`, TASK-041); dev и debug с консолью. Release первым делом создаёт `gta_like.log` рядом с
+  exe (папка без записи — во временной папке, с `warn!`) и пишет туда лог (`LogPlugin::fmt_layer`), ошибки старта и
+  паники; ошибка старта и паника главного потока на Windows ещё и показывают окно `MessageBoxW`. `smoke` читает
+  этот файл, вывод консоли кладёт в `<log>.console.log` и ищет в нём паники. `package`/`verify` требуют у
+  Windows-exe подсистему GUI в PE-заголовке.
 - **Лицензия.** Лицензию на код игры не выбираем: это юридический выбор владельца. В zip есть лицензии паков и
   манифест с атрибуцией.
 
