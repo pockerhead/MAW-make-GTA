@@ -100,6 +100,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with: { sparse-checkout: docs/releases }
       - uses: actions/download-artifact@v8
         with: { pattern: "gta-like-*", path: dist, merge-multiple: true, skip-decompress: true }
       - shell: bash
@@ -110,4 +112,6 @@ jobs:
           ls -lR dist
           test "$(ls dist/*.zip | wc -l)" -eq 2
           pre=(); [[ "$GITHUB_REF_NAME" == *-* ]] && pre=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --generate-notes "${pre[@]}"
+          f="docs/releases/$GITHUB_REF_NAME.md"
+          [[ -f "$f" ]] || { echo "::error::release notes $f are missing on the tagged commit"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --notes-file "$f" "${pre[@]}"
