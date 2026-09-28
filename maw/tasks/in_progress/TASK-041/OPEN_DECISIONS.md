@@ -1,0 +1,1 @@
+- 2026-09-28: review NEEDS_WORK accepted in full (I1 fatal() + message box via windows-sys already in Cargo.lock; I2 release panic hook; I3 smoke scans console log for panics; I4 file layer first; I5 temp_dir fallback + warn; I6 publish requires the notes file on v* tags). windows-sys as a direct dependency pinned to the locked version is not a new crate.
