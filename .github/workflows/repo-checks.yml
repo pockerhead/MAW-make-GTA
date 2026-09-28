@@ -42,3 +42,7 @@ jobs:
         if: success() || failure()
         shell: bash
         run: python -m unittest tools/qa/test_trace.py
+      - name: test_package_release (CRT imports, PE subsystem)
+        if: success() || failure()
+        shell: bash
+        run: python -m unittest tools/qa/test_package_release.py

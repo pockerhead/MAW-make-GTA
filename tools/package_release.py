@@ -5,10 +5,13 @@
         then run `verify` on it. Refuses an exe that links Rust/Bevy or the MSVC CRT dynamically.
     python tools/package_release.py verify ZIP
         Allowlist (exe + assets only), sha256 per asset (manifest for packs, checkout for tracked files),
-        licence per pack, no dynamic Rust/Bevy/CRT imports, exec bit on the Linux exe.
+        licence per pack, no dynamic Rust/Bevy/CRT imports, GUI subsystem (no console) on the Windows exe,
+        exec bit on the Linux exe.
     python tools/package_release.py smoke DIR --seconds N --log FILE [--expect TEXT]... [--allow REGEX]... [-- GAME_ARGS...]
         Boot the unpacked DIR/gta_like[.exe] from a temp cwd without CARGO_MANIFEST_DIR/BEVY_ASSET_ROOT, keep it
-        alive N seconds, then require every --expect text and zero ERROR/panic lines not matched by an --allow.
+        alive N seconds, copy the game's own log DIR/gta_like.log to FILE (console output goes to the
+        FILE-stem.console.log sibling), then require every --expect text and zero ERROR/panic lines not matched
+        by an --allow in that log.
 
 A product failure prints "<subcommand>: <check>: ..." and exits 1; a missing input prints
 "<subcommand>: GATE BROKEN: ..." and exits 2.
@@ -32,7 +35,10 @@ REPO = Path(__file__).resolve().parents[1]
 EXE_NAMES = ("gta_like.exe", "gta_like")
 DYLIB = re.compile(rb"(?:lib)?(?:bevy_dylib|std-[0-9a-f]{16})\.(?:dll|so)")
 # Anchored on api-ms-win-crt-: a +crt-static exe still carries other api-ms-win-* names (scratch/crt_static_probe).
-CRT = re.compile(rb"(?i)(?:vcruntime140(?:_1)?|msvcp140(?:_[0-9a-z]+)?|ucrtbased?|api-ms-win-crt-[a-z0-9-]+)\.dll")
+CRT = re.compile(
+    rb"(?i)(?:vcruntime140(?:_1|_threads)?|msvcp140(?:_[0-9a-z_]+)?|ucrtbased?|api-ms-win-crt-[a-z0-9-]+)\.dll")
+GAME_LOG = "gta_like.log"
+PE_GUI_SUBSYSTEM = 2
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 BAD_LINE = re.compile(r"\bERROR\b|panicked")
 POLL_SECONDS = 0.5
@@ -51,6 +57,28 @@ def dynamic_imports(data, windows):
     crt = sorted({m.decode() for m in CRT.findall(data)}) if windows else []
     if crt:
         problems.append(f"exe links the MSVC CRT dynamically: {', '.join(crt)} (built without +crt-static)")
+    return problems
+
+
+def pe_subsystem(data):
+    """IMAGE_OPTIONAL_HEADER.Subsystem of a PE image (2 = GUI, 3 = console); None if `data` is not a PE."""
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return None
+    pe = int.from_bytes(data[0x3C:0x40], "little")
+    field = pe + 24 + 68
+    if data[pe:pe + 4] != b"PE\0\0" or len(data) < field + 2:
+        return None
+    return int.from_bytes(data[field:field + 2], "little")
+
+
+def exe_problems(data, windows):
+    problems = dynamic_imports(data, windows)
+    if not windows:
+        return problems
+    subsystem = pe_subsystem(data)
+    if subsystem != PE_GUI_SUBSYSTEM:
+        problems.append(f"exe subsystem {subsystem}, expected {PE_GUI_SUBSYSTEM} (GUI): "
+                        "a console window opens with the game (built without windows_subsystem?)")
     return problems
 
 
@@ -113,7 +141,7 @@ def cmd_package(args):
         exit_on("package", [f"third-party packs do not match the manifest: {'; '.join(packs)}; "
                             "run tools/fetch_assets.py"])
     data = exe.read_bytes()
-    exit_on("package", dynamic_imports(data, exe.name.endswith(".exe")))
+    exit_on("package", exe_problems(data, exe.name.endswith(".exe")))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{args.name}.zip"
@@ -165,7 +193,7 @@ def verify(path, doc, sub):
             if f"{top}/assets/third_party/{pack['name']}/{pack['license_file']}" not in infos:
                 problems.append(f"licence missing: {pack['name']}")
         for name in exes:
-            problems += dynamic_imports(archive.read(name), name.endswith(".exe"))
+            problems += exe_problems(archive.read(name), name.endswith(".exe"))
             mode = infos[name].external_attr >> 16
             if not name.endswith(".exe") and mode & 0o111 == 0:
                 problems.append(f"exec bit: mode {oct(mode)}")
@@ -173,7 +201,7 @@ def verify(path, doc, sub):
     print(f"{sub}: OK {path.name}: {len(infos)} entries (exe + {len(assets)} assets), "
           f"{path.stat().st_size / 1e6:.1f} MB")
     print(f"{sub}: correctness: allowlist exact, sha256 match (manifest for packs, checkout for tracked), "
-          f"licences for {len(doc['packs'])} packs, no dynamic imports")
+          f"licences for {len(doc['packs'])} packs, no dynamic imports, GUI subsystem on Windows")
 
 
 def cmd_verify(args):
@@ -190,12 +218,18 @@ def cmd_smoke(args):
     except re.error as error:
         raise GateBroken(f"invalid --allow regex: {error}") from error
     log = Path(args.log).resolve()
+    console = log.with_suffix(".console.log")
+    game_log = folder / GAME_LOG
+    try:
+        game_log.unlink(missing_ok=True)
+    except OSError as error:
+        raise GateBroken(f"cannot remove a stale {game_log}: {error}") from error
     env = {key: value for key, value in os.environ.items() if key not in ("CARGO_MANIFEST_DIR", "BEVY_ASSET_ROOT")}
     cwd = tempfile.mkdtemp(prefix="gta_like_smoke_")
     argv = [str(exe.resolve()), "--settings-id", "gta_like_smoke", *args.game_args]
     started = time.monotonic()
     try:
-        with open(log, "wb") as out:
+        with open(console, "wb") as out:
             game = subprocess.Popen(argv, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT)
             while game.poll() is None and time.monotonic() - started < args.seconds:
                 time.sleep(POLL_SECONDS)
@@ -204,14 +238,21 @@ def cmd_smoke(args):
                 game.kill()
                 game.wait()
     except OSError as error:
-        raise GateBroken(f"cannot start {exe} or write {log}: {error}") from error
+        raise GateBroken(f"cannot start {exe} or write {console}: {error}") from error
     finally:
         shutil.rmtree(cwd, ignore_errors=True)
-    lines = [ANSI.sub("", line) for line in log.read_text(encoding="utf-8", errors="replace").splitlines()]
+    written = game_log.is_file()
+    if written:
+        shutil.copyfile(game_log, log)
+    lines = [ANSI.sub("", line) for line in log.read_text(encoding="utf-8", errors="replace").splitlines()] \
+        if written else []
     if code is not None:
         tail = "\n".join(lines[-TAIL_LINES:])
+        console_tail = "\n".join(console.read_text(encoding="utf-8", errors="replace").splitlines()[-TAIL_LINES:])
         exit_on("smoke", [f"liveness: exited after {time.monotonic() - started:.1f} s with code {code}; "
-                          f"last lines of {log}:\n{tail}"])
+                          f"last lines of {game_log}:\n{tail}\nlast lines of {console}:\n{console_tail}"])
+    if not written:
+        exit_on("smoke", [f"log file: the game wrote no {game_log} (console output in {console})"])
     problems = [f"error line: {line}" for line in lines
                 if BAD_LINE.search(line) and not any(allow.search(line) for allow in allows)]
     found = {text: next((line for line in lines if text in line), None) for text in args.expect}
@@ -222,8 +263,9 @@ def cmd_smoke(args):
     adapter = next((line.strip() for line in lines if "AdapterInfo {" in line), "none")
     warns = sum(1 for line in lines if re.search(r"\bWARN\b", line))
     print(f"smoke: adapter: {adapter}")
-    print(f"smoke: OK {exe.name} alive {args.seconds} s; liveness: alive at deadline; state: {len(found)} expect(s) "
-          f"matched; correctness: 0 ERROR/panic lines ({len(allows)} allow pattern(s)), {warns} WARN lines")
+    print(f"smoke: OK {exe.name} alive {args.seconds} s; liveness: alive at deadline; log: {GAME_LOG} next to the "
+          f"exe, copied to {log}; state: {len(found)} expect(s) matched; correctness: 0 ERROR/panic lines "
+          f"({len(allows)} allow pattern(s)), {warns} WARN lines")
 
 
 def main():

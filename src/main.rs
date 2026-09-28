@@ -1,3 +1,6 @@
+// Release builds on Windows open no console window; their log goes to a file (`log_layer`).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod audio;
 mod bench;
 mod camera;
@@ -15,7 +18,15 @@ mod vfx;
 mod visuals;
 
 use audio::{GameAudioPlugin, MIX_CONFIG, MixConfig};
-use bevy::{asset::io::file::FileAssetReader, prelude::*, window::WindowResolution};
+use bevy::{
+    asset::io::file::FileAssetReader,
+    log::{
+        BoxedFmtLayer, LogPlugin,
+        tracing_subscriber::{Layer as _, fmt},
+    },
+    prelude::*,
+    window::WindowResolution,
+};
 use camera::{CAMERA_CONFIG, CameraConfig, CameraPlugin};
 use gta_sim::{
     compose_sim,
@@ -167,6 +178,18 @@ fn preflight(
     Ok(clips)
 }
 
+/// Release builds log to stderr and to `gta_like.log` next to the exe (Windows hides their console).
+/// Falls back to the default stderr layer when the file cannot be created.
+fn log_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
+    let path = std::env::current_exe().ok()?.with_file_name("gta_like.log");
+    let file = std::fs::File::create(path).ok()?;
+    let console = fmt::Layer::default().with_writer(std::io::stderr);
+    let file = fmt::Layer::default()
+        .with_ansi(false)
+        .with_writer(std::sync::Arc::new(file));
+    Some(Box::new(console.and_then(file)))
+}
+
 fn main() -> AppExit {
     let cli = match cli_seed() {
         Ok(seed) => seed,
@@ -204,11 +227,23 @@ fn main() -> AppExit {
         let (width, height) = render_config.bench().resolution;
         window.resolution = WindowResolution::new(width, height).with_scale_factor_override(1.0);
     }
+    let fmt_layer: fn(&mut App) -> Option<BoxedFmtLayer> = if cfg!(debug_assertions) {
+        |_| None
+    } else {
+        log_layer
+    };
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(window),
-        ..default()
-    }));
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(window),
+                ..default()
+            })
+            .set(LogPlugin {
+                fmt_layer,
+                ..default()
+            }),
+    );
     info!("city seed {seed}");
     if let Err(error) = compose_sim(&mut app, root.clone(), WorldSource::City { seed }) {
         eprintln!("{error}");

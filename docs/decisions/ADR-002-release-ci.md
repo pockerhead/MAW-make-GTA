@@ -57,8 +57,10 @@ workflow (TASK-029) уже есть: composite `.github/actions/setup` став�
   `contents: write` только у него; весь workflow — `contents: read`. `gh release create --verify-tag
   --generate-notes` с обоими zip, `--prerelease` для тегов с `-`. Только `GITHUB_TOKEN`; ref попадают в shell
   только через env (`$GITHUB_REF_NAME`, `$GITHUB_SHA`), не через `${{ github.* }}` внутри `run:`.
-- **Окно консоли.** Пока остаётся: логи видны, и локальный smoke их читает. Скрыть его
-  (`windows_subsystem = "windows"` плюс лог-файл) — отдельная полировка до v0.1.0.
+- **Окно консоли.** Release-сборка на Windows без консоли (`windows_subsystem = "windows"` при
+  `not(debug_assertions)`, TASK-041); dev и debug с консолью. Release пишет лог в stderr и в `gta_like.log` рядом
+  с exe (`LogPlugin::fmt_layer`), `smoke` читает этот файл, а вывод консоли кладёт в `<log>.console.log`.
+  `package`/`verify` требуют у Windows-exe подсистему GUI в PE-заголовке.
 - **Лицензия.** Лицензию на код игры не выбираем: это юридический выбор владельца. В zip есть лицензии паков и
   манифест с атрибуцией.
 
