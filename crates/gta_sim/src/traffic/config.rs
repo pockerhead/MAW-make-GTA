@@ -128,6 +128,17 @@ pub struct SirensConfig {
     pub timeout_seconds: f32,
 }
 
+/// The progress rule (TASK-039, `progress`): a car stuck behind a body that has stood
+/// `wait_seconds`, itself standing `grace_seconds`, squeezes past it with collision relaxed against
+/// that body only, at most at `pass.speed`; the planning part ends after `max_seconds` at the latest.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ProgressConfig {
+    pub wait_seconds: f32,
+    pub grace_seconds: f32,
+    pub max_seconds: f32,
+}
+
 /// Traffic tuning (GDD §5.2).
 #[derive(Resource, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
@@ -152,6 +163,7 @@ pub struct TrafficConfig {
     pub recover: RecoverConfig,
     pub pass: PassConfig,
     pub sirens: SirensConfig,
+    pub progress: ProgressConfig,
 }
 
 fn positive(field: &str, value: f32) -> Result<(), String> {
@@ -207,6 +219,9 @@ impl TrafficConfig {
             ("pass.clearance", self.pass.clearance),
             ("pass.speed", self.pass.speed),
             ("sirens.timeout_seconds", self.sirens.timeout_seconds),
+            ("progress.wait_seconds", self.progress.wait_seconds),
+            ("progress.grace_seconds", self.progress.grace_seconds),
+            ("progress.max_seconds", self.progress.max_seconds),
         ] {
             positive(field, value)?;
         }
@@ -293,6 +308,21 @@ impl TrafficConfig {
             return Err(format!(
                 "pass.character_seconds {} must be >= pass.vehicle_seconds {}",
                 p.character_seconds, p.vehicle_seconds
+            ));
+        }
+        let g = &self.progress;
+        // A new waiter behind an old blocker still gets its grace before it squeezes.
+        if g.wait_seconds <= g.grace_seconds {
+            return Err(format!(
+                "progress.wait_seconds {} must be > progress.grace_seconds {}",
+                g.wait_seconds, g.grace_seconds
+            ));
+        }
+        // A new waiter gets the clean pass around a person first.
+        if g.grace_seconds < p.character_seconds {
+            return Err(format!(
+                "progress.grace_seconds {} must be >= pass.character_seconds {}",
+                g.grace_seconds, p.character_seconds
             ));
         }
         // Law: the sweep covers at least two fixed steps.

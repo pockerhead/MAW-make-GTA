@@ -1,9 +1,11 @@
 //! Kinematic → dynamic switch before a contact: a kinematic body would push a dynamic one with
 //! infinite mass (probe Q4), so the car turns dynamic while the other body is still one sweep away.
 
+use super::progress::exempt_pair;
 use super::{SwitchCause, TrafficCar, TrafficConfig, TrafficMode, TrafficStats};
 use crate::character::{Character, LocomotionConfig};
 use crate::layers::GameLayer;
+use crate::occupancy::Footprint;
 use crate::vehicle::{Autopilot, DriveIntent, Vehicle, VehicleConfig};
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -123,6 +125,60 @@ pub(super) fn rects_overlap(a: &FlatRect, b: &FlatRect) -> bool {
         })
 }
 
+/// How deep `b` reaches into `a` (the least overlap over the separating axes; a circle: its radius
+/// plus the distance from its centre to the nearest edge inside), m, 0 when apart.
+pub(super) fn penetration(a: &FlatRect, b: &Footprint) -> f32 {
+    let depth = match *b {
+        Footprint::Rect(r) => [a.axis, a.axis.perp(), r.axis, r.axis.perp()]
+            .into_iter()
+            .map(|n| {
+                let (a0, a1) = a.span(n);
+                let (b0, b1) = r.span(n);
+                a1.min(b1) - a0.max(b0)
+            })
+            .fold(f32::INFINITY, f32::min),
+        Footprint::Circle { centre, radius } => {
+            let q = a.local(centre).abs() - a.half;
+            radius - (q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0))
+        }
+    };
+    depth.max(0.0)
+}
+
+/// Corners of a rectangle, or four rim points of a circle along `axis` and across it.
+pub(super) fn rim(shape: &Footprint, axis: Vec2) -> [Vec2; 4] {
+    let (centre, x, y) = match *shape {
+        Footprint::Rect(r) => (r.centre, r.axis * r.half.x, r.axis.perp() * r.half.y),
+        Footprint::Circle { centre, radius } => (centre, axis * radius, axis.perp() * radius),
+    };
+    [
+        centre + x + y,
+        centre + x - y,
+        centre - x - y,
+        centre - x + y,
+    ]
+}
+
+/// Every point of `body` lies behind the rear of the car at `rect` (along its forward).
+pub(super) fn past(rect: &FlatRect, body: &Footprint) -> bool {
+    // The right axis turned a quarter turn is the backward direction.
+    let forward = -rect.axis.perp();
+    let rear = rect.centre - forward * rect.half.y;
+    rim(body, rect.axis)
+        .iter()
+        .all(|&q| (q - rear).dot(forward) < 0.0)
+}
+
+/// `body` touches `rect` (both at rest).
+pub(super) fn touches(rect: &FlatRect, body: &Footprint) -> bool {
+    match *body {
+        Footprint::Rect(r) => swept_rect_hits_rect(&r, Vec2::ZERO, rect),
+        Footprint::Circle { centre, radius } => {
+            swept_circle_hits_rect(centre, radius, Vec2::ZERO, rect)
+        }
+    }
+}
+
 fn flat(v: Vec3) -> Vec2 {
     Vec2::new(v.x, v.z)
 }
@@ -173,6 +229,10 @@ pub(super) fn switch_to_dynamic(
                 TrafficMode::Kinematic | TrafficMode::Bailing { .. }
             )
     };
+    // Either car of a relaxed pair ignores the other (their contacts are off).
+    let exempt = |car: &TrafficCar, me: Entity, other: Entity| {
+        exempt_pair(car, other) || cars.get(other).is_ok_and(|o| exempt_pair(o.1, me))
+    };
     let mut switch: Vec<(Entity, SwitchCause)> = Vec::new();
     for (entity, car, position, rotation, velocity, body) in &cars {
         if !is_kinematic_ai(car, body) {
@@ -185,23 +245,27 @@ pub(super) fn switch_to_dynamic(
         );
         let filter = mask.clone().with_excluded_entities([entity]);
         let hits = spatial.shape_intersections(&broad, position.0, rotation.0, &filter);
-        let cause = hits.into_iter().find_map(|other| {
-            let (rb, p, r, v, disabled, sleeping, character, is_car) = bodies.get(other).ok()?;
-            if !rb.is_dynamic() || disabled {
-                return None;
-            }
-            let v_other = if sleeping { Vec3::ZERO } else { v.0 };
-            let d = flat(v_other - velocity.0) * cfg.switch.horizon_seconds;
-            if character {
-                swept_circle_hits_rect(flat(p.0), loco.capsule_radius, d, &own)
-                    .then_some(SwitchCause::Character)
-            } else if is_car {
-                let rect = FlatRect::of(p.0, r.0, Vec2::new(half.x, half.z));
-                swept_rect_hits_rect(&rect, d, &own).then_some(SwitchCause::Vehicle)
-            } else {
-                None
-            }
-        });
+        let cause = hits
+            .into_iter()
+            .filter(|&other| !exempt(car, entity, other))
+            .find_map(|other| {
+                let (rb, p, r, v, disabled, sleeping, character, is_car) =
+                    bodies.get(other).ok()?;
+                if !rb.is_dynamic() || disabled {
+                    return None;
+                }
+                let v_other = if sleeping { Vec3::ZERO } else { v.0 };
+                let d = flat(v_other - velocity.0) * cfg.switch.horizon_seconds;
+                if character {
+                    swept_circle_hits_rect(flat(p.0), loco.capsule_radius, d, &own)
+                        .then_some(SwitchCause::Character)
+                } else if is_car {
+                    let rect = FlatRect::of(p.0, r.0, Vec2::new(half.x, half.z));
+                    swept_rect_hits_rect(&rect, d, &own).then_some(SwitchCause::Vehicle)
+                } else {
+                    None
+                }
+            });
         if let Some(cause) = cause {
             switch.push((entity, cause));
         }
@@ -216,7 +280,10 @@ pub(super) fn switch_to_dynamic(
             let dynamic_other = bodies
                 .get(other)
                 .is_ok_and(|(rb, _, _, _, disabled, ..)| rb.is_dynamic() && !disabled);
-            if is_kinematic_ai(traffic, body) && dynamic_other && !switch.iter().any(|s| s.0 == car)
+            if is_kinematic_ai(traffic, body)
+                && dynamic_other
+                && !exempt(traffic, car, other)
+                && !switch.iter().any(|s| s.0 == car)
             {
                 switch.push((car, SwitchCause::Backstop));
             }

@@ -7,6 +7,7 @@ use super::lateral::{
     CORRIDOR_LATERAL_STEP, CORRIDOR_YAW_STEP_DEG, effective_lateral, right_of, target_lateral,
 };
 use super::pass::{may_go, passable, plan_pass};
+use super::progress::{sensing_blocker, sensing_skips};
 use super::sirens;
 use super::{
     FlatRect, Manoeuvre, Segment, TrafficCar, TrafficConfig, TrafficGraph, TrafficIntersections,
@@ -115,12 +116,21 @@ fn sweep_ahead(
     Some(hit)
 }
 
+/// What a car senses ahead: the nearest body at its target offset (`ahead`), at its current offset
+/// while the two differ (`beside`), and the relaxed blocker on the target strip or sweep, which the
+/// other two skip.
+pub(super) struct Sensed {
+    pub ahead: Option<Hit>,
+    pub beside: Option<Hit>,
+    pub relaxed_hit: Option<Hit>,
+}
+
 /// Bodies ahead from the nose: at the target offset over the sensing reach (on a lane a strip, on a
 /// connector the body swept along the path), and on a strip at the current offset over the rest of
 /// the lateral move plus twice the jam gap while the two differ. A car on its path line with no
 /// manoeuvre skips AI cars on their path lines (the path occupancy holds those; a strip into a box
 /// must not brake for crossing cars), except one `held` on a connector without a grant: no grant
-/// keeps crossing cars off it.
+/// keeps crossing cars off it. A relaxed kinematic car skips its blocker (`relaxed_hit` alone sees it).
 pub(super) fn sense(
     graph: &TrafficGraph,
     road: &RoadOccupancy,
@@ -128,7 +138,7 @@ pub(super) fn sense(
     snap: &Snap,
     half: Vec3,
     held: &HashSet<Entity>,
-) -> (Option<Hit>, Option<Hit>) {
+) -> Sensed {
     let car = &snap.car;
     let (point, tangent) = graph.pose(car.segment, car.s);
     let right = right_of(tangent);
@@ -146,8 +156,11 @@ pub(super) fn sense(
     };
     let plain = car.lateral == 0.0 && target == 0.0 && car.manoeuvre == Manoeuvre::None;
     let me = snap.entity;
+    let relaxed = sensing_blocker(snap);
     let skip = |b: &RoadBody| {
-        b.entity == me || (plain && b.kind == BodyKind::OnPathTraffic && !held.contains(&b.entity))
+        b.entity == me
+            || sensing_skips(snap, b.entity)
+            || (plain && b.kind == BodyKind::OnPathTraffic && !held.contains(&b.entity))
     };
     let strip = |lateral: f32, length: f32| Strip {
         origin: flat(point + right * lateral + tangent * half.z),
@@ -155,17 +168,24 @@ pub(super) fn sense(
         length,
         half_width: half.x,
     };
-    let ahead = match car.segment {
+    let along = |skip: &dyn Fn(&RoadBody) -> bool| match car.segment {
         Segment::Connector(c) => sweep_ahead(graph, road, (c, car.s), target, reach, half, skip),
         Segment::Lane(_) => road.first_along(&strip(target, reach), skip),
     };
-    if (target - current).abs() <= 1e-4 {
-        return (ahead, None);
+    let ahead = along(&skip);
+    let relaxed_hit = relaxed
+        .and_then(|b| along(&|x: &RoadBody| x.entity != b).filter(|h| h.entity == b && !h.claim));
+    let beside = ((target - current).abs() > 1e-4).then(|| {
+        let v = car.speed;
+        let to_go = v * (target - current).abs() / cfg.lateral.rate(v);
+        let length = (to_go + 2.0 * cfg.idm.min_gap).min(reach);
+        road.first_along(&strip(current, length), skip)
+    });
+    Sensed {
+        ahead,
+        beside: beside.flatten(),
+        relaxed_hit,
     }
-    let v = car.speed;
-    let to_go = v * (target - current).abs() / cfg.lateral.rate(v);
-    let length = (to_go + 2.0 * cfg.idm.min_gap).min(reach);
-    (ahead, road.first_along(&strip(current, length), skip))
 }
 
 /// A new manoeuvre for a car, the claim it publishes, the connector whose whole box it takes, and
@@ -177,7 +197,8 @@ pub(super) struct Update {
     pub deaf: f32,
 }
 
-/// The manoeuvre change of `snap` this tick, given the nearest body `ahead` on its strip.
+/// The manoeuvre change of `snap` this tick, given the nearest body `ahead` on its strip and, for a
+/// relaxed car, its blocker there (`relaxed_hit`).
 pub(super) fn plan(
     world: (
         &RoadOccupancy,
@@ -186,14 +207,13 @@ pub(super) fn plan(
         &TrafficIntersections,
     ),
     snap: &Snap,
-    ahead: Option<Hit>,
+    (ahead, relaxed_hit): (Option<Hit>, Option<Hit>),
     clock: (u64, f32),
     configs: (&TrafficConfig, &VehicleConfig),
 ) -> Option<Update> {
-    let (road, spatial, graph, junctions) = world;
+    let (road, spatial, graph, _) = world;
     let (cfg, vcfg) = configs;
     let car = &snap.car;
-    let me = snap.entity;
     let idle = !snap.dynamic
         && car.mode == TrafficMode::Kinematic
         && car.manoeuvre == Manoeuvre::None
@@ -231,6 +251,33 @@ pub(super) fn plan(
             deaf: 0.0,
         });
     }
+    // A relaxed car takes a clean lane pass that can go at once; else it drives through its blocker on
+    // its own line (in the box never an offset: the conflict table keeps co-granted cars apart only on
+    // their lines, and a whole-box pass lapses under the lease).
+    if let Some(hit) = relaxed_hit.filter(|_| idle) {
+        if let Some((mut manoeuvre, claim)) = plan_pass(road, spatial, graph, snap, &hit, cfg, vcfg)
+        {
+            let probe = Snap {
+                car: TrafficCar {
+                    manoeuvre,
+                    ..snap.car
+                },
+                ..*snap
+            };
+            if let (Manoeuvre::Pass { go, .. }, true) =
+                (&mut manoeuvre, may_go(road, graph, &probe, cfg, vcfg))
+            {
+                *go = true;
+                return Some(Update {
+                    manoeuvre,
+                    claim: Some(claim),
+                    whole_box: None,
+                    deaf: 0.0,
+                });
+            }
+        }
+        return None;
+    }
     let hit = ahead.filter(|hit| idle && passable(hit, cfg))?;
     if let Some((manoeuvre, claim)) = plan_pass(road, spatial, graph, snap, &hit, cfg, vcfg) {
         return Some(Update {
@@ -240,7 +287,25 @@ pub(super) fn plan(
             deaf: 0.0,
         });
     }
-    // Standing behind a body in the box, alone there: around it, holding the whole box.
+    box_pass(world, snap, &hit, configs)
+}
+
+/// Standing behind a body in the box, alone there: around it, holding the whole box.
+fn box_pass(
+    world: (
+        &RoadOccupancy,
+        &SpatialQuery,
+        &TrafficGraph,
+        &TrafficIntersections,
+    ),
+    snap: &Snap,
+    hit: &Hit,
+    configs: (&TrafficConfig, &VehicleConfig),
+) -> Option<Update> {
+    let (road, spatial, graph, junctions) = world;
+    let (cfg, vcfg) = configs;
+    let car = &snap.car;
+    let me = snap.entity;
     let (c, at, origin) = match car.segment {
         Segment::Connector(c) => (c, car.s, 0.0),
         // At its stop line with the whole box granted (its every exit blocked).

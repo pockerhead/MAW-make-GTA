@@ -2,6 +2,7 @@
 //! table does not know (a car left in the box, a demoted holder, a passer); a queue head whose path is
 //! blocked by a standing body takes another exit, or enters alone and goes around it (the whole box).
 
+use super::contact::penetration;
 use super::lateral::{CORRIDOR_LATERAL_STEP, CORRIDOR_YAW_STEP_DEG, right_of};
 use super::{FlatRect, Junction, Manoeuvre, Segment, TrafficConfig, TrafficGraph};
 use crate::occupancy::{BodyKind, ClaimFilter, Footprint, RoadOccupancy, flat, world_clear};
@@ -41,8 +42,9 @@ pub(super) fn connector_body(
 }
 
 /// The first body or claim on connector `c`'s path (the requester's body driven on along the connector
-/// from where it stands, `from_s`), other than `requester`, walkers (the strips handle them) and AI
-/// cars granted at the node (the conflict table covers those).
+/// from where it stands, `from_s`), other than `requester`, its relaxed blocker `ignore`, walkers (the
+/// strips handle them) and AI cars granted at the node (the conflict table covers those).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn connector_clear(
     road: &RoadOccupancy,
     graph: &TrafficGraph,
@@ -51,10 +53,12 @@ pub(super) fn connector_clear(
     from_s: f32,
     requester: Entity,
     half: Vec2,
+    ignore: Option<Entity>,
 ) -> Option<Entity> {
     let granted = |e: Entity| junction.is_some_and(|j| j.occupants.iter().any(|o| o.1 == e));
     let skip = |b: &crate::occupancy::RoadBody| {
         b.entity == requester
+            || Some(b.entity) == ignore
             || b.kind == BodyKind::Character
             || (matches!(b.kind, BodyKind::OnPathTraffic | BodyKind::Traffic) && granted(b.entity))
     };
@@ -75,12 +79,57 @@ pub(super) fn repick(
     from_s: f32,
     requester: Entity,
     half: Vec2,
+    ignore: Option<Entity>,
 ) -> Option<u32> {
     let out = &graph.lane(lane).out;
     let k = out.iter().position(|&c| c == current).unwrap_or(0);
-    (1..out.len())
-        .map(|i| out[(k + i) % out.len()])
-        .find(|&c| connector_clear(road, graph, junction, c, from_s, requester, half).is_none())
+    (1..out.len()).map(|i| out[(k + i) % out.len()]).find(|&c| {
+        connector_clear(road, graph, junction, c, from_s, requester, half, ignore).is_none()
+    })
+}
+
+/// For a head relaxed against `blocker`: of its current exit and then the others of `lane` (in `out`
+/// order), those clear of every body but the blocker, the one whose path overlaps the blocker least
+/// (ties keep that order); `None` when none is clear or the blocker is gone.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn repick_relaxed(
+    road: &RoadOccupancy,
+    graph: &TrafficGraph,
+    junction: Option<&Junction>,
+    (lane, current): (u32, u32),
+    from_s: f32,
+    requester: Entity,
+    half: Vec2,
+    blocker: Entity,
+) -> Option<u32> {
+    let shape = road.body(blocker)?.shape;
+    let out = &graph.lane(lane).out;
+    let exits = std::iter::once(current).chain(out.iter().copied().filter(|&c| c != current));
+    let mut best: Option<(u32, f32)> = None;
+    for c in exits {
+        if connector_clear(
+            road,
+            graph,
+            junction,
+            c,
+            from_s,
+            requester,
+            half,
+            Some(blocker),
+        )
+        .is_some()
+        {
+            continue;
+        }
+        let depth = connector_body(graph, c, from_s, half)
+            .iter()
+            .map(|r| penetration(r, &shape))
+            .fold(0.0, f32::max);
+        if best.is_none_or(|b| depth < b.1) {
+            best = Some((c, depth));
+        }
+    }
+    best.map(|b| b.0)
 }
 
 /// Point and tangent `s` m along connector `c` (before 0: on its source lane, past its end: on its

@@ -69,4 +69,12 @@
     // slack of its own lane) and stops; it drives on once the siren car is past, or after
     // timeout_seconds, and then ignores sirens that long, m / s. yield_distance 0: nobody yields.
     sirens: (yield_distance: 40.0, timeout_seconds: 8.0),
+    // Progress (TASK-039, GDD §5.2): a car stuck behind a body that has stood wait_seconds, with no
+    // way around, squeezes past it at pass.speed with collision relaxed against that body only (it
+    // may brush it; a person is not hurt). Above the 14 s "must still wait" windows of the recovery
+    // gates, 14 s under the 30 s stand bound (lowered from 18 by the TASK-039 latency rule: R1 seed 1
+    // stood > 27 s). grace_seconds: every new waiter first gets the clean pass, repick and box pass
+    // (>= pass.character_seconds). max_seconds: stale guard for a squeeze that never got past its
+    // body. s / s / s.
+    progress: (wait_seconds: 16.0, grace_seconds: 6.0, max_seconds: 30.0),
 )

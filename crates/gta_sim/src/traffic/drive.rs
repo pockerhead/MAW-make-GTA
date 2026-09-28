@@ -11,7 +11,8 @@ use super::lateral::{
     turn_towards, yaw_cap,
 };
 use super::manoeuvre::{holds_offset, passing, plan, sense};
-use super::pass::pass_done;
+use super::pass::{pass_done, waits_for_traffic};
+use super::progress::{self, Edge, Reasons, sensing_blocker, sensing_skips};
 use super::recover::{Recovery, recover_dynamic};
 use super::sirens::yield_gap;
 use super::{
@@ -33,6 +34,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 /// A traffic AI car as this tick sees it.
+#[derive(Clone, Copy)]
 pub(super) struct Snap {
     pub(super) entity: Entity,
     pub(super) car: TrafficCar,
@@ -76,7 +78,7 @@ fn successor(graph: &TrafficGraph, seg: Segment, next: Option<u32>) -> Option<Se
 }
 
 /// The place `distance` m ahead of `(seg, s)` along the path; stops at the end of the known path.
-fn ahead(
+pub(super) fn ahead(
     graph: &TrafficGraph,
     seg: Segment,
     s: f32,
@@ -98,7 +100,8 @@ fn ahead(
     (seg, s)
 }
 
-/// Bumper gap to the nearest car ahead on the path within `look_ahead`, and its speed.
+/// Bumper gap to the nearest car ahead on the path within `look_ahead` (not one `skip` names), its
+/// speed and its index.
 fn leader(
     graph: &TrafficGraph,
     occupancy: &Occupancy,
@@ -106,18 +109,19 @@ fn leader(
     me: usize,
     half_length: f32,
     look_ahead: f32,
-) -> Option<(f32, f32)> {
+    skip: &dyn Fn(Entity) -> bool,
+) -> Option<(f32, f32, usize)> {
     let car = &snaps[me].car;
     let (mut seg, mut offset) = (car.segment, -car.s);
     for _ in 0..3 {
         let found = occupancy.get(&seg).and_then(|cars| {
             cars.iter()
-                .filter(|&&(_, k)| k != me)
+                .filter(|&&(_, k)| k != me && !skip(snaps[k].entity))
                 .map(|&(s, k)| (offset + s, k))
                 .find(|&(d, _)| d > 0.0)
         });
         if let Some((d, k)) = found {
-            return (d <= look_ahead).then(|| (d - 2.0 * half_length, snaps[k].car.speed));
+            return (d <= look_ahead).then(|| (d - 2.0 * half_length, snaps[k].car.speed, k));
         }
         offset += graph.length(seg);
         if offset > look_ahead {
@@ -239,6 +243,8 @@ pub(super) fn advance_traffic(
         despawned: stats.despawned,
         casts: stats.casts,
         switches_by_cause: stats.switches_by_cause,
+        progress_relaxations: stats.progress_relaxations,
+        progress_recoveries: stats.progress_recoveries,
         ..default()
     };
     let mut snaps: Vec<Snap> = Vec::new();
@@ -269,15 +275,28 @@ pub(super) fn advance_traffic(
 
     // 1. Dynamic cars: back onto their path, or given up. 2. Wrecks bail out.
     let mut recovered: Vec<(Entity, f32)> = Vec::new();
-    for snap in &mut snaps {
+    // What holds each `Dynamic` car from recovering (the wait-for record reads it).
+    let mut stay: Vec<Option<Entity>> = vec![None; snaps.len()];
+    // (blocker, passer) of every relaxation: a car being passed does not wait for its passers.
+    let squeezes: Vec<(Entity, Entity)> = snaps
+        .iter()
+        .filter_map(|s| s.car.relaxed.map(|r| (r, s.entity)))
+        .flat_map(|(r, e)| {
+            [Some(r.blocker), r.trailing]
+                .into_iter()
+                .flatten()
+                .map(move |b| (b, e))
+        })
+        .collect();
+    for (k, snap) in snaps.iter_mut().enumerate() {
         if snap.dynamic {
             let forward = snap.rotation * Vec3::NEG_Z;
             snap.car.speed = snap.velocity.dot(forward).max(0.0);
             snap.abandon = reproject(&graph, &junctions, snap, &cfg);
         }
         if snap.dynamic && !snap.abandon && snap.car.mode == TrafficMode::Dynamic {
-            match recover_dynamic(snap, &road, &graph, &cfg, &vcfg, dt) {
-                Recovery::Stay => {}
+            match recover_dynamic(snap, (&road, &squeezes), &graph, &cfg, &vcfg, dt) {
+                Recovery::Stay { blocker } => stay[k] = blocker,
                 Recovery::Recover { lateral } => recovered.push((snap.entity, lateral)),
                 // A car with no door free is given up at once: bailing, it would stand forever.
                 Recovery::GiveUp => {
@@ -306,8 +325,8 @@ pub(super) fn advance_traffic(
     // 3. Occupancy, 4. intersections.
     let occupied = occupancy(&graph, &snaps);
     let rest = vcfg.rest_height();
-    // Bodies outside the path occupancy (not AI cars on their path, not dynamic AI cars: `room` counts
-    // those) or a pass claim on the first `length` m of `lane`.
+    // The first body outside the path occupancy (not AI cars on their path, not dynamic AI cars: `room`
+    // counts those) or pass claim (its owner) on the first `length` m of `lane`.
     let lane_start_free = |lane: u32, length: f32| {
         let l = graph.lane(lane);
         let length = length.min(l.length);
@@ -322,10 +341,10 @@ pub(super) fn advance_traffic(
                 || b.kind == BodyKind::OnPathTraffic
                 || (b.kind == BodyKind::Traffic && b.dynamic)
         };
-        road.blocked(&rect, skip, ClaimFilter::All).is_none()
+        road.blocked(&rect, skip, ClaimFilter::All)
     };
     let lease_ticks = (cfg.reservation_timeout / dt).ceil() as u64;
-    junction::update(
+    let waits = junction::update(
         &graph,
         &mut junctions,
         &mut snaps,
@@ -345,6 +364,7 @@ pub(super) fn advance_traffic(
 
     // 5. Obstacles and 6. acceleration.
     let mut accelerations = vec![0.0; snaps.len()];
+    let mut edges: Vec<Option<Edge>> = vec![None; snaps.len()];
     let held_cars: HashSet<Entity> = snaps
         .iter()
         .filter(|s| !s.abandon && held_in_box(&graph, &junctions, s))
@@ -382,13 +402,27 @@ pub(super) fn advance_traffic(
             Manoeuvre::Pass { .. } | Manoeuvre::Yield { .. } => v0.min(cfg.pass.speed),
             _ => v0,
         };
+        // A squeeze is no faster than a clean pass.
+        let relaxed = sensing_blocker(snap);
+        let v0 = if relaxed.is_some() {
+            v0.min(cfg.pass.speed)
+        } else {
+            v0
+        };
         let mut a = idm_acceleration(v, v0, None, idm);
         let mut obstacle = |gap: f32, other: f32| {
             a = a.min(idm_acceleration(v, v0, Some((gap, v - other)), idm));
         };
-        if let Some((gap, other)) =
-            leader(&graph, &occupied, &snaps, k, half_length, cfg.look_ahead)
-        {
+        let lead = leader(
+            &graph,
+            &occupied,
+            &snaps,
+            k,
+            half_length,
+            cfg.look_ahead,
+            &|e| sensing_skips(snap, e),
+        );
+        if let Some((gap, other, _)) = lead {
             obstacle(gap, other);
         }
         if let (Segment::Lane(l), false) = (car.segment, granted) {
@@ -407,14 +441,24 @@ pub(super) fn advance_traffic(
         }
         stats.casts = stats.casts.wrapping_add(1);
         counts.casts = stats.casts;
-        let (ahead, beside) = sense(&graph, &road, &cfg, snap, half, &held_cars);
-        for hit in ahead.iter().chain(beside.iter()) {
+        let sensed = sense(&graph, &road, &cfg, snap, half, &held_cars);
+        for hit in sensed.ahead.iter().chain(sensed.beside.iter()) {
             obstacle(hit.gap, hit.speed_along);
+        }
+        if road.body(snap.entity).is_some_and(|b| b.standing > 0.0) {
+            let reasons = Reasons {
+                leader: lead.map(|(gap, _, j)| (gap, snaps[j].entity)),
+                sensed: &sensed,
+                junction: waits.get(&snap.entity).copied(),
+                stay: stay[k],
+                pass_wait: waits_for_traffic(&road, &graph, snap, &cfg, &vcfg),
+            };
+            edges[k] = progress::edge_of(snap, &graph, &reasons, &cfg, half_length);
         }
         let update = plan(
             (&road, &spatial, &graph, &junctions),
             snap,
-            ahead,
+            (sensed.ahead, sensed.relaxed_hit),
             (tick, dt),
             (&cfg, &vcfg),
         );
@@ -440,6 +484,16 @@ pub(super) fn advance_traffic(
             snaps[k].car.waiting = None;
         }
     }
+
+    let world = progress::World {
+        road: &road,
+        graph: &graph,
+        junctions: &junctions,
+        cfg: &cfg,
+        half,
+        tick,
+    };
+    progress::detect(&world, &mut snaps, &edges, &mut counts);
 
     // Motion: kinematic cars step along the path, dynamic cars get an autopilot target.
     let rest_wheels = [WheelState {
@@ -640,6 +694,7 @@ pub(super) fn advance_traffic(
         if let Some(&(_, lateral)) = recovered.iter().find(|r| r.0 == snap.entity)
             && !snap.abandon
         {
+            counts.progress_recoveries += u32::from(snap.car.relaxed.is_some());
             commands
                 .entity(snap.entity)
                 .try_insert(RigidBody::Kinematic);

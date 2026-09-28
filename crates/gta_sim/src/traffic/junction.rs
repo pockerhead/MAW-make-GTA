@@ -12,8 +12,9 @@
 //! moved for the lease while contested, is demoted to a waiter where it stands; a queue head whose
 //! path a standing body blocks takes another exit (a car at the very start of its connector too).
 
-use super::box_rules::{connector_clear, repick};
+use super::box_rules::{connector_clear, repick, repick_relaxed};
 use super::drive::{Occupancy, Snap};
+use super::progress::{EdgeKind, planning_blocker};
 use super::{
     IdmConfig, Junction, Segment, TrafficGraph, TrafficIntersections, TrafficMode, TrafficRng,
 };
@@ -52,7 +53,7 @@ pub(super) struct BoxInputs<'a> {
 /// exits start at the lane end along the lane and part as s²/2r (a tight right turn against a left
 /// one); 1 m along they lie at most 0.42 m apart (seeds 1 and 7, every lane end), so the switch moves
 /// the car sideways by no more than the 0.425 m its lane leaves beside it (w/2 − half width).
-const REPICK_WITHIN: f32 = 1.0;
+pub(super) const REPICK_WITHIN: f32 = 1.0;
 
 /// Where the car stands along connector `c`: its `s` on it, else 0 (on its source lane).
 fn from_s(snap: &Snap, c: u32) -> f32 {
@@ -83,9 +84,11 @@ pub(super) fn update(
     tick: u64,
     lease: (u64, f32),
     rng: &mut TrafficRng,
-    lane_start_free: &dyn Fn(u32, f32) -> bool,
+    lane_start_free: &dyn Fn(u32, f32) -> Option<Entity>,
     boxes: &BoxInputs,
-) {
+) -> HashMap<Entity, (Entity, EdgeKind)> {
+    // Why each waiter left ungranted this tick waits (the progress rule's wait-for record).
+    let mut waits: HashMap<Entity, (Entity, EdgeKind)> = HashMap::new();
     let (lease_ticks, hold_speed) = lease;
     let index: HashMap<Entity, usize> = snaps
         .iter()
@@ -124,9 +127,18 @@ pub(super) fn update(
                 continue;
             }
             let from = from_s(&snaps[k], c);
-            let blocker =
-                connector_clear(boxes.road, graph, Some(junction), c, from, e, boxes.body)
-                    .and_then(|b| boxes.road.body(b));
+            let ignore = planning_blocker(&snaps[k].car);
+            let blocker = connector_clear(
+                boxes.road,
+                graph,
+                Some(junction),
+                c,
+                from,
+                e,
+                boxes.body,
+                ignore,
+            )
+            .and_then(|b| boxes.road.body(b));
             if blocker.is_some_and(|b| b.standing >= boxes.stuck_seconds) {
                 body_blocked.insert((c, e));
             }
@@ -241,22 +253,19 @@ pub(super) fn update(
         if at_start || (!on_connector && heads.contains(&snap.entity)) {
             let here = junctions.0.get(&node);
             let from = from_s(snap, c);
-            let stuck = connector_clear(boxes.road, graph, here, c, from, snap.entity, boxes.body)
-                .and_then(|b| boxes.road.body(b))
-                .is_some_and(|b| b.standing >= boxes.stuck_seconds);
-            let other = if stuck {
-                repick(
-                    boxes.road,
-                    graph,
-                    here,
-                    lane,
-                    c,
-                    from,
-                    snap.entity,
-                    boxes.body,
-                )
+            let (me, body) = (snap.entity, boxes.body);
+            let ignore = planning_blocker(&snap.car);
+            // A relaxed head takes the exit that overlaps its blocker least of those clear of the rest.
+            let other = if let Some(blocker) = ignore {
+                repick_relaxed(boxes.road, graph, here, (lane, c), from, me, body, blocker)
+                    .filter(|&o| o != c)
             } else {
-                None
+                let stuck = connector_clear(boxes.road, graph, here, c, from, me, body, None)
+                    .and_then(|b| boxes.road.body(b))
+                    .is_some_and(|b| b.standing >= boxes.stuck_seconds);
+                stuck
+                    .then(|| repick(boxes.road, graph, here, lane, c, from, me, body, None))
+                    .flatten()
             };
             if let Some(other) = other {
                 c = other;
@@ -291,19 +300,32 @@ pub(super) fn update(
     let spacing = 2.0 * half_length + idm.min_gap;
     let nodes: Vec<u32> = junctions.0.keys().copied().collect();
     let mut into_lane: HashMap<u32, u32> = HashMap::new();
+    // A car granted into each lane (the room a waiter waits for when the lane itself is still empty).
+    let mut heading_into: HashMap<u32, Entity> = HashMap::new();
     for junction in junctions.0.values() {
-        for &(c, _) in &junction.occupants {
+        for &(c, e) in &junction.occupants {
             *into_lane.entry(graph.connector(c).to_lane).or_default() += 1;
+            heading_into.entry(graph.connector(c).to_lane).or_insert(e);
         }
     }
     // Path checks against this tick's grants, before any grant changes them.
-    // Per waiter: its path is clear (None), or the standing time of the body on it.
-    let mut blocked: HashMap<(Entity, u32), Option<f32>> = HashMap::new();
+    // Per waiter: its path is clear (None), or the body on it and its standing time.
+    let mut blocked: HashMap<(Entity, u32), Option<(Entity, f32)>> = HashMap::new();
     for junction in junctions.0.values() {
         for &(_, e, c) in &junction.waiters {
             let from = index.get(&e).map_or(0.0, |&k| from_s(&snaps[k], c));
-            let body = connector_clear(boxes.road, graph, Some(junction), c, from, e, boxes.body);
-            let standing = body.map(|b| boxes.road.body(b).map_or(0.0, |b| b.standing));
+            let ignore = index.get(&e).and_then(|&k| planning_blocker(&snaps[k].car));
+            let body = connector_clear(
+                boxes.road,
+                graph,
+                Some(junction),
+                c,
+                from,
+                e,
+                boxes.body,
+                ignore,
+            );
+            let standing = body.map(|b| (b, boxes.road.body(b).map_or(0.0, |b| b.standing)));
             blocked.insert((e, c), standing);
         }
     }
@@ -312,29 +334,49 @@ pub(super) fn update(
             continue;
         };
         // A connector pass holds the whole box.
-        if junction.whole.is_some() {
+        if let Some((holder, _)) = junction.whole {
+            for w in junction.waiters.iter().filter(|w| w.1 != holder) {
+                waits.insert(w.1, (holder, EdgeKind::Grant));
+            }
             continue;
         }
+        // A car already standing in the box goes first (it holds every path through it).
+        let in_box = |e: Entity, c: u32| {
+            index
+                .get(&e)
+                .is_some_and(|&k| snaps[k].car.segment == Segment::Connector(c))
+        };
         junction
             .waiters
-            .sort_by_key(|&(stamp, e, _)| (stamp, e.to_bits()));
-        let mut blocking: Vec<u32> = junction.occupants.iter().map(|o| o.0).collect();
+            .sort_by_key(|&(stamp, e, c)| (!in_box(e, c), stamp, e.to_bits()));
+        let mut blocking: Vec<(u32, Entity)> = junction.occupants.clone();
         let mut granted = Vec::new();
         for &(_, e, c) in &junction.waiters {
             let conn = graph.connector(c);
-            if blocking.iter().any(|b| conn.conflicts.contains(b)) {
-                blocking.push(c);
+            if let Some(&(_, holder)) = blocking.iter().find(|b| conn.conflicts.contains(&b.0)) {
+                waits.insert(e, (holder, EdgeKind::Grant));
+                blocking.push((c, e));
                 continue;
             }
             let queued = into_lane.get(&conn.to_lane).copied().unwrap_or(0);
             let need = (queued + 1) as f32 * spacing;
             // Waiting for room past the box or for a body on its path: not blocking the node.
-            if room(graph, occupancy, conn.to_lane, half_length) < need
-                || !lane_start_free(conn.to_lane, need)
-            {
+            if room(graph, occupancy, conn.to_lane, half_length) < need {
+                let first = occupancy
+                    .get(&Segment::Lane(conn.to_lane))
+                    .and_then(|cars| cars.first())
+                    .map(|&(_, k)| snaps[k].entity)
+                    .or_else(|| heading_into.get(&conn.to_lane).copied());
+                if let Some(first) = first {
+                    waits.insert(e, (first, EdgeKind::Follow));
+                }
                 continue;
             }
-            if let Some(standing) = blocked.get(&(e, c)).copied().flatten() {
+            if let Some(body) = lane_start_free(conn.to_lane, need) {
+                waits.insert(e, (body, EdgeKind::Follow));
+                continue;
+            }
+            if let Some((body, standing)) = blocked.get(&(e, c)).copied().flatten() {
                 // A body standing on every way out: the car enters alone and goes around it.
                 if standing >= boxes.stuck_seconds
                     && junction.occupants.is_empty()
@@ -344,9 +386,10 @@ pub(super) fn update(
                     junction.whole = Some((e, conn.to_lane));
                     break;
                 }
+                waits.insert(e, (body, EdgeKind::Body));
                 continue;
             }
-            blocking.push(c);
+            blocking.push((c, e));
             *into_lane.entry(conn.to_lane).or_default() += 1;
             granted.push((c, e));
         }
@@ -356,9 +399,11 @@ pub(super) fn update(
             .moved
             .extend(granted.iter().map(|&(_, e)| (e, tick)));
         for (_, e) in granted {
+            waits.remove(&e);
             if let Some(&k) = index.get(&e) {
                 snaps[k].car.waiting = None;
             }
         }
     }
+    waits
 }

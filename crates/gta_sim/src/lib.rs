@@ -191,7 +191,7 @@ pub fn compose_sim(
         .insert_resource(traffic)
         .add_plugins((
             FlowPlugin,
-            PhysicsPlugins::default(),
+            PhysicsPlugins::default().with_collision_hooks::<traffic::TrafficHooks>(),
             TnuaAvian3dPlugin::new(FixedUpdate),
             CharacterPlugin,
             WorldPlugin { source },

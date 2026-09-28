@@ -91,6 +91,8 @@
 
 - **Walker stalls: trace targets before naming a crowd rule (TASK-036).** 11-13 walkers orbiting a parked car for 70-118 s were an unreachable waypoint under the car (`arrive_radius` 0.5 m, node inside the body), not counter-flow (0 counter-flow neighbours in 6361 samples). `civilian::reached` counts a covered waypoint as reached beside the car; corner targets shift `keep_right` away from the car (never towards it). Walkers still have no walker-walker avoidance (two opposing walkers between two standing cars press ~16 s). A manoeuvre handled only on lanes must end or be guarded at the box (`sirens::update` returned early off a lane). Trigger: `arrive_radius`, `lane_target`, `around_cars` callers, `let Segment::Lane(..) = .. else { return }` in manoeuvre code.
 
+- **Progress guarantee (TASK-039).** Per-geometry lock rules (lease, lane pass, repick, box pass) never closed the in-frame residue. One universal rule did: a car waiting on a stationary body past T squeezes past it with collision relaxed against that body only (SUMO ignore-junction-blocker style), and never through a third body. Limits learned: never target a car the AI still drives; one blocker per car plus one trailing blocker (two bodies in a row); the squeeze reads as driving through (the owner's feel item). Remove rules that show no effect when flipped off (five were removed). A lane pass ending in another car's merge zone can still run off-path onto a U-connector (known limitation). Trigger: any new traffic lock class; add a sink case, not a new local rule.
+
 ## Pointers
 
 - `docs/design/GDD.md` — the APPROVED design document (scope law; §12 workspace/plugin map, §13 slices).

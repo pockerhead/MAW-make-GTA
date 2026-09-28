@@ -1,6 +1,10 @@
 //! Shared fixtures of the traffic gates (`traffic_*.rs`).
 #![allow(dead_code)]
 
+pub mod progress;
+mod third_body;
+pub use third_body::*;
+
 use crate::common::*;
 use avian3d::prelude::*;
 use bevy::{ecs::system::RunSystemOnce, prelude::*};
@@ -258,6 +262,8 @@ pub struct Footprints {
     pub violations: Vec<Violation>,
     pub max_depth: f32,
     pub pairs: u64,
+    /// Relaxed pairs and third bodies (TASK-039, `third_body.rs`).
+    pub third: Third,
 }
 
 impl Footprints {
@@ -272,6 +278,7 @@ impl Footprints {
             violations: Vec::new(),
             max_depth: 0.0,
             pairs: 0,
+            third: Third::default(),
         }
     }
 
@@ -294,6 +301,7 @@ impl Footprints {
             })
             .map(|(e, p, r, b)| (e, Rect::of(p.0, r.0, half), b.is_kinematic()))
             .collect();
+        let relaxed = relaxed_pairs(app);
         for i in 0..bodies.len() {
             for j in i + 1..bodies.len() {
                 let (a, b) = (&bodies[i], &bodies[j]);
@@ -302,6 +310,9 @@ impl Footprints {
                 }
                 self.pairs += 1;
                 let depth = penetration(&a.1, &b.1);
+                if self.third.exempt(&relaxed, (a.0, b.0), depth) {
+                    continue;
+                }
                 self.max_depth = self.max_depth.max(depth);
                 let tolerance = if a.2 && b.2 {
                     self.kinematic_tolerance
@@ -319,6 +330,7 @@ impl Footprints {
                 }
             }
         }
+        self.record_third(app, tick, &bodies, &relaxed);
     }
 
     pub fn max_depth(&self) -> f32 {
@@ -337,6 +349,7 @@ impl Footprints {
     }
 
     pub fn assert_clean(&self, label: &str) {
+        self.assert_third_clean(label);
         assert!(
             self.violations.is_empty(),
             "{label}: {} kinematic interpenetration ticks over {} close pairs (tolerance kin {:.3} / \

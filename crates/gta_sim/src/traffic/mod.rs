@@ -15,6 +15,7 @@ mod lanes;
 pub mod lateral;
 mod manoeuvre;
 mod pass;
+mod progress;
 mod recover;
 mod sirens;
 mod spawn;
@@ -22,11 +23,12 @@ mod stuck;
 
 pub use config::{
     Band, BubbleConfig, DesiredSpeed, IdmConfig, LateralConfig, LostConfig, PassConfig,
-    RecoverConfig, SirensConfig, SwitchConfig, TRAFFIC_CONFIG, TrafficConfig,
+    ProgressConfig, RecoverConfig, SirensConfig, SwitchConfig, TRAFFIC_CONFIG, TrafficConfig,
 };
 pub use contact::{FlatRect, swept_circle_hits_rect, swept_rect_hits_rect};
 pub use graph::{Segment, TrafficConnector, TrafficGraph, TrafficLane, control_point, lane_slot};
 pub use pass::derived_claim;
+pub use progress::TrafficHooks;
 pub use spawn::{in_frame, spawn_traffic_car};
 
 use crate::combat::unit_f32;
@@ -87,6 +89,27 @@ pub struct TrafficCar {
     pub stood: f32,
     /// Seconds left of ignoring sirens (after a yield timed out).
     pub deaf: f32,
+    /// A progress relaxation, see `progress`.
+    pub relaxed: Option<Relax>,
+}
+
+/// The progress rule lets the car past `blocker` since fixed tick `since`; `physics_only`: the
+/// manoeuvre is over and only the contact exemption remains until the two separate. `trailing`: the
+/// previous blocker the car is still inside after re-targeting to the next body ahead, exempt (physics
+/// only) until the two separate.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq)]
+pub struct Relax {
+    pub blocker: Entity,
+    pub since: u64,
+    pub physics_only: bool,
+    pub trailing: Option<Entity>,
+}
+
+impl Relax {
+    /// The pair (car, `other`) is exempt from contacts.
+    pub fn exempts(&self, other: Entity) -> bool {
+        self.blocker == other || self.trailing == Some(other)
+    }
 }
 
 /// A sideways move of a traffic car off its path line.
@@ -207,6 +230,14 @@ pub struct TrafficStats {
     pub casts: u32,
     /// Kinematic → dynamic switches by `SwitchCause`.
     pub switches_by_cause: [u32; 4],
+    /// Progress relaxations accepted so far (`progress`).
+    pub progress_relaxations: u32,
+    /// Relaxed `Dynamic` cars recovered so far.
+    pub progress_recoveries: u32,
+    /// AI cars standing longer than `progress.wait_seconds` with no recorded reason (this tick).
+    pub unexplained: u32,
+    /// Relaxed AI cars standing longer than `progress.wait_seconds` (this tick).
+    pub stalled_relaxed: u32,
 }
 
 /// Spawning mode: the one-shot fill at load, then the Vermeij bands.
@@ -277,6 +308,7 @@ impl Plugin for TrafficPlugin {
             .register_type::<TrafficMode>()
             .register_type::<TrafficCar>()
             .register_type::<Manoeuvre>()
+            .register_type::<Relax>()
             .register_type::<TrafficStats>()
             .register_type::<TrafficPhase>()
             .register_type::<DriverScared>()
@@ -306,7 +338,9 @@ impl Plugin for TrafficPlugin {
                         .chain()
                         .in_set(TrafficSystems::Hijack),
                     bail::bail_out.in_set(TrafficSystems::Bail),
-                    drive::advance_traffic.in_set(TrafficSystems::Drive),
+                    (progress::upkeep, drive::advance_traffic)
+                        .chain()
+                        .in_set(TrafficSystems::Drive),
                     (
                         stuck::despawn_stuck,
                         spawn::despawn_traffic,

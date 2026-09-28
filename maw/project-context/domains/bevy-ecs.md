@@ -136,6 +136,8 @@
 
 - **A lateral manoeuvre's heading swing is bounded by the lane band (TASK-037).** Aiming `heading_yaw(tangent, max(v,1), rate)` gave 38.7° at rest and swung the rear or nose 0.13-0.2 m into the next lane. `lateral::yaw_cap` bounds it by `|half|·sin(θ + atan2(hx, hz))` against the band. Trigger: any lateral offset law that also steers the heading.
 
+- **avian `modify_contacts` removes contacts, not spatial queries (TASK-039).** Returning `false` from `CollisionHooks::modify_contacts` drops the pair's contacts, `CollisionStart` and waking, but ray and shape casts still hit the body. The vehicle suspension rays and the vendored Tnua ground sensor saw the relaxed blocker: a wheel inside a neighbouring sedan got full suspension travel and launched it, and the player could stand on a passing car's roof. Every query that must ignore a relaxed pair needs its own predicate (`PassingThrough`, `TnuaNotPlatform`). A pair exemption must be symmetric in every consumer that decides motion (hook, recovery, switch, sensing), not only in the hook. Trigger: `CollisionHooks`, relaxed or ghosted pairs.
+
 ## Pointers
 
 - `~/.cargo/registry/src/*/bevy_ecs-<pinned>/` — the only authority on the ECS API for this project.

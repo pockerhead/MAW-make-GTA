@@ -130,7 +130,7 @@ fn cannot_stop(
     offset: f32,
     cfg: &TrafficConfig,
     vehicle: &VehicleConfig,
-) -> bool {
+) -> Option<Entity> {
     let dir = flat(lane.dir);
     // Farthest an oncoming traffic car at the top desired speed can be and still not stop hard.
     let v0 = cfg.desired_speed.avenue.max(cfg.desired_speed.street);
@@ -142,19 +142,20 @@ fn cannot_stop(
         offset,
         vehicle.half_extents().x,
     );
-    road.bodies().iter().any(|b| {
+    road.bodies().iter().find_map(|b| {
         let v = -b.velocity.dot(dir);
         if !matches!(b.kind, BodyKind::OnPathTraffic | BodyKind::Traffic) || v <= vehicle.hold_speed
         {
-            return false;
+            return None;
         }
         let points = outline(&b.shape, lane);
         let near = extent(&points, |q| (q - lane.from).with_y(0.0).dot(lane.dir)).0;
         let stop = v * v / (2.0 * cfg.idm.max_deceleration) + cfg.idm.min_gap;
-        near - claim_end < stop
+        (near - claim_end < stop
             && road
                 .blocked(&beyond, |o| o.entity != b.entity, ClaimFilter::None)
-                .is_some()
+                .is_some())
+        .then_some(b.entity)
     })
 }
 
@@ -183,7 +184,52 @@ pub(super) fn may_go(
         claim.dir,
         false,
         vehicle.hold_speed,
-    ) && !cannot_stop(road, graph.lane(l), end, offset, cfg, vehicle)
+    ) && cannot_stop(road, graph.lane(l), end, offset, cfg, vehicle).is_none()
+}
+
+/// What a published pass that may not go yet waits for, when that is moving traffic: a car driving in
+/// its claim, the owner of a claim against it, or an oncoming car too close to stop; `None` when a
+/// standing body holds it (or nothing does).
+pub(super) fn waits_for_traffic(
+    road: &RoadOccupancy,
+    graph: &TrafficGraph,
+    snap: &Snap,
+    cfg: &TrafficConfig,
+    vehicle: &VehicleConfig,
+) -> Option<Entity> {
+    let (
+        Manoeuvre::Pass {
+            go: false,
+            offset,
+            end_s,
+            ..
+        },
+        Segment::Lane(l),
+    ) = (snap.car.manoeuvre, snap.car.segment)
+    else {
+        return None;
+    };
+    let claim = derived_claim(graph, &snap.car, snap.entity, vehicle, cfg)?;
+    let me = snap.entity;
+    let same_way = |e: Entity| {
+        road.claims()
+            .iter()
+            .any(|c| c.owner == e && c.dir.dot(claim.dir) > 0.0)
+    };
+    let other = |b: &RoadBody| b.entity == me || same_way(b.entity);
+    if road
+        .blocked(
+            &claim.rect,
+            |b| other(b) || b.standing == 0.0,
+            ClaimFilter::None,
+        )
+        .is_some()
+    {
+        return None;
+    }
+    let end = end_s + vehicle.half_extents().z;
+    road.blocked(&claim.rect, other, ClaimFilter::Against(claim.dir))
+        .or_else(|| cannot_stop(road, graph.lane(l), end, offset, cfg, vehicle))
 }
 
 /// The pass around the body `hit` found ahead of `snap` on its lane, and its claim, if one side is

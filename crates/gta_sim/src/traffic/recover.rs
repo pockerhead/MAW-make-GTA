@@ -7,8 +7,10 @@
 //! nothing ahead of it: a car in a queue or behind a standing body waits (a given-up car there is one
 //! more standing body, and the car behind it the next to be bumped).
 
+use super::contact::past;
 use super::drive::Snap;
 use super::lateral::{CORRIDOR_LATERAL_STEP, CORRIDOR_YAW_STEP_DEG, right_of};
+use super::progress::planning_blocker;
 use super::{
     FlatRect, Segment, TrafficConfig, TrafficGraph, swept_circle_hits_rect, swept_rect_hits_rect,
 };
@@ -18,7 +20,11 @@ use crate::vehicle::VehicleConfig;
 use bevy::prelude::*;
 
 pub(super) enum Recovery {
-    Stay,
+    /// Not yet; `blocker`: the body that holds it, not one behind it (on its rejoin corridor, else
+    /// about to reach it).
+    Stay {
+        blocker: Option<Entity>,
+    },
     /// Back to kinematic, `lateral` m off the lane line (+ right).
     Recover {
         lateral: f32,
@@ -74,15 +80,16 @@ fn rest_skin(cfg: &TrafficConfig, half: Vec2, lateral: f32, turn: f32, slides: b
     (cfg.switch.skin + lateral.abs() + half.length() * (turn.abs() + swing)).min(cfg.recover.skin)
 }
 
-/// No dynamic body whose relative sweep over the horizon reaches the car's footprint grown by the
-/// recovery skin (the rest skin for a vehicle at rest).
+/// The first dynamic body (not `skip`ped) whose relative sweep over the horizon reaches the car's
+/// footprint grown by the recovery skin (the rest skin for a vehicle at rest); `None`: nobody is
+/// coming.
 fn nobody_coming(
     road: &RoadOccupancy,
     snap: &Snap,
     cfg: &TrafficConfig,
-    half: Vec2,
-    rest: f32,
-) -> bool {
+    (half, rest): (Vec2, f32),
+    skip: &dyn Fn(&RoadBody) -> bool,
+) -> Option<Entity> {
     let r = &cfg.recover;
     let own = FlatRect::of(snap.position, snap.rotation, half + Vec2::splat(r.skin));
     let near = FlatRect::of(snap.position, snap.rotation, half + Vec2::splat(rest));
@@ -90,33 +97,35 @@ fn nobody_coming(
     let reach = own.half.length() + 4.0;
     road.bodies()
         .iter()
-        .filter(|b| b.dynamic && b.entity != snap.entity)
-        .all(|b| {
+        .filter(|b| b.dynamic && b.entity != snap.entity && !skip(b))
+        .find(|b| {
             let d = (b.velocity - v) * r.horizon_seconds;
             match b.shape {
                 Footprint::Rect(rect) => {
                     let own = if resting_vehicle(b) { &near } else { &own };
-                    rect.centre.distance(own.centre) > reach + d.length()
-                        || !swept_rect_hits_rect(&rect, d, own)
+                    rect.centre.distance(own.centre) <= reach + d.length()
+                        && swept_rect_hits_rect(&rect, d, own)
                 }
                 Footprint::Circle { centre, radius } => {
-                    centre.distance(own.centre) > reach + d.length()
-                        || !swept_circle_hits_rect(centre, radius, d, &own)
+                    centre.distance(own.centre) <= reach + d.length()
+                        && swept_circle_hits_rect(centre, radius, d, &own)
                 }
             }
         })
+        .map(|b| b.entity)
 }
 
 /// The motion from the current pose onto the lane line (same `s`, path yaw) sampled in rectangles
-/// grown by the skin (the rest skin against vehicles at rest); `Some(lateral)` when every sample is
-/// free of bodies and claims.
+/// grown by the skin (the rest skin against vehicles at rest); `Ok(lateral)` when every sample is free
+/// of bodies (but those `ignore`d) and claims, else the first body in it (`None`: a claim).
 fn corridor_clear(
     road: &RoadOccupancy,
     graph: &TrafficGraph,
     snap: &Snap,
     cfg: &TrafficConfig,
     half: Vec2,
-) -> Option<f32> {
+    ignore: &dyn Fn(&RoadBody) -> bool,
+) -> Result<f32, Option<Entity>> {
     let (point, tangent, lateral, yaw, turn) = rejoin(graph, snap);
     let steps = (turn.abs() / CORRIDOR_YAW_STEP_DEG.to_radians())
         .max(lateral.abs() / CORRIDOR_LATERAL_STEP)
@@ -126,25 +135,30 @@ fn corridor_clear(
     let near = half + Vec2::splat(rest_skin(cfg, half, lateral, turn, slides(snap)));
     let me = snap.entity;
     let horizon = cfg.recover.horizon_seconds;
-    (0..=steps)
-        .all(|k| {
-            let f = k as f32 / steps as f32;
-            let centre = point + right_of(tangent) * lateral * (1.0 - f);
-            let rotation = Quat::from_rotation_y(yaw + turn * f);
-            let rect = FlatRect::of(centre, rotation, grown);
-            let tight = FlatRect::of(centre, rotation, near);
-            road.blocked(
-                &rect,
-                |b| b.entity == me || resting_vehicle(b),
-                ClaimFilter::All,
-            )
-            .is_none()
-                && !road
-                    .bodies()
-                    .iter()
-                    .any(|b| b.entity != me && resting_in(b, &tight, horizon))
-        })
-        .then_some(lateral)
+    let skip = |b: &RoadBody| b.entity == me || ignore(b);
+    for k in 0..=steps {
+        let f = k as f32 / steps as f32;
+        let centre = point + right_of(tangent) * lateral * (1.0 - f);
+        let rotation = Quat::from_rotation_y(yaw + turn * f);
+        let rect = FlatRect::of(centre, rotation, grown);
+        let tight = FlatRect::of(centre, rotation, near);
+        if let Some(body) =
+            road.blocked(&rect, |b| skip(b) || resting_vehicle(b), ClaimFilter::None)
+        {
+            return Err(Some(body));
+        }
+        if road.blocked(&rect, |_| true, ClaimFilter::All).is_some() {
+            return Err(None);
+        }
+        if let Some(b) = road
+            .bodies()
+            .iter()
+            .find(|b| !skip(b) && resting_in(b, &tight, horizon))
+        {
+            return Err(Some(b.entity));
+        }
+    }
+    Ok(lateral)
 }
 
 /// How far the footprint reaches across the path line at the car's `s`, m.
@@ -189,10 +203,38 @@ fn led(
         .is_some()
 }
 
-/// One tick of the recovery of a `Dynamic` car that is not lost; updates its calm time.
+/// The body that holds a car from recovering, of those not wholly behind its middle (across its
+/// heading): the car's way on is never through a body behind it, and a car yawed in a pile still has
+/// the one pressed at its rear bumper there. The rejoin corridor first, then a body coming; `found` is
+/// what the recovery check itself found first.
+fn blocker_ahead(
+    (road, ignore): (&RoadOccupancy, &dyn Fn(&RoadBody) -> bool),
+    graph: &TrafficGraph,
+    snap: &Snap,
+    cfg: &TrafficConfig,
+    (half, rest): (Vec2, f32),
+    found: (Result<f32, Option<Entity>>, Option<Entity>),
+) -> Option<Entity> {
+    let own = FlatRect::of(snap.position, snap.rotation, Vec2::new(half.x, 0.0));
+    let behind = |b: &RoadBody| past(&own, &b.shape);
+    let skip = |b: &RoadBody| ignore(b) || behind(b);
+    let ahead = |e: Option<Entity>| e.filter(|&e| road.body(e).is_some_and(|b| !behind(b)));
+    ahead(found.0.err().flatten())
+        .or_else(|| {
+            corridor_clear(road, graph, snap, cfg, half, &skip)
+                .err()
+                .flatten()
+        })
+        .or_else(|| ahead(found.1))
+        .or_else(|| nobody_coming(road, snap, cfg, (half, rest), &skip))
+}
+
+/// One tick of the recovery of a `Dynamic` car that is not lost; updates its calm time. `passing`:
+/// (blocker, passer) of every relaxation; the car ignores its own relaxed blocker and its passers
+/// (their contacts with it are off).
 pub(super) fn recover_dynamic(
     snap: &mut Snap,
-    road: &RoadOccupancy,
+    (road, passing): (&RoadOccupancy, &[(Entity, Entity)]),
     graph: &TrafficGraph,
     cfg: &TrafficConfig,
     vehicle: &VehicleConfig,
@@ -217,9 +259,33 @@ pub(super) fn recover_dynamic(
     };
     let (_, _, lateral, _, turn) = rejoin(graph, snap);
     let rest = rest_skin(cfg, half, lateral, turn, slides(snap));
-    let clear = (upright && at_rest && on_path && nobody_coming(road, snap, cfg, half, rest))
-        .then(|| corridor_clear(road, graph, snap, cfg, half))
-        .flatten();
+    let ignore = planning_blocker(&snap.car);
+    let me = snap.entity;
+    let relaxed = |b: &RoadBody| Some(b.entity) == ignore || passing.contains(&(me, b.entity));
+    // Only a car at rest recovers or waits for a body (the wait-for record reads the blocker).
+    let (clear, blocker) = if at_rest {
+        let coming = nobody_coming(road, snap, cfg, (half, rest), &relaxed);
+        let corridor = corridor_clear(road, graph, snap, cfg, half, &relaxed);
+        let clear = (upright && on_path && coming.is_none())
+            .then_some(corridor.ok())
+            .flatten();
+        let blocker = clear
+            .is_none()
+            .then(|| {
+                blocker_ahead(
+                    (road, &relaxed),
+                    graph,
+                    snap,
+                    cfg,
+                    (half, rest),
+                    (corridor, coming),
+                )
+            })
+            .flatten();
+        (clear, blocker)
+    } else {
+        (None, None)
+    };
     snap.car.calm = if clear.is_some() {
         snap.car.calm + dt
     } else {
@@ -237,7 +303,7 @@ pub(super) fn recover_dynamic(
     if snap.car.stood >= r.give_up_seconds {
         Recovery::GiveUp
     } else {
-        Recovery::Stay
+        Recovery::Stay { blocker }
     }
 }
 

@@ -1,0 +1,28 @@
+- 2026-09-28: planner §5 questions resolved by the orchestrator (minimum-overlap relaxed car in chains; N1 clean path first with Tnua guard; exit-lane-start case out of scope).
+- 2026-09-28: PR1 accepted (physics_only release phase, blocker-standing trigger plus grace, no grant relaxation, leader consumer); the M1 ~1.2 m brush through the player's car is accepted as the only exit.
+- 2026-09-28: PLAN_BLOCKED resolved by the orchestrator: cycle trigger dropped (YAGNI, no real cycle on HEAD); N1 re-derived as a lane-head Body edge (car → character on the crosswalk). The implementer continues from stage 0 on the amended plan.
+- 2026-09-28 (orchestrator, on the implementer's stop; one root: a stream of relaxations against one body starves the body's own turn):
+  - (a) one squeezer at a time per blocker;
+  - (b) when the blocker is a standing AI car, relax that car first so it moves off, instead of passing through it;
+  - (c) the squeeze speed reuses `pass.speed` (6 m/s, the clean pass speed) instead of a separate 3 m/s. The value already exists, and the owner judges the feel.
+  - The Linux regressions (c_character_in_the_lane 47 s, dummy_street_seed_7 30.1 s) and the R1 seed 1 residual (33 s) are re-measured after (a)-(c).
+  - If R1 seed 1 is still above 30 s only through grant serialisation of slow crossers, a documented residue is acceptable as long as it stays under the G4 40 s bound. Traffic work stops after this task (diminishing returns).
+- 2026-09-28 (orchestrator, after review NEEDS_WORK): the reviewer's §6 design is accepted:
+  - (a) one squeezer per blocker per approach; the slot is held in both phases; the squeezer is the car nearest B on its path.
+  - (b) is narrowed to a blocker on W's own path (same segment or successor), because the literal version breaks M1 against Q1.
+  - (c) `progress.speed` is removed and the squeeze uses `pass.speed`.
+  - M3: a `Pass{go:false}` waiting for moving oncoming traffic is a Follow edge.
+  - C1: the reviewer's fix. `Stay` ignores bodies wholly behind the rear bumper; "past" only if B was ahead; `physics_only` replans against the same blocker after grace; add a stat for standing relaxed cars.
+  - M2: the waiter's own clock counts only against vehicle blockers; a character blocker keeps its own standing clock (D7).
+  - M4: independent oracle checks of relaxation start and end, each with a flip.
+  - M5: the reviewer found a real cycle in c_dbg (2078↔2088). If c_character is still red after (a)/(b) because of it, add a minimal cycle break (a mutual Body pair standing ≥ grace: the lower key relaxes) in this task, since the evidence now exists. Otherwise do not build it.
+  - m2 perf gate and the file split, as the review asks.
+- 2026-09-28: fixer round 1 verified by the orchestrator (branch d446e80, CI 5/5 incl. sim gates). Rules the fixer showed have no observable effect when switched off on both platforms — slot rule (a), own-turn (b), stalled release, past guard alone, m1 — are removed per the project rule 'what breaks if we remove it? nothing → not needed' (YAGNI). M3 and the symmetric exemption stay (measured effect).
+- 2026-09-28 (orchestrator, on the QA report):
+  - Runtime is clean. No AI car stands > 30 s, there are 0 third-body pass-throughs, the player stays at 100 HP in N1, and t15 passes.
+  - (1) The symmetric exemption is kept without a new Linux flip. It is a consistent pair rule (the relaxed pair ignores each other both ways), not a patch, and round 1's Linux RED is recorded as its evidence.
+  - (2) B1 (two standing bodies in a row: the car squeezes into the first and then stands inside it for 70-80 s) gets one small fixer round. A car in `physics_only` against X may accept a new relaxation against the next body ahead, keeping X exempt until the two separate. The QA probe `qa039_two_in_a_row.rs` becomes a gate row with a flip.
+  - This is the last traffic change; anything further goes to known limitations.
+  - The look (a squeeze reads as driving through, with depth up to the full car width) is the owner's feel item, accepted by the D1 decision.
+- 2026-09-28: fixer round 3 closed B1 with flips; closure by the orchestrator (SHIP), as in the TASK-038 precedent. Known limitation recorded: a lane pass ending in a second car's merge zone runs off-path onto a U-connector and stands (the same on HEAD). Traffic work stops here.
+- 2026-09-28: PCTX proposals folded (bevy-ecs: hook vs spatial queries, symmetric pair exemption; game-design: progress guarantee; gates: tick-start oracle).

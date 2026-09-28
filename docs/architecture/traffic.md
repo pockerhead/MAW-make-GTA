@@ -80,7 +80,8 @@ keep the full skin. On a connector it recovers only while its footprint stays in
 table's body band (`half.x + conflict_margin / 2` across the path line, and its centre within
 `conflict_margin / 2` along it: the table keeps co-granted bodies apart by that model only, TASK-037);
 a car between that band and half the lane pitch neither recovers nor gives up (the residual band). It
-then rejoins its line at the lateral rate (`Manoeuvre::Rejoin`).
+then rejoins its line at the lateral rate (`Manoeuvre::Rejoin`). A `Dynamic` car relaxed against its
+blocker (Progress) ignores that body in recovery and drives through it under the autopilot.
 A car that stood `give_up_seconds` in `Dynamic` without recovering, out of its lane band (half the lane
 pitch from the path line) and with nothing on its lane line within twice the jam gap ahead, bails out, or
 is abandoned at once when no door is free (a bailing car with no exit would stand forever). A car in a
@@ -185,9 +186,9 @@ never towards a car, where 0.8 - 0.5 m would put the capsule against the body); 
 police arrest path are unchanged (`tests/walk_arrival.rs` A3). Two opposing walkers squeezed between two
 standing cars can still press against each other for a while (16 s in the seed-1 spot-B scene, heading 0);
 walkers have no walker-walker avoidance.
-Open (TASK-039): an approach whose every exit crosses the left car and where no box pass fits (the
-oncoming lane holds its own queue head at the stop line) still locks (G4 seed 7); so does the R1
-seed-1 car switched by the left car appearing in its path (113 s in `Dynamic`). The path check
+Resolved by TASK-039 (Progress, below): an approach whose every exit crosses the left car and where no
+box pass fits (class E, G4 seed 7) and the R1 seed-1 car switched by the left car appearing in its path
+(class D, 113 s in `Dynamic`) now squeeze past the left car with collision relaxed against it. The path check
 (`connector_clear`, TASK-036) drives the requester's real body (chassis half extents, no margin) along its
 connector from where it stands, sampled by the corridor law (`connector_body`). The old check, the
 centre line +- half width with no body length, missed a right-turn pivot's rear swinging 0.87-0.91 m past
@@ -202,11 +203,117 @@ waiter ticks per seed in `traffic_gridlock`, all refused by the room check too; 
 whole-box grants and re-picks unchanged). The check is guaranteed by the G1 oracle gates, not by the step:
 the 0.01 m shrinks of `blocked` plus the corner sagitta between samples can hide ~0.03 m.
 `tests/traffic_box_overhang.rs` B1-B5. In `traffic_causes` R1 seed 7 the sweep finds every exit of the east
-approach blocked by the left car (the old band left the right turn clear), so each car there needs a
-whole-box grant, which waits for an empty box: stands 50.9 s (Linux 57.8 s) against the 30 s bound. That is
-TASK-039 class E; the row is ignored until TASK-039 (reverting the check would bring back the kinematic
-pass-through). A push-through by the traffic (a braked car cannot be shoved sideways by the
+approach blocked by the left car (the old band left the right turn clear), so each car there needed a
+whole-box grant, which waits for an empty box: stands 50.9 s (Linux 57.8 s) against the 30 s bound (TASK-039
+class E, now ended by the progress rule; reverting the check would bring back the kinematic pass-through). A push-through by the traffic (a braked car cannot be shoved sideways by the
 autopilot, and walkers get pinned between the cars) was tried and dropped.
+
+## Progress: wait-for record and relaxed pass (`progress.rs`, TASK-039)
+
+One universal way out for an AI car stuck behind a standing body, where no per-case rule (lane pass,
+lease, repick, box pass, recovery) ends the stand. The per-case rules all stay (none was proven subsumed).
+
+Wait-for record. Each tick every AI car (`Kinematic`/`Dynamic`, road `standing > 0`) gets at most one
+edge, the reason it stands, the nearest one winning (ties `Body` > `Grant` > `Follow`):
+
+| Car | Condition | Target | Kind |
+|---|---|---|---|
+| kinematic | path leader within `pass.trigger_gap` | leader | `Follow` |
+| kinematic | nearest sense hit within `pass.trigger_gap`: a claim / a body | claim owner / body | `Follow` / `Body` |
+| kinematic | `Pass { go: false }` waiting for moving traffic (a car in its claim, a claim against it, an oncoming car too close to stop: `pass::waits_for_traffic`) | that car or claim owner | `Follow` |
+| kinematic | `Pass { go: false }` otherwise | its obstacle | `Body` |
+| kinematic waiter left ungranted (`junction::update`) | a conflicting occupant or earlier waiter, the whole-box holder | that car | `Grant` (never relaxed) |
+| same | no room past the box / the exit lane start taken | the exit lane's first car (else a car granted into it) / the body or claim owner | `Follow` |
+| same | a body on its connector path | the body | `Body` |
+| dynamic | `Recovery::Stay { blocker }` (the corridor body, else the body about to reach it; never one wholly behind the car's middle) | the body | `Body` |
+| dynamic | else the path leader within twice the jam gap | leader | `Follow` |
+
+A `Follow` edge to a car with no edge of its own that has stood `wait_seconds` counts as `Body` only when
+that car is not driven by the AI (a bailing car); a driven car with no recorded reason is never passed
+through (it counts as `unexplained`). Before that rule, followers at busy nodes with nobody playing were
+relaxed through their own queue head waiting for room (5-11 per 120 s in `traffic_gridlock`; now 0). Edges
+form a functional graph; a pointer walk gives each car its chain's sink (a body with no edge: a left
+car, a person, a bailing car) or a cycle. No cycle trigger is built (TASK-039 amendment: a nose-to-tail
+`Dynamic` pair is not a cycle, the front car's IDM drives it off; the cycles seen were removed at their
+cause: in G4 seed 7 a whole-box pass claim over the oncoming exit, below; in the Linux
+`c_character_in_the_lane` pile `Dynamic` cars whose `Stay` edge pointed at the car pressed behind them,
+which `Stay` no longer reports).
+
+Eligibility. A `Body` edge W -> X is a candidate when W is `Kinematic`/`Dynamic` with no relaxation (or
+one in its physics phase against X: below), has stood `grace_seconds` (every new waiter first gets the
+clean planners), X stood `grace_seconds` if it is not the sink, and either the sink stood `wait_seconds`
+or, when neither X nor the sink is a person, W itself stood `wait_seconds` and the sink the grace (a
+nudge that restarts a left car's clock does not restart the waiter's: R1 seed 1). A person keeps his own
+clock: one pausing on a crosswalk in front of a car that waited long for its grant is not squeezed after
+the grace. Dropped before ordering: W's path leader is relaxed against X or overlaps it (W is not the
+car nearest X). Candidates go in order of least overlap with
+their blocker (the car's body driven on along its path, at its offset and on its line, until its rear is
+past the body; for a head that may still re-pick, the least over its exits clear of every other body;
+key `(overlap, entity bits)`).
+
+Accepting, in that order: a car that is being passed is never moved, and no car is relaxed against a car
+that is itself squeezing past something (a relaxed car that stands for any reason, a grant too, is not
+passing and does not count). Accepting drops any pass the car had around that blocker (its claim would
+hold the oncoming car it then waits for). `TrafficStats` counts
+`progress_relaxations`, `progress_recoveries` (relaxed `Dynamic` cars recovered) and, per tick,
+`unexplained` (AI cars standing past `wait_seconds` with no edge) and `stalled_relaxed` (relaxed AI cars
+standing past `wait_seconds`).
+
+The relaxed pass. `TrafficCar.relaxed = Relax { blocker, since, physics_only }`. While planning
+(`!physics_only`):
+- sensing, the path leader and the IDM skip the blocker (a `Dynamic` car too: its autopilot drives it
+  through; braking for it first, as the plan had it, pinned b3's car between the dummy and the pusher
+  behind it), and the speed is capped at `pass.speed` (a squeeze is no faster than a clean pass);
+- a clean lane pass that can go at once (`plan_pass` + `may_go`) is taken first; otherwise the car
+  drives its own line through the body; never a box pass (in the box only the lines are kept apart by the
+  conflict table, and a whole-box pass lapses under the lease);
+- `connector_clear` / `repick` ignore the blocker; a relaxed head takes the exit of least overlap of
+  those clear of every other body (`repick_relaxed`);
+- recovery (`nobody_coming`, the corridor and `resting_in`) ignores it.
+
+In both phases (physics consumers): the contact switch (predictive and backstop) skips the pair on
+either side (a blocker is not switched by its passer), and the blocker's recovery ignores its passers
+(their contacts with it are off: a passer stopped inside its blocker's nose at its stop line held the
+blocker `Dynamic` 36.5 s on Linux);
+`TrafficHooks::modify_contacts` (the app's one `CollisionHooks`, every traffic car carries
+`ActiveCollisionHooks::MODIFY_CONTACTS`) drops the pair's contacts, so no push, no `CollisionStart`, no
+damage (`apply_impacts` never sees the pair); `vehicle::PassingThrough(blocker)` makes both cars' wheel
+rays skip each other (`cast_ray_predicate`: an awake blocker's suspension rays start inside the passer's
+hull and read full travel, 180 deg roll in the flip); `TnuaNotPlatform` on the car keeps a relaxed person's
+float sensor off its roof. `filter_pairs` would miss a pair already touching.
+
+End (`progress::upkeep`, before `advance_traffic`): the blocker gone ends it; planning ends
+(`physics_only`) when the car left AI, the blocker moved (road `standing == 0`), the car is past it
+(every corner behind its rear; every edge points at a body ahead, `Stay` included, so for a `Dynamic` car
+too) or after `max_seconds`;
+the exemption lasts until the car's footprint grown by `recover.skin` no longer touches the blocker. A car
+left standing in its blocker's way in the physics phase (the blocker moved and stopped again on its nose,
+the squeeze went stale) is a candidate again against the same blocker and plans again with a fresh
+`since`. Markers are inserted and removed only on change. The gates check each relaxation on its own terms
+(`tests/traffic_support/third_body.rs`): it starts against a body that was standing when the tick began
+and apart from it, and ends within `max_seconds` + 10 s.
+
+`progress` values: `wait_seconds` 16 (18 in the plan, lowered by its latency rule after R1 seed 1),
+`grace_seconds` 6 (>= `pass.character_seconds`), `max_seconds` 30. The squeeze runs at `pass.speed`: a
+separate 3 m/s held the lane and the box twice as long as a clean pass (Linux `dummy_street_seed_7`, the
+R1 seed 1 grant queue).
+
+Also for this task (junction): an ungranted waiter already standing on its connector is granted first
+(R1 seed 1: the recovered class-D car waited in the box while every other approach was relaxed through
+it: 41 s without it, 27.8 s with it). A waiter that waits for room, the exit lane start or a body on its
+path still holds nothing against a conflicting waiter
+(`traffic_junction_box::a_waiter_in_the_box_behind_a_body_holds_nothing`).
+
+"One body owner" (D10, not built): always-`Dynamic` traffic under the autopilot, or always-kinematic with
+a custom contact response. It touches about 12-15 files (`drive.rs` motion, `contact.rs` and `recover.rs`
+removed, `lateral.rs`, `manoeuvre.rs`, `pass.rs`, `box_rules.rs` targets, autopilot precision, the
+occupancy kinds, `spawn.rs`, sirens and police) and re-anchors about 25 gate files (`traffic_contact`,
+`traffic_recovery`, `traffic_idm`, `traffic_intersection`, the G1 kinematic tolerance, `traffic_bench`
+`MEAN_LIMIT` with 24 wheel-raycast bodies, every city trajectory): 3-5 tasks. It would still need a progress
+rule (traffic cannot shove a parked car). Not recommended now.
+
+Observation (out of scope): a car standing at the start of an exit lane is not a box body; queues into it
+wait on the room check (`Follow`).
 
 ## Sirens (`traffic/sirens.rs`, `police/siren.rs`, TASK-032)
 

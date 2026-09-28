@@ -72,8 +72,10 @@ pub fn spawn_traffic_car(
                 calm: 0.0,
                 stood: 0.0,
                 deaf: 0.0,
+                relaxed: None,
             },
             Appearance(appearance),
+            ActiveCollisionHooks::MODIFY_CONTACTS,
         ))
         .insert((RigidBody::Kinematic, Name::new("Traffic car")))
         .id()

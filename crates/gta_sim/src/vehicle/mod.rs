@@ -53,6 +53,20 @@ pub struct Vehicle {
     pub wheels: [WheelState; 4],
 }
 
+/// This car drives through `blocker` (and is still inside `trailing`) with contacts off (traffic
+/// progress, TASK-039): neither car's wheel rays see the other.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct PassingThrough {
+    pub blocker: Entity,
+    pub trailing: Option<Entity>,
+}
+
+impl PassingThrough {
+    pub fn names(&self, other: Entity) -> bool {
+        self.blocker == other || self.trailing == Some(other)
+    }
+}
+
 /// Car health; at zero the car stalls.
 #[derive(Component, Reflect, Default, Clone, Copy, Debug)]
 #[reflect(Component, Default)]

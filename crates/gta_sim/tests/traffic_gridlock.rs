@@ -142,7 +142,12 @@ fn run(seed: u64) -> (Run, f32, u32) {
         .filter(|&s| s > REPORT_STOP)
         .collect();
     result.mean_cars = car_ticks as f32 / (SECONDS * hz) as f32;
-    result.casts = app.world().resource::<TrafficStats>().casts - casts;
+    let stats = *app.world().resource::<TrafficStats>();
+    result.casts = stats.casts - casts;
+    eprintln!(
+        "seed {seed}: progress relaxations {}, relaxed recoveries {}",
+        stats.progress_relaxations, stats.progress_recoveries
+    );
     (result, timeout, hz)
 }
 
@@ -201,6 +206,7 @@ fn nobody_playing(seed: u64) {
         ));
     }
     failures.extend(run.clock.dynamic_violation());
+    failures.extend(run.oracle.relax_failure());
     assert!(failures.is_empty(), "seed {seed}: {}", failures.join("; "));
 }
 

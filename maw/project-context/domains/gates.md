@@ -154,6 +154,10 @@
 
 - **Fix-induced seams in traffic (TASK-036).** (1) Ending a lock can expose the contact it was hiding (a yield freed from the box drove out at 3.25 m offset into a co-granted car): run the contact oracle sweep on the FIXED code, not only on HEAD. (2) A truer path predicate can turn a flowing approach into a whole-box queue: before tightening `connector_clear`-like checks, count per approach how many exits stay open next to a standing body and rerun the left-car city rows. (3) A manoeuvre gate starts the manoeuvre through its real start rule (spawn the siren car, let `sirens::update` choose), never by writing `manoeuvre = ...`; otherwise a later start guard makes it vacuous. (4) Seed-city avenue curb lanes hold parked cars: curb-lane fixtures remove them (named mutation) and assert the shift completed. Trigger: liveness fixes in junctions, `connector_clear`/`repick`, gates writing `TrafficCar` state, `curb_lane` rows in `city_app`.
 
+- **Linux verification goes through CI, not local WSL (owner, TASK-039).** A WSL VM plus a Windows compile ran the 32 GB host out of memory and killed a fixer mid-build. The CI "sim gates" workflow already runs the suite on Linux: push the branch and wait for the 5 workflows. Use local WSL only to debug a Linux-only red that CI found, and run `wsl --shutdown` afterwards.
+
+- **Oracle checks read the tick-start state the rule decided from (TASK-039).** "The relaxation started against a standing body" must use the blocker's speed from before the physics step of the tick that set it. rsync keeps mtimes, so touch synced sources before a WSL cargo run (now superseded: Linux goes through CI).
+
 ## Pointers
 
 - `.claude/local/donor.md` — local-only pointers to the owner's previous Bevy project (may be absent on a fresh clone).

@@ -9,18 +9,22 @@
 //!   plus 1 s, whether it stands before its stop line, past it or on its connector (a holder waiting
 //!   for walkers keeps its lease: TASK-033). "On its path" is the box rule since TASK-036: the holder's
 //!   body driven on along its connector from where it stands overlaps the body (stricter than the old
-//!   centre-line band, it adds rear-swing holders; exact about holders already past the body).
-//! - G1 oracle clean.
+//!   centre-line band, it adds rear-swing holders; exact about holders already past the body). A holder
+//!   relaxed against the body (TASK-039, planning phase) is not held by it: its path ignores the body.
+//! - G1 oracle, third bodies and relaxations clean.
 //! - Liveness, asserted only in the `_liveness` rows. The player watching the box from nearby keeps
 //!   the car there (the stuck cheat's in-view rule). Seed 1 passes since TASK-037 (bumped cars recover
 //!   on connectors, connector sensing follows the path, walkers go around standing cars), and so does
-//!   the extra row (crossing cars see a car held on its connector without a grant); seed 7 stays
-//!   ignored (every exit of an approach crosses the left car and no box pass fits: TASK-039).
+//!   the extra row (crossing cars see a car held on its connector without a grant); seed 7 since
+//!   TASK-039 (every exit of an approach crosses the left car and no box pass fits: the progress rule
+//!   squeezes the cars past it).
 //!   - No AI car on the box's approaches (within 50 m of it) stands longer than `MAX_STOP` (the
 //!     TASK-033 saturation bound); stands elsewhere are printed.
 //!   - No AI car stands longer than 30 s in `Dynamic` (spec G3).
 //!   - The extra row: an AI car already on the blocked connector right behind the body (it takes
 //!     another exit from the start of its connector) stands at most `MAX_STOP`.
+//! - Arbitration (floor, TASK-039): a waiter already standing in the box is granted first, but one
+//!   whose path a standing body blocks holds nothing against a conflicting waiter.
 
 mod common;
 mod traffic_support;
@@ -165,7 +169,7 @@ fn run(seed: u64, extra: bool) -> Run {
         "GATE BROKEN: the body is not on its own connector's path"
     );
     let mut clock = StandClock::default();
-    let mut oracle = Footprints::new(&app);
+    let mut oracle = Footprints::new(&app).with_third_bodies();
     let mut unseen = 0;
     let mut stale: HashMap<(u32, Entity), u32> = HashMap::new();
     let mut worst_stale = 0;
@@ -208,8 +212,12 @@ fn run(seed: u64, extra: bool) -> Run {
                 } else {
                     0.0
                 };
+                let relaxed = car
+                    .relaxed
+                    .is_some_and(|r| !r.physics_only && r.blocker == body);
                 let holding = (car.segment == Segment::Connector(k)
                     || car.segment == Segment::Lane(conn.from_lane))
+                    && !relaxed
                     && on_path(&graph, k, from_s, body_half, &body_rect);
                 let contested = j.waiters.iter().any(|w| conn.conflicts.contains(&w.2));
                 let held = if stands && holding && contested {
@@ -261,7 +269,7 @@ fn check(seed: u64, extra: bool, liveness: bool) {
     let run = run(seed, extra);
     eprintln!(
         "seed {seed}{}: worst stale holder {:.2} s, worst stand {:.1} s at ({:.1}, {:.1}), extra car \
-         stood {:?} s, {} grant ticks at the box, G1 max depth {:.3}",
+         stood {:?} s, {} grant ticks at the box, G1 max depth {:.3}, relaxed max depth {:.2}",
         if extra { " (extra)" } else { "" },
         run.worst_stale,
         run.stand.0,
@@ -269,7 +277,8 @@ fn check(seed: u64, extra: bool, liveness: bool) {
         run.stand.1.z,
         run.extra,
         run.grants_at,
-        run.oracle.max_depth()
+        run.oracle.max_depth(),
+        run.oracle.relaxed_max_depth()
     );
     assert!(
         run.grants_at > 0,
@@ -294,6 +303,10 @@ fn check(seed: u64, extra: bool, liveness: bool) {
     if !run.oracle.violations.is_empty() {
         failures.push(format!("G1: {:?}", run.oracle.summary()));
     }
+    if !run.oracle.third.violations.is_empty() {
+        failures.push(format!("third bodies: {:?}", run.oracle.third_summary()));
+    }
+    failures.extend(run.oracle.relax_failure());
     match run.dynamic {
         Some(dynamic) if liveness => failures.push(dynamic),
         Some(dynamic) => eprintln!("seed {seed} (asserted in the _liveness twin): {dynamic}"),
@@ -323,7 +336,6 @@ fn seed_1_box_keeps_moving_liveness() {
 }
 
 #[test]
-#[ignore = "TASK-039 class E: every exit of an approach crosses the left car and no box pass fits"]
 fn seed_7_box_keeps_moving_liveness() {
     check(7, false, true);
 }
@@ -331,4 +343,130 @@ fn seed_7_box_keeps_moving_liveness() {
 #[test]
 fn seed_1_car_behind_the_body_leaves_liveness() {
     check(1, true, true);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Arbitration (TASK-039): a waiter already in the box goes first, but holds nothing while a body
+// stands on its path.
+
+/// A plus crossing on the test floor, centre (-22, 22): in lanes 0..4 towards the centre from N, E, S,
+/// W, out lanes 4..8, 3.25 m half box, 12 m arms, 1.625 m lane offset (as in
+/// `traffic_intersection.rs`).
+fn plus_floor() -> App {
+    let centre = Vec3::new(-22.0, 0.0, 22.0);
+    let right = |d: Vec3| Vec3::new(-d.z, 0.0, d.x);
+    let dirs = [Vec3::NEG_Z, Vec3::X, Vec3::Z, Vec3::NEG_X];
+    let mut lanes = Vec::new();
+    for &d in &dirs {
+        let side = right(-d) * 1.625;
+        lanes.push((centre + d * 15.25 + side, centre + d * 3.25 + side, 6.0, 0));
+    }
+    for (k, &d) in dirs.iter().enumerate() {
+        let side = right(d) * 1.625;
+        lanes.push((
+            centre + d * 3.25 + side,
+            centre + d * 15.25 + side,
+            6.0,
+            10 + k as u32,
+        ));
+    }
+    let mut connectors = Vec::new();
+    for i in 0..4u32 {
+        for j in (0..4u32).filter(|&j| j != i) {
+            connectors.push((i, 4 + j, 0));
+        }
+    }
+    connectors.extend((0..4u32).map(|j| (4 + j, j, 10 + j)));
+    traffic_floor(lanes, &connectors, &[])
+}
+
+/// The north straight car stands ungranted on its connector 5.3 m in (named mutation: spawned there,
+/// as a holder demoted where it stands), clear of the east straight's path, with (`with_body`) a
+/// parked car 0.1 m ahead of its nose at the start of its exit lane (a car-long body cannot stand
+/// between the two paths inside this box); the east head then asks for the east straight, which the
+/// conflict table says crosses the north one. Returns the first tick each is granted within 1 s
+/// (north, east).
+fn in_box_waiter(with_body: bool) -> (Option<u32>, Option<u32>) {
+    let mut app = plus_floor();
+    let g = graph(&app);
+    let half = app.world().resource::<VehicleConfig>().half_extents();
+    let find = |from: u32, to: u32| {
+        (0..g.connectors().len() as u32)
+            .find(|&c| g.connector(c).from_lane == from && g.connector(c).to_lane == to)
+            .expect("GATE BROKEN: missing connector")
+    };
+    let (north, east) = (find(0, 6), find(1, 7));
+    assert!(
+        g.connector(north).conflicts.contains(&east),
+        "GATE BROKEN: the straight connectors do not cross"
+    );
+    let s = 5.3;
+    let waiter = spawn_traffic_car(&mut app, Segment::Connector(north), s, 0.0);
+    set_car(&mut app, waiter, |c| c.next = Some(north));
+    // The nose is already on the exit lane: the body stands 0.1 m ahead of it there.
+    let nose = s + half.z - g.length(Segment::Connector(north));
+    assert!(
+        nose > 0.0,
+        "GATE BROKEN: the north car's nose is still on its connector"
+    );
+    let (at, dir) = g.pose(Segment::Lane(6), nose + 0.1 + half.z);
+    let body = with_body.then(|| park_car(&mut app, at.with_y(0.0), dir));
+    run_ticks(&mut app, 2);
+    let start = body.map(|b| position_of(&app, b));
+    let head_s = g.lane(1).stop - half.z - 3.0;
+    let head = spawn_traffic_car(&mut app, Segment::Lane(1), head_s, 0.0);
+    set_car(&mut app, head, |c| c.next = Some(east));
+    let east_path = FlatRect::of(
+        g.pose(
+            Segment::Connector(east),
+            g.length(Segment::Connector(east)) / 2.0,
+        )
+        .0,
+        Quat::from_rotation_y(gta_sim::combat::aim_yaw(Vec3::NEG_X)),
+        Vec2::new(half.x, 3.25 + half.z),
+    );
+    assert!(
+        !obb_overlap(&footprint(&app, waiter), &east_path),
+        "GATE BROKEN: the north car stands on the east straight's path"
+    );
+    let granted = |app: &App, c: u32, e: Entity| {
+        app.world()
+            .resource::<TrafficIntersections>()
+            .granted(0, c, e)
+    };
+    let (mut waiter_at, mut head_at) = (None, None);
+    for tick in 0..HZ {
+        run_ticks(&mut app, 1);
+        if waiter_at.is_none() && granted(&app, north, waiter) {
+            waiter_at = Some(tick);
+        }
+        if head_at.is_none() && granted(&app, east, head) {
+            head_at = Some(tick);
+        }
+    }
+    if let (Some(b), Some(start)) = (body, start) {
+        let moved = (position_of(&app, b) - start).with_y(0.0).length();
+        assert!(moved < 0.1, "GATE BROKEN: the body moved {moved:.3} m");
+    }
+    (waiter_at, head_at)
+}
+
+/// Behind the body the in-box waiter holds nothing: the east head is granted and the north car is
+/// not; without the body (control) the north car, in the box, is granted before the east head.
+#[test]
+fn a_waiter_in_the_box_behind_a_body_holds_nothing() {
+    let (behind, control) = (in_box_waiter(true), in_box_waiter(false));
+    eprintln!(
+        "in-box waiter (north, east grant ticks): behind a body {behind:?}, no body {control:?}"
+    );
+    let mut failures = Vec::new();
+    if behind.0.is_some() || behind.1.is_none() {
+        failures.push(format!("behind a body: north / east granted at {behind:?}"));
+    }
+    if control.0.is_none() || control.1.is_some_and(|h| control.0.is_some_and(|w| h < w)) {
+        failures.push(format!(
+            "GATE BROKEN: no body: north / east granted at {control:?}"
+        ));
+    }
+    assert!(failures.is_empty(), "{failures:?}");
 }

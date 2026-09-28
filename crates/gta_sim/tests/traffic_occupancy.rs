@@ -82,7 +82,8 @@ fn hold_off_path(app: &mut App, car: Entity, lateral: f32) {
 }
 
 /// A car at 12 m/s on L1 from s 10 comes up to `obstacle` (flat front at `front_x` on L1): it stops
-/// kinematic, with no switch, its bumper at least `min_gap - 0.1` short of the obstacle.
+/// kinematic, with no switch, its bumper at least `min_gap - 0.1` short of the obstacle. Watched for
+/// 1 s less than `progress.wait_seconds`: past that the progress rule (TASK-039) squeezes it past.
 fn stops_short(app: &mut App, front_x: f32, label: &str) {
     let (traffic, vehicle) = cfgs(app);
     let half = vehicle.half_extents().z;
@@ -90,7 +91,8 @@ fn stops_short(app: &mut App, front_x: f32, label: &str) {
     let before = (switches(app), stats(app).casts);
     let mut oracle = Footprints::new(app);
     let mut stood = 0;
-    for tick in 0..20 * HZ {
+    let seconds = (traffic.progress.wait_seconds as u32).min(21) - 1;
+    for tick in 0..seconds * HZ {
         run_ticks(app, 1);
         oracle.record(app, tick);
         stood = if traffic_car(app, car).speed == 0.0 {
@@ -99,7 +101,7 @@ fn stops_short(app: &mut App, front_x: f32, label: &str) {
             0
         };
     }
-    assert_traffic_ran(app, before.1, 1, 20 * HZ);
+    assert_traffic_ran(app, before.1, 1, seconds * HZ);
     let gap = front_x - (position_of(app, car).x + half);
     let mode = traffic_car(app, car).mode;
     let mut failures = Vec::new();

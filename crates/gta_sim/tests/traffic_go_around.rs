@@ -194,6 +194,7 @@ fn report(label: &str, w: &Watch) {
     if !w.oracle.violations.is_empty() {
         failures.push(format!("G1: {:?}", w.oracle.summary()));
     }
+    failures.extend(w.oracle.relax_failure());
     assert!(failures.is_empty(), "{label}: {}", failures.join("; "));
 }
 

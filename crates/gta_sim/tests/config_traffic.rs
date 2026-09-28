@@ -192,6 +192,22 @@ fn traffic_rules_fire_with_their_keyword() {
             "horizon_seconds: 0.09",
             "recover.horizon_seconds 0.09 must be >= switch.horizon_seconds",
         ),
+        // Progress (TASK-039): the wait over the grace, the grace over the person pass.
+        (
+            "wait_seconds: 16.0",
+            "wait_seconds: 5.0",
+            "progress.wait_seconds 5 must be > progress.grace_seconds",
+        ),
+        (
+            "grace_seconds: 6.0",
+            "grace_seconds: 5.5",
+            "progress.grace_seconds 5.5 must be >= pass.character_seconds",
+        ),
+        (
+            "max_seconds: 30.0",
+            "max_seconds: -1.0",
+            "progress.max_seconds",
+        ),
     ];
     for (i, (from, to, keyword)) in rows.into_iter().enumerate() {
         let error = traffic_error(&format!("traffic_{i}"), from, to);

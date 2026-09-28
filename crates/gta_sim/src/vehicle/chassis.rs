@@ -1,4 +1,6 @@
-use super::{DriveIntent, Vehicle, VehicleConfig, VehicleHealth, VehicleLoad, WHEELS};
+use super::{
+    DriveIntent, PassingThrough, Vehicle, VehicleConfig, VehicleHealth, VehicleLoad, WHEELS,
+};
 use crate::layers::GameLayer;
 use crate::world::CityBlock;
 use avian3d::prelude::*;
@@ -77,7 +79,7 @@ pub fn drive_force(
     resist(cfg.coast_deceleration)
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn drive_vehicles(
     spatial: SpatialQuery,
     cfg: Res<VehicleConfig>,
@@ -93,6 +95,7 @@ pub(super) fn drive_vehicles(
     )>,
     intents: Query<&DriveIntent>,
     blocks: Query<(), With<CityBlock>>,
+    passing: Query<&PassingThrough>,
 ) {
     let dt = time.delta_secs();
     *load = VehicleLoad::default();
@@ -129,6 +132,10 @@ pub(super) fn drive_vehicles(
         let Ok(down) = Dir3::new(-up) else {
             continue;
         };
+        let own = passing.get(entity).ok();
+        let through = |c: Entity| {
+            own.is_some_and(|p| p.names(c)) || passing.get(c).is_ok_and(|p| p.names(entity))
+        };
         let mut applied: [(Vec3, Vec3); 8] = [(Vec3::ZERO, Vec3::ZERO); 8];
         let mut on_sidewalk = false;
         for (i, &(sx, sz)) in WHEELS.iter().enumerate() {
@@ -140,7 +147,9 @@ pub(super) fn drive_vehicles(
             );
             let mount = position + rotation * local;
             load.rays += 1;
-            let Some(hit) = spatial.cast_ray(mount, down, reach, true, &filter) else {
+            let Some(hit) =
+                spatial.cast_ray_predicate(mount, down, reach, true, &filter, &|c| !through(c))
+            else {
                 vehicle.wheels[i] = default();
                 continue;
             };

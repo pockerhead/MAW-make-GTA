@@ -12,7 +12,8 @@
 //!   out of the box (pushed);
 //! - R1 (headless, the TASK-031 repro): a car left in the middle of the junction box next to the
 //!   spawn, the player on the spawn sidewalk looking at it: no traffic car within 45 m of the box
-//!   stands longer than 30 s over 150 s (seeds 1 and 7 ignored: open in TASK-039, see the rows);
+//!   stands longer than 30 s over 150 s, G1, third bodies and relaxations clean (both seeds since
+//!   TASK-039: the progress rule ends the class D stand of seed 1 and the class E queue of seed 7);
 //! - the stuck cheat's in-view rule (fallback R-B): a car in the box the player looks at from nearby
 //!   is never popped; seen from past `bubble.stuck_in_view_distance` it is cleared.
 //!
@@ -138,9 +139,11 @@ fn a_left_car_seed_7() {
 
 /// Bumps a traffic car standing at the obstacle spot into `Dynamic` with a car kicked at 2 m/s into
 /// its rear, then `after` perturbs it; 60 s later it must not be `Dynamic` and standing. A body
-/// `after` returns stands in the car's way for `PRESSED_S` and is then removed: until then the car
-/// must not be given up.
-fn bumped(label: &str, after: impl FnOnce(&mut Scene, Entity) -> Option<Entity>) {
+/// `after` returns stands in the car's way for `pressed_s` and is then removed. With such a body the
+/// car stays `Dynamic` and is never given up for `progress.wait_seconds`, is never given up in the
+/// run, stands at most 30 s, drives past the body (its rear beyond it) before it is removed (the
+/// progress rule), and the body is never hit or knocked down.
+fn bumped(label: &str, pressed_s: u32, after: impl FnOnce(&mut Scene, Entity) -> Option<Entity>) {
     let mut scene = street_scene(1);
     let half = scene.app.world().resource::<VehicleConfig>().half_extents();
     let lane = scene.lane;
@@ -169,12 +172,26 @@ fn bumped(label: &str, after: impl FnOnce(&mut Scene, Entity) -> Option<Entity>)
         "GATE BROKEN: {label}: the nudge did not switch the car"
     );
     let blocker = after(&mut scene, car);
+    let wait = scene
+        .app
+        .world()
+        .resource::<TrafficConfig>()
+        .progress
+        .wait_seconds as u32;
     let mut given_up_while_pressed = None;
     let mut stood = 0.0;
     let mut gone = None;
     let mut clock = StandClock::default();
+    let mut given_up = None;
+    let mut rear_past = None;
+    let mut hurt = Vec::new();
+    let mut hits = scene
+        .app
+        .world()
+        .resource::<Messages<gta_sim::vehicle::VehicleHit>>()
+        .get_cursor_current();
     for tick in 0..60 * HZ {
-        if tick == PRESSED_S * HZ
+        if tick == pressed_s * HZ
             && let Some(body) = blocker
         {
             scene.app.world_mut().despawn(body);
@@ -183,11 +200,37 @@ fn bumped(label: &str, after: impl FnOnce(&mut Scene, Entity) -> Option<Entity>)
         clock.record(&mut scene.app);
         let now = scene.app.world().get::<TrafficCar>(car).map(|c| c.mode);
         if blocker.is_some()
-            && tick < PRESSED_S * HZ
+            && tick < wait * HZ
             && given_up_while_pressed.is_none()
             && !matches!(now, Some(TrafficMode::Dynamic))
         {
             given_up_while_pressed = Some((tick as f32 / HZ as f32, now));
+        }
+        if let (Some(body), true) = (blocker, tick < pressed_s * HZ) {
+            let world = scene.app.world();
+            let at = |e: Entity| world.get::<Position>(e).map(|p| p.0);
+            if let (Some(c), Some(b)) = (at(car), at(body))
+                && rear_past.is_none()
+                && (c - scene.dir * half.z - b).dot(scene.dir) > 0.0
+            {
+                rear_past = Some(tick as f32 / HZ as f32);
+            }
+            let hit = hits
+                .read(world.resource::<Messages<gta_sim::vehicle::VehicleHit>>())
+                .any(|h| h.target == body);
+            let reaction = world.get::<gta_sim::combat::HitReaction>(body).copied();
+            if (hit || reaction.is_some_and(|r| r.is_active())) && hurt.len() < 3 {
+                hurt.push((tick as f32 / HZ as f32, hit, reaction));
+            }
+        }
+        if blocker.is_some()
+            && given_up.is_none()
+            && matches!(
+                now,
+                Some(TrafficMode::Abandoned | TrafficMode::Bailing { .. })
+            )
+        {
+            given_up = Some((tick as f32 / HZ as f32, now));
         }
         // Gone: it drove out of the bubble (not standing).
         let Some(v) = scene.app.world().get::<LinearVelocity>(car) else {
@@ -218,18 +261,37 @@ fn bumped(label: &str, after: impl FnOnce(&mut Scene, Entity) -> Option<Entity>)
             "still Dynamic and standing {stood:.1} s after 60 s"
         ));
     }
+    if blocker.is_some() {
+        eprintln!(
+            "(b) {label}: rear past the body at {rear_past:?} s (removed at {pressed_s} s), longest stand {:.1} s",
+            clock.of(car)
+        );
+        if let Some(g) = given_up {
+            failures.push(format!("given up at {g:?}"));
+        }
+        if clock.of(car) > 30.0 {
+            failures.push(format!("stood {:.1} s", clock.of(car)));
+        }
+        if rear_past.is_none() {
+            failures.push("never drove past the body before it was removed".into());
+        }
+        if !hurt.is_empty() {
+            failures.push(format!("the body was hit: {hurt:?}"));
+        }
+    }
     assert!(failures.is_empty(), "{label}: {failures:?}");
 }
 
 #[test]
 fn b1_rear_nudge() {
-    bumped("rear nudge", |_, _| None);
+    bumped("rear nudge", PRESSED_S, |_, _| None);
 }
 
 #[test]
 fn b2_shoved_to_the_curb() {
     bumped(
         "shoved 0.6 m to the curb, a dummy on the sidewalk ahead",
+        PRESSED_S,
         |scene, car| {
             let right = right_of(scene.dir);
             let p = scene.app.world().get::<Position>(car).unwrap().0 + right * 0.6;
@@ -250,17 +312,30 @@ fn b2_shoved_to_the_curb() {
 
 #[test]
 fn b3_dummy_pressed_at_the_bumper() {
-    bumped("a dummy pressed at the front bumper", |scene, car| {
-        let half = scene.app.world().resource::<VehicleConfig>().half_extents();
-        let nose = scene.app.world().get::<Position>(car).unwrap().0 + scene.dir * (half.z + 0.35);
-        let y = ground_at(&mut scene.app, Vec2::new(nose.x, nose.z));
-        Some(spawn_dummy(&mut scene.app, nose.with_y(y)))
-    });
+    // Pressed past the progress wait: the car squeezes past the dummy (TASK-039).
+    let wait = {
+        let app = headless_app();
+        app.world()
+            .resource::<TrafficConfig>()
+            .progress
+            .wait_seconds as u32
+    };
+    bumped(
+        "a dummy pressed at the front bumper",
+        wait + 12,
+        |scene, car| {
+            let half = scene.app.world().resource::<VehicleConfig>().half_extents();
+            let nose =
+                scene.app.world().get::<Position>(car).unwrap().0 + scene.dir * (half.z + 0.35);
+            let y = ground_at(&mut scene.app, Vec2::new(nose.x, nose.z));
+            Some(spawn_dummy(&mut scene.app, nose.with_y(y)))
+        },
+    );
 }
 
 #[test]
 fn b4_yawed_45_deg() {
-    bumped("yawed 45 deg", |scene, car| {
+    bumped("yawed 45 deg", PRESSED_S, |scene, car| {
         let r = Quat::from_rotation_y(45f32.to_radians())
             * scene.app.world().get::<Rotation>(car).unwrap().0;
         scene.app.world_mut().get_mut::<Rotation>(car).unwrap().0 = r;
@@ -415,7 +490,7 @@ fn box_scene(seed: u64, back: f32) -> (App, u32, Vec3, Entity) {
 fn left_in_the_box(seed: u64, back: f32) -> LeftInBox {
     let (mut app, node, hub, left) = box_scene(seed, back);
     let mut clock = StandClock::default();
-    let mut oracle = Footprints::new(&app);
+    let mut oracle = Footprints::new(&app).with_third_bodies();
     for tick in 0..150 * HZ {
         run_ticks(&mut app, 1);
         clock.record(&mut app);
@@ -425,13 +500,15 @@ fn left_in_the_box(seed: u64, back: f32) -> LeftInBox {
     let at = app.world().get::<Position>(left).map(|p| p.0);
     eprintln!(
         "seed {seed}: box {node} at ({:.1}, {:.1}), the player {distance:.1} m from it; stands > 30 s \
-         within 45 m: {:?}; worst {:?}, worst dynamic {:.1} s; left car now at {at:?}; G1 max depth {:.3}",
+         within 45 m: {:?}; worst {:?}, worst dynamic {:.1} s; left car now at {at:?}; G1 max depth {:.3}, relaxed max depth {:.2}, relaxations {}",
         hub.x,
         hub.z,
         stands_near(&clock, hub, 45.0, 30.0),
         clock.worst(),
         clock.worst_dynamic(),
-        oracle.max_depth()
+        oracle.max_depth(),
+        oracle.relaxed_max_depth(),
+        stats(&app).progress_relaxations
     );
     LeftInBox {
         hub,
@@ -442,9 +519,9 @@ fn left_in_the_box(seed: u64, back: f32) -> LeftInBox {
 }
 
 /// R1 headless (the TASK-031 repro: the player 31 m from the box): no traffic car within 45 m of the
-/// box stands longer than 30 s over 150 s, none in `Dynamic` either, G1 clean. Open: the push through
-/// the box (R-A) failed twice and the fallback (R-B) does not reach a car the player looks at from
-/// within `bubble.stuck_in_view_distance` (FIX_SUMMARY.md, TASK-032 fixer round 1).
+/// box stands longer than 30 s over 150 s, none in `Dynamic` either, G1 and third bodies clean. The
+/// stuck cheat does not reach a car the player looks at from within `bubble.stuck_in_view_distance`;
+/// the progress rule (TASK-039) does: the car behind the left car squeezes past it.
 fn r1(seed: u64) {
     let run = left_in_the_box(seed, 31.0);
     let stood = stands_near(&run.clock, run.hub, 45.0, 30.0);
@@ -455,17 +532,19 @@ fn r1(seed: u64) {
     if !run.oracle.violations.is_empty() {
         failures.push(format!("G1: {:?}", run.oracle.summary()));
     }
+    if !run.oracle.third.violations.is_empty() {
+        failures.push(format!("third bodies: {:?}", run.oracle.third_summary()));
+    }
+    failures.extend(run.oracle.relax_failure());
     assert!(failures.is_empty(), "seed {seed}: {failures:#?}");
 }
 
 #[test]
-#[ignore = "TASK-039 class D: a car switched by the left car placed in its path at 2.8 m/s stays Dynamic 113 s"]
 fn r1_car_left_in_the_box_seed_1() {
     r1(1);
 }
 
 #[test]
-#[ignore = "TASK-039 class E: the real-body path check (TASK-036) blocks every exit of box 84's east approach; its queue stands 51-58 s"]
 fn r1_car_left_in_the_box_seed_7() {
     r1(7);
 }
