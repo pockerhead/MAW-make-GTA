@@ -275,4 +275,4 @@ QA запущенного билда: `python tools/qa/scenarios/t1.py --out <di
 
 Бинарные ассеты (модели, текстуры, звук) в репо не хранятся. Для сборки из исходников их качает
 `python tools/fetch_assets.py`; в zip релизов они лежат вместе с файлами лицензий паков и
-`assets/third_party/manifest.ron` (атрибуция). Лицензия на код игры пока не выбрана.
+`assets/third_party/manifest.ron` (атрибуция). Код игры — под лицензией [MIT](LICENSE).
