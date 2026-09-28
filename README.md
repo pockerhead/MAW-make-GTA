@@ -194,6 +194,7 @@ clarifier → premise-challenge → planner → plan-review ×2 → implementer 
   встать; нет светофоров; пешеходы не обходят друг друга. Работа над трафиком на этом закончена.
 - Следующая: финальный релиз v0.1.0.
 - План и порядок: [`docs/narrative-graph.md`](docs/narrative-graph.md), граф задач: [`maw/ROADMAP.md`](maw/ROADMAP.md).
+- Уроки проекта (что стоило денег и что вынести на будущее): [`docs/lessons.md`](docs/lessons.md).
 
 ## Что проверяет CI
 
